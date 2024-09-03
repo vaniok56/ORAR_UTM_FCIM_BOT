@@ -1,4 +1,18 @@
 version: '3'
 services:
-  telbot:
+  orarbot:
     image: orarbot:latest
+    container_name: orarbot
+  restarter:
+    image: docker:cli
+    restart: unless-stopped
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+    entrypoint: ["/bin/sh","-c"]
+    command:
+      - |
+        while true; do
+          sleep 3600
+          docker restart orarbot
+          echo "restarted"
+        done
+        

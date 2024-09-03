@@ -1,17 +1,16 @@
-# orar_utm_fcim_bot version 0.1
+# orar_utm_fcim_bot version 0.2
 ### changelog:
-# adaugare mai multor comentarii
-# improve la vizualizarea orarului
-# implementare afisare saptamana aceasta si viitoare
-# implementarea afisare ore
-# adaugare comanda help
-# adaugarea listei de grupe
-# afisarea butoanelor mai eficienta
+# added bot keyboard
+# removed some dupe code 
+# translated the code to english
+# added the ability to log throught print() func
+# added a daily restart for orarbot container
+# other minor improvements
 
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
 
-import configparser #read
+import configparser # read
 import datetime
 import openpyxl # excel read library
 import datetime
@@ -24,11 +23,11 @@ api_id = config.get('default','api_id') # get the api id
 api_hash = config.get('default','api_hash') # get the api hash
 BOT_TOKEN = config.get('default','BOT_TOKEN') # get the bot token
 
-# Create the client and the session called session_master. We start the session as the Bot (using bot_token)
+# Create the client and the session called session_master.
 client = TelegramClient('sessions/session_master', api_id, api_hash).start(bot_token=BOT_TOKEN)
 
-#ore
-ore =   [
+#hours
+hours =   [
     ["8:00 - 9:30"],
     ["9:45 - 11:15"],
     ["11:30 - 13:00"],
@@ -38,8 +37,8 @@ ore =   [
     ["18:45 - 20:15"]
 ]
 
-#zile
-zile_sapt = {
+#week days
+week_days = {
     0 : "Luni",
     1 : "Marţi",
     2 : "Miercuri",
@@ -49,8 +48,8 @@ zile_sapt = {
     6 : "Duminica"
 }
 
-#grupe
-grupe = {
+#group list
+group_list = {
     b"ti241": "  TI-241  ",
     b"ti244": "  TI-244  ",
     b"ti242": "  TI-242  ",
@@ -63,19 +62,30 @@ grupe = {
     b"si243": "  SI-243  "
 }
 
-grupa = "  TI-241  "
+bot_kb = [
+        Button.text('Orarul de azi 📅', resize=True),
+        Button.text('Orarul de maine 📅', resize=True),
+        Button.text('Orarul saptamainii 🗓️', resize=True),
+        Button.text('Orele ⏰', resize=True),
+    ]
+
+cur_group = "  TI-241  "
 
 #/start
-@client.on(events.NewMessage(pattern='/(?i)start')) 
-async def start(event):
+@client.on(events.NewMessage(pattern="/(?i)start")) 
+async def startt(event):
     sender = await event.get_sender()
     SENDER = sender.id
-    text = "Salut! In primul rand alege grupa - /alege_grupa \nPentru a afisa toate comenzile - /help"
-    await client.send_message(SENDER, text, parse_mode="HTML")
+    text = "Salut!\nIn primul rand alege grupa - /alege_grupa \nPentru a afisa toate comenzile - /help"
+    buttons_in_row = 2
+    #bot_kb.append(types.KeyboardButtonSimpleWebView("Orar pdf🥱", "https://fcim.utm.md/procesul-de-studii/orar/#toggle-id-2-closed",))
+    button_rows = button_grid(bot_kb, buttons_in_row)
+    await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
+
 
 #/help
 @client.on(events.NewMessage(pattern='/(?i)help')) 
-async def start(event):
+async def helpp(event):
     sender = await event.get_sender()
     SENDER = sender.id
     text  = "/start - start\n"
@@ -91,14 +101,14 @@ async def start(event):
     #text += "/sesiuni - NOT IMPLEMENTED orarul sesiunilor\n"
     await client.send_message(SENDER, text, parse_mode="HTML")
 
-#/ore
-@client.on(events.NewMessage(pattern='/(?i)ore')) 
-async def start(event):
+#/hours
+@client.on(events.NewMessage(pattern='/(?i)ore|Orele ⏰')) 
+async def oree(event):
     sender = await event.get_sender()
     SENDER = sender.id
     text = "Graficul de ore:\n"
     for i in range(0, 7):
-        text += "\nPerechea: #" + str(i+1) + "\nOra : " + ''.join(ore[i]) + "\n"
+        text += "\nPerechea: #" + str(i+1) + "\nOra : " + ''.join(hours[i]) + "\n"
         if i == 2 :
             text += "Pauza : " + "30 min\n"
         else:
@@ -106,169 +116,152 @@ async def start(event):
     await client.send_message(SENDER, text, parse_mode="HTML")
 
 #/maine
-@client.on(events.NewMessage(pattern='/(?i)maine')) 
-async def time(event):
-    week_day = int((datetime.datetime.today() + datetime.timedelta(days=1)).weekday()) #ziua saptamanii(maine) in nr (0-6)
+@client.on(events.NewMessage(pattern='/(?i)maine|Orarul de maine 📅')) 
+async def mainee(event):
+    week_day = int((datetime.datetime.today() + datetime.timedelta(days=1)).weekday()) #weekday tomorrow(0-6)
     sender = await event.get_sender()
     SENDER = sender.id
-    grupa = update_gr()
-    text = "\nGrupa " + grupa + "\nOrarul de maine(" + zile_sapt[week_day] +"):" + print_zi(week_day)
+    cur_group = update_gr()
+    text = "\nGrupa - " + cur_group + "\nOrarul de maine(" + week_days[week_day] +"):" + print_day(week_day)
     await client.send_message(SENDER, text, parse_mode="HTML")
 
 #/azi
-@client.on(events.NewMessage(pattern='/(?i)azi')) 
-async def time(event):
-    week_day = int(datetime.datetime.today().weekday()) #ziua saptamanii(azi) in nr (0-6)
+@client.on(events.NewMessage(pattern='/(?i)azi|Orarul de azi 📅')) 
+async def azii(event):
+    week_day = int(datetime.datetime.today().weekday()) #weekday today(0-6)
     sender = await event.get_sender()
     SENDER = sender.id
-    grupa = update_gr()
-    text = "\nGrupa " + grupa + "\nOrarul de azi(" + zile_sapt[week_day] +"):" + print_zi(week_day)
+    cur_group = update_gr()
+    text = "\nGrupa - " + cur_group + "\nOrarul de azi(" + week_days[week_day] +"):" + print_day(week_day)
     await client.send_message(SENDER, text, parse_mode="HTML")
 
 #/sapt_cur
-@client.on(events.NewMessage(pattern='/(?i)sapt_curenta')) 
-async def time(event):
-    para = datetime.datetime.today().isocalendar().week%2 #sapt para/imp(1/0)
+@client.on(events.NewMessage(pattern='/(?i)sapt_curenta|Orarul saptamainii 🗓️')) 
+async def sapt_curr(event):
+    is_even = datetime.datetime.today().isocalendar().week%2 #odd/even week(1/0)
     sender = await event.get_sender()
     SENDER = sender.id
-    grupa = update_gr()
-    text = "\nGrupa " + grupa + "\nOrarul pe saptamana aceasta:" + print_sapt(para)
+    cur_group = update_gr()
+    text = "\nGrupa - " + cur_group + "\nOrarul pe saptamana aceasta:" + print_sapt(is_even)
     await client.send_message(SENDER, text, parse_mode="HTML")
 
 #/sapt_viit
 @client.on(events.NewMessage(pattern='/(?i)sapt_viitoare')) 
-async def time(event):
-    para = datetime.datetime.today().isocalendar().week%2 #sapt para/imp(1/0)
-    para = not para
+async def sapt_viit(event):
+    is_even = datetime.datetime.today().isocalendar().week%2 #odd/even week(1/0)
+    is_even = not is_even
     sender = await event.get_sender()
     SENDER = sender.id
-    grupa = update_gr()
-    text = "\nGrupa " + grupa + "\nOrarul pe saptamana viitoare:" + print_sapt(para)
+    cur_group = update_gr()
+    text = "\nGrupa - " + cur_group + "\nOrarul pe saptamana viitoare:" + print_sapt(is_even)
     await client.send_message(SENDER, text, parse_mode="HTML")
 
-def button_grid(butoane, butoane_rand):
-    return [butoane[i:i + butoane_rand] for i in range(0, len(butoane), butoane_rand)]
+def button_grid(buttons, butoane_rand):
+    return [buttons[i:i + butoane_rand] for i in range(0, len(buttons), butoane_rand)]
 
-#/alege grupa
+#/alege_grupa
 @client.on(events.NewMessage(pattern='/(?i)alege_grupa')) 
-async def time(event):
+async def alege_grupa(event):
     sender = await event.get_sender()
     SENDER = sender.id
     text = "Alege grupa"
-    butoane = [Button.inline(group, data=data) for data, group in grupe.items()]
+    buttons = [Button.inline(group, data=data) for data, group in group_list.items()]
     butoane_rand = 4
-    button_rows = button_grid(butoane, butoane_rand)
+    button_rows = button_grid(buttons, butoane_rand)
     await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
 
 #button click event handle
 @client.on(events.CallbackQuery())
 async def callback(event):
-    grupa = grupe.get(event.data)
-    if grupa:
-        edit_grupa(grupa)
+    cur_group = group_list.get(event.data).replace(" ", "")
+    if cur_group:
+        edit_grupa(cur_group)
         sender = await event.get_sender()
         SENDER = sender.id
-        text = f"Grupa ta este: {grupa}"
+        text = f"Grupa ta este: {cur_group}"
+        print("grupa selectata - " + cur_group)
         await client.send_message(SENDER, text, parse_mode="HTML")
         
-#afisiaza value din cell chiar daca e merged cell
+#get value from a cell iven if it's a merged cell
 def getMergedCellVal(sheet, cell):
     rng = [s for s in sheet.merged_cells.ranges if cell.coordinate in s]
     return sheet.cell(rng[0].min_row, rng[0].min_col).value if len(rng)!=0 else cell.value
 
-#afisare orar pe zi
-def print_zi(week_day) :
+#get daily schedule
+def print_day(week_day) :
     wb = openpyxl.load_workbook('orar.xlsx', data_only=True)
-    orar = wb["Table 2"]
-    curr_date = datetime.datetime.today() # data de azi
-    para = curr_date.isocalendar().week%2 #saptamana para?
-    grupe = [orar.cell(row=1,column=i).value for i in range(3,12)] #lista toate grupe
-    col_gr = grupe.index(orar['A1'].value.replace(" ", "")) + 3 #coloana cu gupa selectata anterior
-    row_start = 2 + (14 * week_day) #randul la prima pereche de azi
+    schedule = wb["Table 2"]
+    curr_date = datetime.datetime.today() #today's date
+    groups = [schedule.cell(row=1,column=i).value for i in range(3,12)] #group list
+    col_gr = groups.index(schedule['A1'].value.replace(" ", "")) + 3 #column with the selected group
+    row_start = 2 + (14 * week_day) #first course row
+    is_even = curr_date.isocalendar().week%2 #even?
 
-    orar_azi = []
-    vazute = set() 
-    #exporteaza toate perechile dintro zi intrun dataframe
-    for i in range(row_start, row_start + 13):
-        ora = getMergedCellVal(orar, orar.cell(row=i, column=2)) #ora
-        if i%2 == para:
-            if ora in vazute:
-                continue  # skip
-            vazute.add(ora)
-            orar_azi.append(getMergedCellVal(orar, orar.cell(row=i, column=col_gr)))
-        else: continue # skip
-
-    #modifica formatarea pentru o afisare mai placuta
-    for i in range(len(orar_azi)):
-        orar_azi[i] = "<b>" + str(orar_azi[i]) + "</b>"
-        if "None" in str(orar_azi[i]):
-            orar_azi[i] = ""
-        else: orar_azi[i] = "\nPerechea: #" + str(i+1) + "\n" + str(orar_azi[i]) + "\nOra : " + ''.join(ore[i]) + "\n"
-    
-    #converteaza orarul intr-un string
-    orar_azi = "\n" + "".join(str(element) for element in orar_azi)
-    
+    daily = print_daily(schedule, row_start, is_even, col_gr)
     wb.close()
-    return orar_azi
 
-#afisare orar pe saptamana
-def print_sapt(para) :
+    return daily
+
+def print_daily(schedule, row_start, is_even, col_gr):
+    day_sch = []
+    vazute = set() 
+    #export all courses into a dataframe
+    for i in range(row_start, row_start + 13):
+        ora = getMergedCellVal(schedule, schedule.cell(row=i, column=2)) #get curent hour
+        if i%2 == is_even:
+            if ora in vazute:
+                continue  #jump to next iteration if already registered this hour course
+            vazute.add(ora)
+            day_sch.append(getMergedCellVal(schedule, schedule.cell(row=i, column=col_gr)))
+        else: continue #jump to next iteration if odd/even
+
+    #modifying for beter visibility
+    for i in range(len(day_sch)):
+        day_sch[i] = "<b>" + str(day_sch[i]) + "</b>"
+        if "None" in str(day_sch[i]):
+            day_sch[i] = ""
+        else: day_sch[i] = "\nPerechea: #" + str(i+1) + "\n" + str(day_sch[i]) + "\nOra : " + ''.join(hours[i]) + "\n"
+    
+    #dataframe to string
+    day_sch = "\n" + "".join(str(element) for element in day_sch)
+    
+    return day_sch
+
+#get weekly schedule
+def print_sapt(is_even) :
     wb = openpyxl.load_workbook('orar.xlsx', data_only=True)
-    orar = wb["Table 2"]
-    grupe = [orar.cell(row=1,column=i).value for i in range(3,12)] #lista toate grupe
-    col_gr = grupe.index(orar['A1'].value.replace(" ", "")) + 3 #coloana cu gupa selectata anterior
-    row_start = 2 #randul la prima pereche de azi
+    schedule = wb["Table 2"]
+    groups = [schedule.cell(row=1,column=i).value for i in range(3,12)] #group list
+    col_gr = groups.index(schedule['A1'].value.replace(" ", "")) + 3 #column with the selected group
+    row_start = 2 #first course row
 
-    orar_sapt = ""
+    week_sch = ""
     for j in range(1, 6):
-        orar_azi = []
-        vazute = set() 
-        #exporteaza toate perechile dintro zi intrun dataframe
-        for i in range(row_start, row_start + 13):
-            ora = getMergedCellVal(orar, orar.cell(row=i, column=2)) #ora
-            if i%2 == para:
-                if ora in vazute:
-                    continue  # skip
-                vazute.add(ora)
-                orar_azi.append(getMergedCellVal(orar, orar.cell(row=i, column=col_gr)))
-            else: continue
+        daily = print_daily(schedule, row_start, is_even, col_gr)
 
-        #modifica formatarea pentru o afisare mai placuta
-        for i in range(len(orar_azi)):
-            orar_azi[i] = "<b>" + str(orar_azi[i]) + "</b>"
-            if "None" in str(orar_azi[i]):
-                orar_azi[i] = ""
-            else: orar_azi[i] = "\nPerechea: #" + str(i+1) + "\n" + str(orar_azi[i]) + "\nOra : " + ''.join(ore[i]) + "\n"
-        
-        #converteaza orarul intr-un string
-        orar_azi = "\n" + "".join(str(element) for element in orar_azi)
-        wb.close()
-
-        if str(orar_azi) == "":
-            orar_sapt += "\n\n"
+        if str(daily) == "":
+            week_sch += "\n\n"
         else: 
-            orar_sapt += "\n\n&emsp;&emsp;&emsp;&emsp;<b>" + zile_sapt[j-1] + ":</b>" + "\n" + orar_azi
+            week_sch += "\n\n&emsp;&emsp;&emsp;&emsp;<b>" + week_days[j-1] + ":</b>" + "\n" + daily
         
         row_start += 14
-    return orar_sapt
+    return week_sch
 
 #editeaza grupa alesa in excell
-def edit_grupa(grupa):
+def edit_grupa(cur_group):
     wb = openpyxl.load_workbook('orar.xlsx', data_only=True)
-    orar = wb["Table 2"]
-    grupa.replace(" ", "")
-    orar['A1'] = grupa
+    schedule = wb["Table 2"]
+    schedule['A1'] = cur_group.replace(" ", "")
     wb.save('orar.xlsx')
     wb.close()
 
 #scoate grupa selectata din excell
 def update_gr():
     wb = openpyxl.load_workbook('orar.xlsx', data_only=True)
-    orar = wb["Table 2"]
-    grupa = orar['A1'].value
-    grupa.replace(" ", "")
+    schedule = wb["Table 2"]
+    cur_group = schedule['A1'].value.replace(" ", "")
     wb.close()
-    return grupa
+    return cur_group
 
 ### MAIN
 if __name__ == '__main__':
