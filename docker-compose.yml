@@ -3,6 +3,8 @@ services:
   orarbot:
     image: orarbot:latest
     container_name: orarbot
+    volumes:
+      - /Users/milkshake/Desktop/ORAR_UTM_FCIM_BOT/BD.csv:/BD.csv
   restarter:
     image: docker:cli
     restart: unless-stopped
@@ -11,7 +13,7 @@ services:
     command:
       - |
         while true; do
-          sleep 3600
+          sleep 43200
           docker restart orarbot
           echo "restarted"
         done

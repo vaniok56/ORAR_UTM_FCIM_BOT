@@ -1,11 +1,8 @@
-# orar_utm_fcim_bot version 0.2
+# orar_utm_fcim_bot version 0.3
 ### changelog:
-# added bot keyboard
-# removed some dupe code 
-# translated the code to english
-# added the ability to log throught print() func
-# added a daily restart for orarbot container
-# other minor improvements
+# added a csv database
+# optimised the code to use the database(took way too much time)
+# other minor changes
 
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
@@ -14,6 +11,8 @@ import configparser # read
 import datetime
 import openpyxl # excel read library
 import datetime
+
+import pandas as pd
 
 #### Access credentials
 config = configparser.ConfigParser() # Define the method to read the configuration file
@@ -51,9 +50,9 @@ week_days = {
 #group list
 group_list = {
     b"ti241": "  TI-241  ",
-    b"ti244": "  TI-244  ",
     b"ti242": "  TI-242  ",
     b"ti243": "  TI-243  ",
+    b"ti244": "  TI-244  ",
     b"ti245": "  TI-245  ",
     b"ti246": "  TI-246  ",
     b"ti247": "  TI-247  ",
@@ -62,6 +61,7 @@ group_list = {
     b"si243": "  SI-243  "
 }
 
+#keyboard buttons
 bot_kb = [
         Button.text('Orarul de azi 📅', resize=True),
         Button.text('Orarul de maine 📅', resize=True),
@@ -69,11 +69,13 @@ bot_kb = [
         Button.text('Orele ⏰', resize=True),
     ]
 
-cur_group = "  TI-241  "
+cur_group = "  TI-241  " #initialising current group
+df = pd.read_csv('BD.csv') #df with users
 
 #/start
 @client.on(events.NewMessage(pattern="/(?i)start")) 
 async def startt(event):
+    global df
     sender = await event.get_sender()
     SENDER = sender.id
     text = "Salut!\nIn primul rand alege grupa - /alege_grupa \nPentru a afisa toate comenzile - /help"
@@ -82,6 +84,13 @@ async def startt(event):
     button_rows = button_grid(bot_kb, buttons_in_row)
     await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
 
+    #add the user to users
+    if "U"+str(SENDER) not in "U"+str(df['SENDER'].to_list()):
+        data =  {'SENDER' : ["U"+str(SENDER)],
+                 'group' : [""]}
+        new_dat = pd.DataFrame(data)
+        df = pd.concat([df, new_dat])
+        df.to_csv('BD.csv', encoding='utf-8', index=False)
 
 #/help
 @client.on(events.NewMessage(pattern='/(?i)help')) 
@@ -118,71 +127,128 @@ async def oree(event):
 #/maine
 @client.on(events.NewMessage(pattern='/(?i)maine|Orarul de maine 📅')) 
 async def mainee(event):
+    global df, cur_group
     week_day = int((datetime.datetime.today() + datetime.timedelta(days=1)).weekday()) #weekday tomorrow(0-6)
     sender = await event.get_sender()
     SENDER = sender.id
-    cur_group = update_gr()
-    text = "\nGrupa - " + cur_group + "\nOrarul de maine(" + week_days[week_day] +"):" + print_day(week_day)
-    await client.send_message(SENDER, text, parse_mode="HTML")
-
+    try:
+        #get the user's selected group
+        csv_gr = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'group'])[0]
+        cur_group = csv_gr
+        if cur_group == "":
+            raise ValueError('no gr')
+        else: 
+            #send the schedule
+            text = "\nGrupa - " + cur_group + "\nOrarul de maine(" + week_days[week_day] +"):" + print_day(week_day)
+            await client.send_message(SENDER, text, parse_mode="HTML")
+    except Exception as error:
+        print("An exception occurred:", error)
+        await client.send_message(SENDER, "Inca nu ai ales grupa.\n/alege_grupa", parse_mode="HTML")
+    
 #/azi
 @client.on(events.NewMessage(pattern='/(?i)azi|Orarul de azi 📅')) 
 async def azii(event):
+    global df, cur_group
     week_day = int(datetime.datetime.today().weekday()) #weekday today(0-6)
     sender = await event.get_sender()
     SENDER = sender.id
-    cur_group = update_gr()
-    text = "\nGrupa - " + cur_group + "\nOrarul de azi(" + week_days[week_day] +"):" + print_day(week_day)
-    await client.send_message(SENDER, text, parse_mode="HTML")
+    try:
+        csv_gr = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'group'])[0]
+        cur_group = csv_gr
+        if cur_group == "":
+            raise ValueError('no gr')
+        else: 
+            text = "\nGrupa - " + cur_group + "\nOrarul de azi(" + week_days[week_day] +"):" + print_day(week_day)
+            await client.send_message(SENDER, text, parse_mode="HTML")
+    except Exception as error:
+        print("An exception occurred:", error)
+        print(df)
+        await client.send_message(SENDER, "Inca nu ai ales grupa.\n/alege_grupa", parse_mode="HTML")
+    
 
 #/sapt_cur
 @client.on(events.NewMessage(pattern='/(?i)sapt_curenta|Orarul saptamainii 🗓️')) 
 async def sapt_curr(event):
+    global df, cur_group
     is_even = datetime.datetime.today().isocalendar().week%2 #odd/even week(1/0)
     sender = await event.get_sender()
     SENDER = sender.id
-    cur_group = update_gr()
-    text = "\nGrupa - " + cur_group + "\nOrarul pe saptamana aceasta:" + print_sapt(is_even)
-    await client.send_message(SENDER, text, parse_mode="HTML")
+    try:
+        csv_gr = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'group'])[0]
+        cur_group = csv_gr
+        if cur_group == "":
+            raise ValueError('no gr')
+        else: 
+            text = "\nGrupa - " + cur_group + "\nOrarul pe saptamana aceasta:" + print_sapt(is_even)
+            await client.send_message(SENDER, text, parse_mode="HTML")
+    except Exception as error:
+        print("An exception occurred:", error)
+        await client.send_message(SENDER, "Inca nu ai ales grupa.\n/alege_grupa", parse_mode="HTML")
 
 #/sapt_viit
 @client.on(events.NewMessage(pattern='/(?i)sapt_viitoare')) 
 async def sapt_viit(event):
+    global df, cur_group
     is_even = datetime.datetime.today().isocalendar().week%2 #odd/even week(1/0)
     is_even = not is_even
     sender = await event.get_sender()
     SENDER = sender.id
-    cur_group = update_gr()
-    text = "\nGrupa - " + cur_group + "\nOrarul pe saptamana viitoare:" + print_sapt(is_even)
-    await client.send_message(SENDER, text, parse_mode="HTML")
+
+    try:
+        csv_gr = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'group'])[0]
+        cur_group = csv_gr
+        if cur_group == "":
+            raise ValueError('no gr')
+        else: 
+            text = "\nGrupa - " + cur_group + "\nOrarul pe saptamana viitoare:" + print_sapt(is_even)
+            await client.send_message(SENDER, text, parse_mode="HTML")
+    except Exception as error:
+        print("An exception occurred:", error)
+        await client.send_message(SENDER, "Inca nu ai ales grupa.\n/alege_grupa", parse_mode="HTML")
 
 def button_grid(buttons, butoane_rand):
     return [buttons[i:i + butoane_rand] for i in range(0, len(buttons), butoane_rand)]
 
 #/alege_grupa
 @client.on(events.NewMessage(pattern='/(?i)alege_grupa')) 
-async def alege_grupa(event):
+async def alege_grupaa(event):
     sender = await event.get_sender()
     SENDER = sender.id
     text = "Alege grupa"
     buttons = [Button.inline(group, data=data) for data, group in group_list.items()]
-    butoane_rand = 4
-    button_rows = button_grid(buttons, butoane_rand)
+    button_per_r = 4
+    button_rows = button_grid(buttons, button_per_r)
     await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
 
 #button click event handle
 @client.on(events.CallbackQuery())
 async def callback(event):
+    global df, cur_group
+    sender = await event.get_sender()
+    SENDER = sender.id
     cur_group = group_list.get(event.data).replace(" ", "")
     if cur_group:
-        edit_grupa(cur_group)
+        #if user is not in list, add it
+        if "U"+str(SENDER) not in "U"+str(df['SENDER'].to_list()):
+            data =  {'SENDER' : ["U"+str(SENDER)],
+                     'group' : [""]}
+            new_dat = pd.DataFrame(data)
+            df = pd.concat([df, new_dat]) 
+            df.to_csv('BD.csv', encoding='utf-8', index=False)
+
+        #updates the current group
+        df.loc[df['SENDER'] == "U"+str(SENDER), 'group'] = cur_group #send cur_group to df
+        df.to_csv('BD.csv', encoding='utf-8', index=False) #save df
+
+        print(df.loc[df['SENDER'] == "U"+str(SENDER)])
+        
         sender = await event.get_sender()
         SENDER = sender.id
         text = f"Grupa ta este: {cur_group}"
-        print("grupa selectata - " + cur_group)
+        await event.answer('Grupa a fost selectata!')
         await client.send_message(SENDER, text, parse_mode="HTML")
         
-#get value from a cell iven if it's a merged cell
+#get value from a cell even if it's a merged cell
 def getMergedCellVal(sheet, cell):
     rng = [s for s in sheet.merged_cells.ranges if cell.coordinate in s]
     return sheet.cell(rng[0].min_row, rng[0].min_col).value if len(rng)!=0 else cell.value
@@ -192,8 +258,8 @@ def print_day(week_day) :
     wb = openpyxl.load_workbook('orar.xlsx', data_only=True)
     schedule = wb["Table 2"]
     curr_date = datetime.datetime.today() #today's date
-    groups = [schedule.cell(row=1,column=i).value for i in range(3,12)] #group list
-    col_gr = groups.index(schedule['A1'].value.replace(" ", "")) + 3 #column with the selected group
+    groups = [schedule.cell(row=1,column=i).value for i in range(3,13)] #group list
+    col_gr = groups.index(cur_group) + 3 #column with the selected group
     row_start = 2 + (14 * week_day) #first course row
     is_even = curr_date.isocalendar().week%2 #even?
 
@@ -239,6 +305,7 @@ def print_sapt(is_even) :
     for j in range(1, 6):
         daily = print_daily(schedule, row_start, is_even, col_gr)
 
+        #do not print an empty weekday
         if str(daily) == "":
             week_sch += "\n\n"
         else: 
@@ -247,15 +314,7 @@ def print_sapt(is_even) :
         row_start += 14
     return week_sch
 
-#editeaza grupa alesa in excell
-def edit_grupa(cur_group):
-    wb = openpyxl.load_workbook('orar.xlsx', data_only=True)
-    schedule = wb["Table 2"]
-    schedule['A1'] = cur_group.replace(" ", "")
-    wb.save('orar.xlsx')
-    wb.close()
-
-#scoate grupa selectata din excell
+#update the cur_group
 def update_gr():
     wb = openpyxl.load_workbook('orar.xlsx', data_only=True)
     schedule = wb["Table 2"]
