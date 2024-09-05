@@ -1,8 +1,10 @@
-# orar_utm_fcim_bot version 0.3
+# orar_utm_fcim_bot version 0.4
 ### changelog:
-# added a csv database
-# optimised the code to use the database(took way too much time)
-# other minor changes
+# used blackbox to speed up getMergedCellVal. Result: literally over x200 performance boost
+# added the ability to track classes that are not splited by odd/even
+# removed some dupe code
+# the orer.xlsx is now full, not just a part
+# other minor improvements
 
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
@@ -13,6 +15,8 @@ import openpyxl # excel read library
 import datetime
 
 import pandas as pd
+import numpy as np
+#import cProfile
 
 #### Access credentials
 config = configparser.ConfigParser() # Define the method to read the configuration file
@@ -24,6 +28,9 @@ BOT_TOKEN = config.get('default','BOT_TOKEN') # get the bot token
 
 # Create the client and the session called session_master.
 client = TelegramClient('sessions/session_master', api_id, api_hash).start(bot_token=BOT_TOKEN)
+
+#classes that are not splited by odd/even
+not_dual = np.array([4, 11, 24, 25, 38, 49, 50, 51])
 
 #hours
 hours =   [
@@ -69,8 +76,14 @@ bot_kb = [
         Button.text('Orele ⏰', resize=True),
     ]
 
-cur_group = "  TI-241  " #initialising current group
-df = pd.read_csv('BD.csv') #df with users
+wb = openpyxl.load_workbook('orar.xlsx', data_only=True)
+schedule = wb["Table 2"]
+
+df = pd.read_csv('BD.csv') #DB
+
+is_even = datetime.datetime.today().isocalendar().week % 2
+cur_group = "TI-241" #initialise current group
+groups = [schedule.cell(row=1,column=i).value for i in range(3,36)] #group list
 
 #/start
 @client.on(events.NewMessage(pattern="/(?i)start")) 
@@ -169,8 +182,7 @@ async def azii(event):
 #/sapt_cur
 @client.on(events.NewMessage(pattern='/(?i)sapt_curenta|Orarul saptamainii 🗓️')) 
 async def sapt_curr(event):
-    global df, cur_group
-    is_even = datetime.datetime.today().isocalendar().week%2 #odd/even week(1/0)
+    global df, cur_group, is_even
     sender = await event.get_sender()
     SENDER = sender.id
     try:
@@ -188,8 +200,7 @@ async def sapt_curr(event):
 #/sapt_viit
 @client.on(events.NewMessage(pattern='/(?i)sapt_viitoare')) 
 async def sapt_viit(event):
-    global df, cur_group
-    is_even = datetime.datetime.today().isocalendar().week%2 #odd/even week(1/0)
+    global df, cur_group, is_even
     is_even = not is_even
     sender = await event.get_sender()
     SENDER = sender.id
@@ -249,37 +260,64 @@ async def callback(event):
         await client.send_message(SENDER, text, parse_mode="HTML")
         
 #get value from a cell even if it's a merged cell
+merged_cell_ranges = {}  # cache merged cell ranges
+
+def get_merged_cell_ranges(sheet):
+    global merged_cell_ranges
+    if sheet not in merged_cell_ranges:
+        merged_cell_ranges[sheet] = {(r.min_row, r.min_col): r for r in sheet.merged_cells.ranges}
+    return merged_cell_ranges[sheet]
+
 def getMergedCellVal(sheet, cell):
-    rng = [s for s in sheet.merged_cells.ranges if cell.coordinate in s]
-    return sheet.cell(rng[0].min_row, rng[0].min_col).value if len(rng)!=0 else cell.value
+    merged_ranges = get_merged_cell_ranges(sheet)
+    row, col = cell.row, cell.column
+    for (r_min, c_min), rng in merged_ranges.items():
+        if r_min <= row <= rng.max_row and c_min <= col <= rng.max_col:
+            return sheet.cell(rng.min_row, rng.min_col).value
+    return cell.value
 
 #get daily schedule
 def print_day(week_day) :
-    wb = openpyxl.load_workbook('orar.xlsx', data_only=True)
-    schedule = wb["Table 2"]
-    curr_date = datetime.datetime.today() #today's date
-    groups = [schedule.cell(row=1,column=i).value for i in range(3,13)] #group list
+    global schedule, is_even, groups
     col_gr = groups.index(cur_group) + 3 #column with the selected group
     row_start = 2 + (14 * week_day) #first course row
-    is_even = curr_date.isocalendar().week%2 #even?
 
     daily = print_daily(schedule, row_start, is_even, col_gr)
-    wb.close()
 
     return daily
 
 def print_daily(schedule, row_start, is_even, col_gr):
     day_sch = []
-    vazute = set() 
+    seen = set() 
+
+    #rowstart depending on not_dual
+    row_start -= sum(1 for i in range(1, row_start) if np.isin(i, not_dual) and i != 51)
+    if is_even == True:
+        row_start+=1
+    match_is_even = not is_even
+
+    #get the hours list
+    orele = {i: getMergedCellVal(schedule, schedule.cell(row=i, column=2)) for i in range(row_start, row_start + 13)}
+
     #export all courses into a dataframe
     for i in range(row_start, row_start + 13):
-        ora = getMergedCellVal(schedule, schedule.cell(row=i, column=2)) #get curent hour
-        if i%2 == is_even:
-            if ora in vazute:
-                continue  #jump to next iteration if already registered this hour course
-            vazute.add(ora)
+        ora = orele[i] #get curent hour
+        is_not_dual = False
+        match_is_even = not match_is_even
+
+        #check if current row is in not_dual
+        if np.isin(i, not_dual):
+            is_not_dual = True
+            match_is_even = not match_is_even
+        #jump to next iteration if already seen this hour course
+        if ora in seen:
+            continue
+        #Add the course if even/odd or a row was skiped
+        if match_is_even == is_even or is_not_dual == True :
+            seen.add(ora)
             day_sch.append(getMergedCellVal(schedule, schedule.cell(row=i, column=col_gr)))
-        else: continue #jump to next iteration if odd/even
+        else: 
+            continue #jump to next iteration if odd/even
 
     #modifying for beter visibility
     for i in range(len(day_sch)):
@@ -295,10 +333,8 @@ def print_daily(schedule, row_start, is_even, col_gr):
 
 #get weekly schedule
 def print_sapt(is_even) :
-    wb = openpyxl.load_workbook('orar.xlsx', data_only=True)
-    schedule = wb["Table 2"]
-    groups = [schedule.cell(row=1,column=i).value for i in range(3,12)] #group list
-    col_gr = groups.index(schedule['A1'].value.replace(" ", "")) + 3 #column with the selected group
+    global schedule, groups
+    col_gr = groups.index(cur_group) + 3 #column with the selected group
     row_start = 2 #first course row
 
     week_sch = ""
@@ -314,15 +350,8 @@ def print_sapt(is_even) :
         row_start += 14
     return week_sch
 
-#update the cur_group
-def update_gr():
-    wb = openpyxl.load_workbook('orar.xlsx', data_only=True)
-    schedule = wb["Table 2"]
-    cur_group = schedule['A1'].value.replace(" ", "")
-    wb.close()
-    return cur_group
-
 ### MAIN
 if __name__ == '__main__':
     print("Bot Started!")
+    #cProfile.run('print_sapt(is_even)', sort='tottime')
     client.run_until_disconnected()
