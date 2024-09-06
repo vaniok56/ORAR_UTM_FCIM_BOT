@@ -1,4 +1,4 @@
-specialties = {
+specialties = { 
         b"ti": "  TI  ",
         b"si": "  SI  ",
         b"fi": "  FI  ",

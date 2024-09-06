@@ -1,4 +1,4 @@
-# orar_utm_fcim_bot version 0.5
+# orar_utm_fcim_bot version 0.5 
 ### changelog:
 # splited the program into 2 files
 # separated group list in other file
