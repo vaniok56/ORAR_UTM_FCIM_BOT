@@ -1,10 +1,6 @@
-# orar_utm_fcim_bot version 0.5 
+# orar_utm_fcim_bot version 0.5.1
 ### changelog:
-# splited the program into 2 files
-# separated group list in other file
-# added all 1st year groups
-# splitted the group select by specialities and improved it
-# other minor changes
+# fixed group selector for multiple users
 
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
@@ -57,7 +53,9 @@ async def startt(event):
     #add the user to users
     if "U"+str(SENDER) not in "U"+str(df['SENDER'].to_list()):
         data =  {'SENDER' : ["U"+str(SENDER)],
-                 'group' : [""]}
+                 'group' : [""],
+                 'spec' : [""],
+                 'year' : [""]}
         new_dat = pd.DataFrame(data)
         df = pd.concat([df, new_dat])
         df.to_csv('BD.csv', encoding='utf-8', index=False)
@@ -222,6 +220,8 @@ async def speciality_callback(event):
         if cur_speciality:
             text = f"Alege grupa pentru {cur_speciality}"
             group_items = group_list.get(cur_speciality, {})
+            df.loc[df['SENDER'] == "U"+str(SENDER), 'spec'] = cur_speciality #send cur_speciality to df
+            df.to_csv('BD.csv', encoding='utf-8', index=False) #save df
             buttons = [Button.inline(group, data=data) for data, group in group_items.items()]
             buttons.append(Button.inline("Back", data=b"back"))
             button_per_r = 4
@@ -236,16 +236,20 @@ async def group_callback(event):
     sender = await event.get_sender()
     SENDER = sender.id
     if event.data == b"back":
+        await event.answer()
         await client.edit_message(SENDER, event.message_id, "Alege specialitea", parse_mode="HTML", buttons=button_rows_spec)
+    csv_spec = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'spec'])[0]
+    cur_speciality = csv_spec
     group_items = group_list.get(cur_speciality, {})
     if event.data in group_items:
-        print(cur_speciality)
         cur_group = group_items.get(event.data).replace(" ", "")
         if cur_group:
             #if user is not in list, add it
             if "U"+str(SENDER) not in "U"+str(df['SENDER'].to_list()):
                 data =  {'SENDER' : ["U"+str(SENDER)],
-                        'group' : [""]}
+                        'group' : [""],
+                        'spec' : [""],
+                        'year' : [""]}
                 new_dat = pd.DataFrame(data)
                 df = pd.concat([df, new_dat]) 
                 df.to_csv('BD.csv', encoding='utf-8', index=False)
