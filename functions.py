@@ -50,9 +50,26 @@ def getMergedCellVal(sheet, cell):
             return sheet.cell(rng.min_row, rng.min_col).value
     return cell.value
 
+def button_grid(buttons, butoane_rand):
+    grid = []
+    row = []
+    for button in buttons:
+        if button.text == "Back":
+            if row:
+                grid.append(row)
+            row = [button]
+        else:
+            row.append(button)
+        if len(row) == butoane_rand:
+            grid.append(row)
+            row = []
+    if row:
+        grid.append(row)
+    return grid
+
 #get daily schedule
-def print_day(week_day, cur_group) :
-    global schedule, is_even, groups
+def print_day(week_day, cur_group, is_even) :
+    global schedule, groups
     col_gr = groups.index(cur_group) + 3 #column with the selected group
     row_start = 2 + (14 * week_day) #first course row
     daily = print_daily(schedule, row_start, is_even, col_gr)
@@ -64,9 +81,10 @@ def print_daily(schedule, row_start, is_even, col_gr):
 
     #rowstart depending on not_dual
     row_start -= sum(1 for i in range(1, row_start) if np.isin(i, not_dual) and i != 51 and i<65)
-    if is_even == True and row_start != 51 and row_start < 64:
+    if (is_even == True) and (row_start != 51) and (row_start < 64):
         row_start+=1
     match_is_even = not is_even
+    #print("   " + str(row_start) + "\n")
     #get the hours list
     orele = {i: getMergedCellVal(schedule, schedule.cell(row=i, column=2)) for i in range(row_start, row_start + 13)}
 
@@ -80,11 +98,15 @@ def print_daily(schedule, row_start, is_even, col_gr):
         if np.isin(i, not_dual):
             is_not_dual = True
             match_is_even = not match_is_even
+        # friday is a cursed day
+        if i == 52 and is_even:
+            match_is_even = not match_is_even
         #jump to next iteration if already seen this hour course
         if ora in seen:
             continue
         #Add the course if even/odd or a row was skiped
         if match_is_even == is_even or is_not_dual == True :
+            #print(str(i) + "\n")
             seen.add(ora)
             day_sch.append(getMergedCellVal(schedule, schedule.cell(row=i, column=col_gr)))
         else: 
@@ -102,6 +124,36 @@ def print_daily(schedule, row_start, is_even, col_gr):
     
     return day_sch
 
+def print_next_course(week_day, cur_group, is_even, course_index):
+    global schedule, groups, hours
+    col_gr = groups.index(cur_group) + 3  # column with the selected group
+    row_start = 2 + (14 * week_day)  # first course row
+
+    # Get the daily schedule
+    is_even = datetime.datetime.today().isocalendar().week % 2
+    daily = print_daily(schedule, row_start, is_even, col_gr)
+
+    # Split the daily schedule into individual courses
+    courses = daily.split("Perechea: #")
+    try:
+        course_index = course_index - int(courses[1][0]) + 1
+        if course_index >= 0:
+            print(str(courses[1][0]) + " " + str(course_index))
+            # Extract the course for the given hour
+            if course_index < len(courses) - 1:
+                course = courses[course_index + 1]
+                # Extract the course name and time
+                course_name = course.split("Ora : ")[0][1:]
+                course_time = course.split("Ora : ")[1]
+                return f"<b>{course_name}</b>Ora: {course_time}"
+            else:
+                return ""
+        else:
+            return ""
+    except Exception as error:
+        print(curr_time_logs() + "An exception occurred:", error)
+        return ""
+
 #get weekly schedule
 def print_sapt(is_even, cur_group) :
     global schedule, groups
@@ -117,3 +169,8 @@ def print_sapt(is_even, cur_group) :
         
         row_start += 14
     return week_sch
+
+def curr_time_logs():
+    curr_time_logs = datetime.datetime.now() + datetime.timedelta(hours=3)
+    curr_time_logs = curr_time_logs.__str__().split(' ')[0][-5:] + " " + curr_time_logs.__str__().split(' ')[1].split('.')[0] + " | "
+    return curr_time_logs

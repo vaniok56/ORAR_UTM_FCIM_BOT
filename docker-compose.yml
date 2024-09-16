@@ -7,14 +7,16 @@ services:
       - /Users/milkshake/Desktop/ORAR_UTM_FCIM_BOT/BD.csv:/BD.csv
   restarter:
     image: docker:cli
+    container_name: restarter
     restart: unless-stopped
     volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
     entrypoint: ["/bin/sh","-c"]
     command:
       - |
         while true; do
-          sleep 43200
-          docker restart orarbot
-          echo "restarted"
+          if [ $(date +'%H:%M') = 18:00 ] || [ $(date +'%H:%M') = 04:30 ]; then
+            docker restart orarbot
+          fi
+          sleep 60
         done
         
