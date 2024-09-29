@@ -5,7 +5,7 @@ import datetime
 #classes that are not splited by odd/even
 not_dual = np.array([4, 11, 24, 25, 38, 49, 50, 51, 64, 65, 66, 67, 68])
 
-is_even = datetime.datetime.today().isocalendar().week % 2
+is_even = (datetime.datetime.today() + datetime.timedelta(hours=3)).isocalendar().week % 2
 
 #hours
 hours =   [
@@ -126,32 +126,36 @@ def print_daily(schedule, row_start, is_even, col_gr):
 
 def print_next_course(week_day, cur_group, is_even, course_index):
     global schedule, groups, hours
-    col_gr = groups.index(cur_group) + 3  # column with the selected group
-    row_start = 2 + (14 * week_day)  # first course row
+    col_gr = groups.index(cur_group) + 3
+    row_start = 2 + (14 * week_day)
 
-    # Get the daily schedule
+    #get the daily schedule
     is_even = datetime.datetime.today().isocalendar().week % 2
     daily = print_daily(schedule, row_start, is_even, col_gr)
-
-    # Split the daily schedule into individual courses
     courses = daily.split("Perechea: #")
-    try:
-        course_index = course_index - int(courses[1][0]) + 1
-        if course_index >= 0:
-            print(str(courses[1][0]) + " " + str(course_index))
-            # Extract the course for the given hour
-            if course_index < len(courses) - 1:
-                course = courses[course_index + 1]
-                # Extract the course name and time
-                course_name = course.split("Ora : ")[0][1:]
-                course_time = course.split("Ora : ")[1]
-                return f"<b>{course_name}</b>Ora: {course_time}"
-            else:
-                return ""
-        else:
+
+    #correct the course index
+    for i in range(1,9):
+        try:
+            if int(courses[i][0]) == course_index:
+                course_index = i
+                break
+        except Exception as e:
+            #print(curr_time_logs() + "An exception occurred at courses==course_index:", e)
             return ""
-    except Exception as error:
-        print(curr_time_logs() + "An exception occurred:", error)
+
+    try:
+        if course_index < len(courses):
+            course = courses[course_index]
+            #extract the course name and time
+            course_name = course.split("Ora : ")[0][1:]
+            course_time = course.split("Ora : ")[1]
+            return f"<b>{course_name}</b>Ora: {course_time}"
+        else:
+            print(curr_time_logs() + "course_index < course len")
+            return ""
+    except Exception as e:
+        print(curr_time_logs() + "An exception occurred at returning:", e)
         return ""
 
 #get weekly schedule
