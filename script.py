@@ -1,9 +1,6 @@
-# orar_utm_fcim_bot version 0.7.0
+# orar_utm_fcim_bot version 0.7.1
 ### changelog:
-# even better logs
-# stabilised notifications
-# added a function to send a message to all users
-# other minor improvements
+# minor improvements
 
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
@@ -42,8 +39,6 @@ bot_kb = [
 df = pd.read_csv('BD.csv') #DB
 #cur_speciality = 'TI'
 week_day = int(datetime.datetime.today().weekday()) #weekday today(0-6)
-
-notif_changes = False
 
 #send a custom message to all active users
 async def send_mess(df):
@@ -94,7 +89,6 @@ async def startt(event):
 #notif button handle
 @client.on(events.CallbackQuery())
 async def notiff(event):
-    global notif_changes
     sender = await event.get_sender()
     SENDER = sender.id
     text = ""
@@ -106,13 +100,12 @@ async def notiff(event):
         await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML")
         print(curr_time_logs() + "U"+str(SENDER) + " - Notif off")
     elif event.data==b"on":
-        text = "Notificarile sunt pornite(se vor porni maine)"
+        text = "Notificarile sunt pornite"
         df.loc[df['SENDER'] == "U"+str(SENDER), 'noti'] = "on"
         df.to_csv('BD.csv', encoding='utf-8', index=False) #save df
         await event.answer('Notificarile sunt pornite')
         await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML")
         print(curr_time_logs() + "U"+str(SENDER) + " - Notif on")
-        notif_changes = True
 
 
 #/help
@@ -150,7 +143,7 @@ async def contactt(event):
 #/notifon
 @client.on(events.NewMessage(pattern='/(?i)notifon'))
 async def notifonn(event):
-    global df, notif_changes
+    global df
     sender = await event.get_sender()
     SENDER = sender.id
     text = "Notificarile sunt pornite!\n"
@@ -159,12 +152,11 @@ async def notifonn(event):
     df.loc[df['SENDER'] == "U"+str(SENDER), 'noti'] = "on"
     df.to_csv('BD.csv', encoding='utf-8', index=False)
     print(curr_time_logs() + "U"+str(SENDER) + " - /notifon")
-    notif_changes = True
 
 #/notifoff
 @client.on(events.NewMessage(pattern='/(?i)notifoff'))
 async def notifofff(event):
-    global df, notif_changes
+    global df
     sender = await event.get_sender()
     SENDER = sender.id
     text = "Notificarile sunt stinse!\n"
@@ -173,7 +165,6 @@ async def notifofff(event):
     df.loc[df['SENDER'] == "U"+str(SENDER), 'noti'] = "off"
     df.to_csv('BD.csv', encoding='utf-8', index=False)
     print(curr_time_logs() + "U"+str(SENDER) + " - /notifoff")
-    notif_changes = True
 
 #/hours
 @client.on(events.NewMessage(pattern='/(?i)ore|Orele ⏰')) 
@@ -228,7 +219,7 @@ async def azii(event):
         csv_gr = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'group'])[0]
         cur_group = csv_gr
         if cur_group == "":
-            raise ValueError('no gr')
+            raise ValueError(str(sender) + 'no gr')
         else: 
             is_even = (datetime.datetime.today() + datetime.timedelta(hours=3)).isocalendar().week % 2
             day_sch = print_day(week_day, cur_group, is_even)
@@ -252,7 +243,7 @@ async def sapt_curr(event):
         csv_gr = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'group'])[0]
         cur_group = csv_gr
         if cur_group == "":
-            raise ValueError('no gr')
+            raise ValueError(str(sender) + 'no gr')
         else: 
             is_even = (datetime.datetime.today() + datetime.timedelta(hours=3)).isocalendar().week % 2
             text = "\nGrupa - " + cur_group + "\nOrarul pe saptamana aceasta:" + print_sapt(is_even, cur_group)
@@ -272,7 +263,7 @@ async def sapt_viit(event):
         csv_gr = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'group'])[0]
         cur_group = csv_gr
         if cur_group == "":
-            raise ValueError('no gr')
+            raise ValueError(str(sender) + 'no gr')
         else: 
             is_even = (datetime.datetime.today() + datetime.timedelta(hours=3)).isocalendar().week % 2
             is_even = not is_even
@@ -367,7 +358,6 @@ async def send_curr_course_users(df, week_day, is_even):
 
 #send the next course to users with notifications on
 async def send_curr_course(week_day, csv_gr, is_even, sender):
-    global notif_changes, df
     #current time
     current_time = datetime.datetime.now()
     current_time = current_time + datetime.timedelta(hours=3)
@@ -379,12 +369,9 @@ async def send_curr_course(week_day, csv_gr, is_even, sender):
             break
     course_index += 1
     #15 min before the next course
-    time_before_course = course_time - datetime.timedelta(minutes=15)
+    time_before_course = course_time - datetime.timedelta(minutes=15, seconds=1)
     
     #if there are changes in db
-    if notif_changes:
-        notif_changes = False
-        df = pd.read_csv('BD.csv') #DB
 
     #if seconds is negative - wait 1h and try again
     if (time_before_course - current_time).total_seconds() < 1:
@@ -392,8 +379,8 @@ async def send_curr_course(week_day, csv_gr, is_even, sender):
         await send_curr_course(week_day, csv_gr, is_even, sender)
     #else wait until time_before_course and then print_next_course to user
     else:
-        await asyncio.sleep((time_before_course - current_time).total_seconds())
         next_course = print_next_course(week_day, csv_gr, is_even, course_index)
+        await asyncio.sleep((time_before_course - current_time).total_seconds())
         if next_course != "":
             await client.send_message(sender, "\nPerechea urmatoare:" + next_course, parse_mode="HTML")
             print(curr_time_logs() + "U"+str(sender) + " - send next course")
@@ -402,7 +389,7 @@ async def send_curr_course(week_day, csv_gr, is_even, sender):
 async def send_schedule_tomorrow(df):
     while True:
         #gain vars
-        now = datetime.datetime.now() + datetime.timedelta(hours=3)
+        now = datetime.datetime.now() + datetime.timedelta(hours=3, seconds=-1)
         curr_time = datetime.datetime.strptime(str(now).split(" ")[1][:-7], "%H:%M:%S")
         week_day = int((now + datetime.timedelta(days=1)).weekday())
         scheduled = datetime.datetime.strptime("20:00:00", "%H:%M:%S")
@@ -412,45 +399,25 @@ async def send_schedule_tomorrow(df):
             await asyncio.sleep(14401)
         else:
             print(curr_time_logs() + "waiting for tomorrow mess - " + str(scheduled - curr_time))
+            temp_is_even = (now + datetime.timedelta(days=1)).isocalendar().week % 2
+            text = "\nOrarul de maine("
             users_with_notification_on = df.loc[df['noti'] == 'on', 'SENDER'].values
             await asyncio.sleep((scheduled - curr_time).total_seconds())
             for user in users_with_notification_on:
                 sender = int(user[1:])
                 csv_gr = list(df.loc[df['SENDER'] == "U"+str(sender), 'group'])[0]
                 try:
-                    if csv_gr == "":
-                        raise ValueError('no gr')
+                    if csv_gr == "" or str(csv_gr) == 'nan':
+                        raise ValueError(str(sender) + 'no gr')
                     else:
-                        temp_is_even = (now + datetime.timedelta(days=1)).isocalendar().week % 2
                         #send the schedule
                         day_sch = print_day(week_day, csv_gr, temp_is_even)
                         if day_sch != "":
-                            text = "\nOrarul de maine(" + week_days[week_day] +"):\n" + day_sch
+                            text += week_days[week_day] +"):\n" + day_sch
                             await client.send_message(sender, text, parse_mode="HTML")
                             print(curr_time_logs() + "U"+str(sender) + " - send schedule for tomorrow")
                 except Exception as e:
                     print(curr_time_logs() + f"Error sending sch tomorr to {sender}: {e}")
-
-
-
-
-@client.on(events.NewMessage(pattern='/(?i)test_noti')) 
-async def test_print_next_course(event):
-    global notif_changes
-    week_day = int((datetime.datetime.today()).weekday())    
-    is_even = datetime.datetime.today().isocalendar().week % 2
-    csv_gr = list(df.loc[df['SENDER'] == "U"+str(500303890), 'group'])[0]
-    sender = 500303890
-    for course_index in range(1,8):
-        #if seconds is negative
-        try:
-            next_course = print_next_course(week_day, csv_gr, is_even, course_index)
-        except: next_course = ""
-        if next_course != "":
-            await client.send_message(sender, str(course_index) + "\nPerechea urmatoare:" + next_course, parse_mode="HTML")
-            print(curr_time_logs() + "U"+str(sender) + " - send next course")
-        
-    
 
 ### MAIN
 if __name__ == '__main__':

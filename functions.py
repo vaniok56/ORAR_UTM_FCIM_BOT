@@ -145,15 +145,11 @@ def print_next_course(week_day, cur_group, is_even, course_index):
             return ""
 
     try:
-        if course_index < len(courses):
-            course = courses[course_index]
-            #extract the course name and time
-            course_name = course.split("Ora : ")[0][1:]
-            course_time = course.split("Ora : ")[1]
-            return f"<b>{course_name}</b>Ora: {course_time}"
-        else:
-            print(curr_time_logs() + "course_index < course len")
-            return ""
+        course = courses[course_index]
+        #extract the course name and time
+        course_name = course.split("Ora : ")[0][1:]
+        course_time = course.split("Ora : ")[1]
+        return f"<b>{course_name}</b>Ora: {course_time}"
     except Exception as e:
         print(curr_time_logs() + "An exception occurred at returning:", e)
         return ""
