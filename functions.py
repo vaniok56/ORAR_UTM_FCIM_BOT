@@ -1,6 +1,16 @@
 import numpy as np 
 import openpyxl # excel read library
 import datetime
+import time
+
+#logs
+import logging
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s | [%(levelname)s] %(message)s',
+                    handlers=[
+                        logging.FileHandler("orarbot.log"),
+                        logging.StreamHandler()
+                    ])
 
 #classes that are not splited by odd/even
 not_dual = np.array([4, 11, 24, 25, 38, 49, 50, 51, 64, 65, 66, 67, 68])
@@ -151,7 +161,7 @@ def print_next_course(week_day, cur_group, is_even, course_index):
         course_time = course.split("Ora : ")[1]
         return f"<b>{course_name}</b>Ora: {course_time}"
     except Exception as e:
-        print(curr_time_logs() + "An exception occurred at returning:", e)
+        print(curr_time_logs() + "An exception occurred at print_next_course:", e)
         return ""
 
 #get weekly schedule
@@ -174,3 +184,13 @@ def curr_time_logs():
     curr_time_logs = datetime.datetime.now() + datetime.timedelta(hours=3)
     curr_time_logs = curr_time_logs.__str__().split(' ')[0][-5:] + " " + curr_time_logs.__str__().split(' ')[1].split('.')[0] + " | "
     return curr_time_logs
+
+def send_logs(message, type):
+    if type =='info':
+        logging.info(message)
+    if type =='warning':
+        logging.warning(message)
+    if type =='error':
+        logging.error(message)
+    if type =='critical':
+        logging.critical(message)
