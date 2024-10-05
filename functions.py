@@ -1,16 +1,21 @@
 import numpy as np 
 import openpyxl # excel read library
 import datetime
-import time
+import pytz
 
+time_zone = pytz.timezone('Europe/Chisinau')
 #logs
 import logging
 logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s | [%(levelname)s] %(message)s',
+                    format='%(asctime)s.%(msecs)03d | [%(levelname)s] %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S',
                     handlers=[
                         logging.FileHandler("orarbot.log"),
                         logging.StreamHandler()
                     ])
+
+logging.Formatter.converter = lambda *args: \
+    datetime.datetime.now(time_zone).timetuple()
 
 #classes that are not splited by odd/even
 not_dual = np.array([4, 11, 24, 25, 38, 49, 50, 51, 64, 65, 66, 67, 68])
@@ -104,6 +109,9 @@ def print_daily(schedule, row_start, is_even, col_gr):
         is_not_dual = False
         match_is_even = not match_is_even
 
+        #jump to next iteration if already seen this hour course
+        if ora in seen:
+            continue
         #check if current row is in not_dual
         if np.isin(i, not_dual):
             is_not_dual = True
@@ -111,9 +119,6 @@ def print_daily(schedule, row_start, is_even, col_gr):
         # friday is a cursed day
         if i == 52 and is_even:
             match_is_even = not match_is_even
-        #jump to next iteration if already seen this hour course
-        if ora in seen:
-            continue
         #Add the course if even/odd or a row was skiped
         if match_is_even == is_even or is_not_dual == True :
             #print(str(i) + "\n")
@@ -161,7 +166,7 @@ def print_next_course(week_day, cur_group, is_even, course_index):
         course_time = course.split("Ora : ")[1]
         return f"<b>{course_name}</b>Ora: {course_time}"
     except Exception as e:
-        print(curr_time_logs() + "An exception occurred at print_next_course:", e)
+        send_logs(f"An exception occurred at print_next_course: {e}", 'error')
         return ""
 
 #get weekly schedule
@@ -188,9 +193,11 @@ def curr_time_logs():
 def send_logs(message, type):
     if type =='info':
         logging.info(message)
-    if type =='warning':
+    elif type =='warning':
         logging.warning(message)
-    if type =='error':
+    elif type =='error':
         logging.error(message)
-    if type =='critical':
+    elif type =='critical':
         logging.critical(message)
+    else: 
+        logging.info(message)

@@ -1,6 +1,9 @@
-# orar_utm_fcim_bot version 0.7.1
+# orar_utm_fcim_bot version 0.8.0
 ### changelog:
-# better logging(+to file)
+# rewrote(improved) sending next course logic
+# used my timezone for logs (requires pytz)
+# updated orar.xlsx
+# a bunch of minor improvements
 
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
@@ -43,17 +46,19 @@ week_day = int(datetime.datetime.today().weekday()) #weekday today(0-6)
 #send a custom message to all active users
 async def send_mess(df):
     text = ""
+    #text = "Au fost facute careva modificari in orar pentru ziua de joi. Orarul se importeaza manual asa ca va rog sa verificati pe site \n"
+    #text += "[orarul](https://fcim.utm.md/procesul-de-studii/orar/)\n"
     if text !="":
-        all_users = df.loc[df['group'] != '', 'SENDER'].values
-        #all_users = df.loc[df['SENDER'] == 'U500303890', 'SENDER'].values
+        #all_users = df.loc[df['group'].str.len() > -1, 'SENDER'].values
+        all_users = df.loc[df['SENDER'] == 'U500303890', 'SENDER'].values
         #all_users = df.loc[df['group'] == 'TI-241', 'SENDER'].values
         for user in all_users:
             sender = int(user[1:])
             try:
-                await client.send_message(sender, text, parse_mode="HTML")
+                await client.send_message(sender, text, parse_mode="Markdown")
                 send_logs("Send succeseful to " + user, 'info')
             except Exception as e:
-                send_logs(f"Error sending message to {sender}: {e}", 'error')
+                send_logs(f"Error sending message to {str(sender)}: {e}", 'error')
 
 
 #/start
@@ -205,14 +210,13 @@ async def mainee(event):
             await client.send_message(SENDER, text, parse_mode="HTML")
             send_logs("U"+str(SENDER) + " - /maine", 'info')
     except Exception as e:
-        send_logs(f"Error sending sch tomorr to {sender}: {e}", 'error')
+        send_logs(f"Error sending sch tomorr to {str(SENDER)}: {e}", 'error')
         await client.send_message(SENDER, "Inca nu ai ales grupa.\n/alege_grupa", parse_mode="HTML")
     
 #/azi
 @client.on(events.NewMessage(pattern='/(?i)azi|Orarul de azi 📅')) 
 async def azii(event):
     global df, cur_group
-    week_day = int((datetime.datetime.today() + datetime.timedelta(hours=3)).weekday()) #weekday today(0-6)
     sender = await event.get_sender()
     SENDER = sender.id
     try:
@@ -221,6 +225,7 @@ async def azii(event):
         if cur_group == "":
             raise ValueError(str(sender) + 'no gr')
         else: 
+            week_day = int((datetime.datetime.today() + datetime.timedelta(hours=3)).weekday()) #weekday today(0-6)
             is_even = (datetime.datetime.today() + datetime.timedelta(hours=3)).isocalendar().week % 2
             day_sch = print_day(week_day, cur_group, is_even)
             if day_sch != "":
@@ -230,7 +235,7 @@ async def azii(event):
             await client.send_message(SENDER, text, parse_mode="HTML")
             send_logs("U"+str(SENDER) + " - /azi", 'info')
     except Exception as e:
-        send_logs(f"Error sending sch today to {sender}: {e}", 'info')
+        send_logs(f"Error sending sch today to {str(SENDER)}: {e}", 'info')
         await client.send_message(SENDER, "Inca nu ai ales grupa.\n/alege_grupa", parse_mode="HTML")
 
 #/sapt_cur
@@ -250,7 +255,7 @@ async def sapt_curr(event):
             await client.send_message(SENDER, text, parse_mode="HTML")
             send_logs("U"+str(SENDER) + " - /sapt_curenta", 'info')
     except Exception as e:
-        send_logs(f"Error sending curr week to {sender}: {e}", 'error')
+        send_logs(f"Error sending curr week to {str(SENDER)}: {e}", 'error')
         await client.send_message(SENDER, "Inca nu ai ales grupa.\n/alege_grupa", parse_mode="HTML")
 
 #/sapt_viit
@@ -271,7 +276,7 @@ async def sapt_viit(event):
             await client.send_message(SENDER, text, parse_mode="HTML")
             send_logs("U"+str(SENDER) + " - /sapt_viitoare", 'info')
     except Exception as e:
-        send_logs(f"Error sending next week to {sender}: {e}", 'error')
+        send_logs(f"Error sending next week to {str(SENDER)}: {e}", 'error')
         await client.send_message(SENDER, "Inca nu ai ales grupa.\n/alege_grupa", parse_mode="HTML")
 
 #/alege_grupa
@@ -342,26 +347,11 @@ async def group_callback(event):
             await event.answer('Grupa a fost selectata!')
             await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML")
 
-tasks = []
 #extract all users with notifications on
 async def send_curr_course_users(df, week_day, is_even):
-    global tasks
     send_logs("Total users - " +str(len(df.loc[df['group'].str.len() > -1, 'SENDER'].values)), 'info')
-    users_with_notification_on = df.loc[df['noti'] == 'on', 'SENDER'].values
-    for user in users_with_notification_on:
-        sender = int(user[1:])
-        csv_gr = df.loc[df['SENDER'] == "U"+str(sender), 'group'].values[0]
-        if str(csv_gr) != 'nan':
-            task = asyncio.create_task(send_curr_course(week_day, csv_gr, is_even, sender))
-            tasks.append(task)
-    send_logs("Notification on users - " +str(len(users_with_notification_on)), 'info')
-    await asyncio.gather(*tasks)
-
-#send the next course to users with notifications on
-async def send_curr_course(week_day, csv_gr, is_even, sender):
-    #current time
-    current_time = datetime.datetime.now()
-    current_time = current_time + datetime.timedelta(hours=3)
+    send_logs("Notification on users - " +str(len(df.loc[df['noti'] == 'on', 'SENDER'].values)), 'info')
+    current_time = datetime.datetime.now() + datetime.timedelta(hours=3)
     current_time = datetime.datetime.strptime(str(current_time).split(" ")[1][:-7], "%H:%M:%S")
     #next course index
     for course_index, hour in enumerate(hours):
@@ -370,23 +360,46 @@ async def send_curr_course(week_day, csv_gr, is_even, sender):
             break
     course_index += 1
     #15 min before the next course
-    time_before_course = course_time - datetime.timedelta(minutes=15, seconds=1)
-    
-    #if there are changes in db
+    time_before_course = course_time - datetime.timedelta(minutes=15)
 
-    #if seconds is negative - wait 1h and try again
+    #if negative
     if (time_before_course - current_time).total_seconds() < 1:
-        await asyncio.sleep(3600)
-        await send_curr_course(week_day, csv_gr, is_even, sender)
-    #else wait until time_before_course and then print_next_course to user
+        send_logs(f"No more courses for today. Waiting - 4:00:00", 'info')
+        await asyncio.sleep(14400)
     else:
-        next_course = print_next_course(week_day, csv_gr, is_even, course_index)
-        await asyncio.sleep((time_before_course - current_time).total_seconds())
-        if next_course != "":
-            await client.send_message(sender, "\nPerechea urmatoare:" + next_course, parse_mode="HTML")
-            send_logs("U"+str(sender) + " - send next course", 'info')
-        await send_curr_course(week_day, csv_gr, is_even, sender)
+        #get users with notif on and save all next courses into an array
+        all_users = df.loc[df['group'].str.len() > -1, 'SENDER'].values
+        next_courses = {}
+        for user in all_users:
+            sender = int(user[1:])
+            csv_gr = df.loc[df['SENDER'] == "U"+str(sender), 'group'].values[0]
+            if str(csv_gr) != 'nan':
+                next_courses[sender] = print_next_course(week_day, csv_gr, is_even, course_index)
 
+        current_time = datetime.datetime.now() + datetime.timedelta(hours=3)
+        current_time = datetime.datetime.strptime(str(current_time).split(" ")[1][:-7], "%H:%M:%S")
+        #create tasks to send next courses simultaneously to all users
+        tasks = []
+        for sender, next_course in next_courses.items():
+            if next_course != "":
+                async def send_message_later(sender, next_course):
+                    await asyncio.sleep((time_before_course - current_time).total_seconds())
+                    if str(df.loc[df['SENDER'] == "U"+str(sender), 'noti'].values[0]) == 'on':
+                        await client.send_message(sender, "\nPerechea urmatoare:" + next_course, parse_mode="HTML")
+                        send_logs("U"+str(sender) + " - send next course", "info")
+                task = asyncio.create_task(send_message_later(sender, next_course))
+                tasks.append(task)
+
+        if tasks:
+            send_logs(f"Waiting for next course - {str(time_before_course - current_time)}", 'info')
+            await asyncio.gather(*tasks)
+        #if there is no next course to any user
+        else:
+            send_logs(f"No users have the next course. Waiting - {str(time_before_course - current_time)}", 'info')
+            await asyncio.sleep((time_before_course - current_time).total_seconds() - 60)
+    #repeat
+    await send_curr_course_users(df, week_day, is_even)
+    
 async def send_schedule_tomorrow(df):
     while True:
         #gain vars
@@ -401,7 +414,6 @@ async def send_schedule_tomorrow(df):
         else:
             send_logs("waiting for tomorrow mess - " + str(scheduled - curr_time), 'info')
             temp_is_even = (now + datetime.timedelta(days=1)).isocalendar().week % 2
-            text = "\nOrarul de maine("
             users_with_notification_on = df.loc[df['noti'] == 'on', 'SENDER'].values
             await asyncio.sleep((scheduled - curr_time).total_seconds())
             for user in users_with_notification_on:
@@ -414,11 +426,11 @@ async def send_schedule_tomorrow(df):
                         #send the schedule
                         day_sch = print_day(week_day, csv_gr, temp_is_even)
                         if day_sch != "":
-                            text += week_days[week_day] +"):\n" + day_sch
+                            text = "\nOrarul de maine(" + week_days[week_day] +"):\n" + day_sch
                             await client.send_message(sender, text, parse_mode="HTML")
                             send_logs("U"+str(sender) + " - send schedule for tomorrow", 'info')
                 except Exception as e:
-                    send_logs(f"Error sending sch tomorr to {sender}: {e}", 'error')
+                    send_logs(f"Error sending sch tomorr to {str(sender)}: {e}", 'error')
 
 
 
