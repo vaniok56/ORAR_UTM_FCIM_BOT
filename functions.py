@@ -2,6 +2,7 @@ import numpy as np
 import openpyxl # excel read library
 import datetime
 import pytz
+moldova_tz = pytz.timezone('Europe/Chisinau')
 
 time_zone = pytz.timezone('Europe/Chisinau')
 #logs
@@ -20,7 +21,7 @@ logging.Formatter.converter = lambda *args: \
 #classes that are not splited by odd/even
 not_dual = np.array([4, 11, 24, 25, 38, 49, 50, 51, 64, 65, 66, 67, 68])
 
-is_even = (datetime.datetime.today() + datetime.timedelta(hours=3)).isocalendar().week % 2
+is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
 
 #hours
 hours =   [
@@ -184,11 +185,6 @@ def print_sapt(is_even, cur_group) :
         
         row_start += 14
     return week_sch
-
-def curr_time_logs():
-    curr_time_logs = datetime.datetime.now() + datetime.timedelta(hours=3)
-    curr_time_logs = curr_time_logs.__str__().split(' ')[0][-5:] + " " + curr_time_logs.__str__().split(' ')[1].split('.')[0] + " | "
-    return curr_time_logs
 
 def send_logs(message, type):
     if type =='info':

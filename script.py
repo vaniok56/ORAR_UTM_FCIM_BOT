@@ -1,23 +1,21 @@
-# orar_utm_fcim_bot version 0.8.0
+# orar_utm_fcim_bot version 0.8.1
 ### changelog:
-# rewrote(improved) sending next course logic
-# used my timezone for logs (requires pytz)
-# updated orar.xlsx
-# a bunch of minor improvements
+# better timezone handle
+# bot resets 10 mins after tommorow mess
 
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
 
 import configparser # read
 import datetime
+import pytz
 
-from functions import print_day, print_sapt, print_next_course, curr_time_logs, button_grid, send_logs
+from functions import print_day, print_sapt, print_next_course, button_grid, send_logs
 from functions import cur_group, hours, week_days, is_even
 from group_lists import group_list, specialties
 
 import pandas as pd
 import numpy as np
-import cProfile
 import asyncio
 
 #### Access credentials
@@ -41,7 +39,9 @@ bot_kb = [
 
 df = pd.read_csv('BD.csv') #DB
 #cur_speciality = 'TI'
-week_day = int(datetime.datetime.today().weekday()) #weekday today(0-6)
+
+moldova_tz = pytz.timezone('Europe/Chisinau')
+week_day = int((datetime.datetime.now(moldova_tz)).weekday()) #weekday today(0-6)
 
 #send a custom message to all active users
 async def send_mess(df):
@@ -190,7 +190,7 @@ async def oree(event):
 @client.on(events.NewMessage(pattern='/(?i)maine|Orarul de maine 📅')) 
 async def mainee(event):
     global df, cur_group
-    week_day = int((datetime.datetime.today() + datetime.timedelta(days=1) + datetime.timedelta(hours=3)).weekday()) #weekday tomorrow(0-6)
+    week_day = int((datetime.datetime.now(moldova_tz) + datetime.timedelta(days=1)).weekday()) #weekday tomorrow(0-6)
     sender = await event.get_sender()
     SENDER = sender.id
     try:
@@ -200,7 +200,7 @@ async def mainee(event):
         if cur_group == "":
             raise ValueError('no gr')
         else: 
-            temp_is_even = (datetime.datetime.today() + datetime.timedelta(days=1) + datetime.timedelta(hours=3)).isocalendar().week % 2
+            temp_is_even = (datetime.datetime.now(moldova_tz) + datetime.timedelta(days=1)).isocalendar().week % 2
             #send the schedule
             day_sch = print_day(week_day, cur_group, temp_is_even)
             if day_sch != "":
@@ -225,8 +225,8 @@ async def azii(event):
         if cur_group == "":
             raise ValueError(str(sender) + 'no gr')
         else: 
-            week_day = int((datetime.datetime.today() + datetime.timedelta(hours=3)).weekday()) #weekday today(0-6)
-            is_even = (datetime.datetime.today() + datetime.timedelta(hours=3)).isocalendar().week % 2
+            week_day = int((datetime.datetime.now(moldova_tz)).weekday()) #weekday today(0-6)
+            is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
             day_sch = print_day(week_day, cur_group, is_even)
             if day_sch != "":
                 text = "\n\nGrupa - " + cur_group + "\nOrarul de azi(" + week_days[week_day] +"):\n" + day_sch
@@ -250,7 +250,7 @@ async def sapt_curr(event):
         if cur_group == "":
             raise ValueError(str(sender) + 'no gr')
         else: 
-            is_even = (datetime.datetime.today() + datetime.timedelta(hours=3)).isocalendar().week % 2
+            is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
             text = "\nGrupa - " + cur_group + "\nOrarul pe saptamana aceasta:" + print_sapt(is_even, cur_group)
             await client.send_message(SENDER, text, parse_mode="HTML")
             send_logs("U"+str(SENDER) + " - /sapt_curenta", 'info')
@@ -270,7 +270,7 @@ async def sapt_viit(event):
         if cur_group == "":
             raise ValueError(str(sender) + 'no gr')
         else: 
-            is_even = (datetime.datetime.today() + datetime.timedelta(hours=3)).isocalendar().week % 2
+            is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
             is_even = not is_even
             text = "\nGrupa - " + cur_group + "\nOrarul pe saptamana viitoare:" + print_sapt(is_even, cur_group)
             await client.send_message(SENDER, text, parse_mode="HTML")
@@ -294,8 +294,6 @@ async def alege_grupaa(event):
 #speciality click event handle
 @client.on(events.CallbackQuery())
 async def speciality_callback(event):
-    #client.edit_message(event.sender_id, event.message_id)
-    #global cur_speciality
     sender = await event.get_sender()
     SENDER = sender.id
     if event.data in specialties:
@@ -351,8 +349,8 @@ async def group_callback(event):
 async def send_curr_course_users(df, week_day, is_even):
     send_logs("Total users - " +str(len(df.loc[df['group'].str.len() > -1, 'SENDER'].values)), 'info')
     send_logs("Notification on users - " +str(len(df.loc[df['noti'] == 'on', 'SENDER'].values)), 'info')
-    current_time = datetime.datetime.now() + datetime.timedelta(hours=3)
-    current_time = datetime.datetime.strptime(str(current_time).split(" ")[1][:-7], "%H:%M:%S")
+    current_time = datetime.datetime.now(moldova_tz).time()
+    current_time = datetime.datetime.strptime(str(current_time)[:-7], "%H:%M:%S")
     #next course index
     for course_index, hour in enumerate(hours):
         course_time = datetime.datetime.strptime(hour[0].split(" - ")[0], "%H:%M")
@@ -375,9 +373,8 @@ async def send_curr_course_users(df, week_day, is_even):
             csv_gr = df.loc[df['SENDER'] == "U"+str(sender), 'group'].values[0]
             if str(csv_gr) != 'nan':
                 next_courses[sender] = print_next_course(week_day, csv_gr, is_even, course_index)
-
-        current_time = datetime.datetime.now() + datetime.timedelta(hours=3)
-        current_time = datetime.datetime.strptime(str(current_time).split(" ")[1][:-7], "%H:%M:%S")
+        current_time = datetime.datetime.now(moldova_tz).time()
+        current_time = datetime.datetime.strptime(str(current_time)[:-7], "%H:%M:%S")
         #create tasks to send next courses simultaneously to all users
         tasks = []
         for sender, next_course in next_courses.items():
@@ -396,7 +393,7 @@ async def send_curr_course_users(df, week_day, is_even):
         #if there is no next course to any user
         else:
             send_logs(f"No users have the next course. Waiting - {str(time_before_course - current_time)}", 'info')
-            await asyncio.sleep((time_before_course - current_time).total_seconds() - 60)
+            await asyncio.sleep(3600)
     #repeat
     await send_curr_course_users(df, week_day, is_even)
     
@@ -437,7 +434,7 @@ async def send_schedule_tomorrow(df):
 
 @client.on(events.NewMessage(pattern='/(?i)test_noti')) 
 async def test_print_next_course(event):
-    week_day = int((datetime.datetime.today()).weekday())    
+    week_day = int((datetime.datetime.now(moldova_tz)).weekday())    
     is_even = datetime.datetime.today().isocalendar().week % 2
     csv_gr = list(df.loc[df['SENDER'] == "U"+str(500303890), 'group'])[0]
     sender = 500303890
@@ -457,7 +454,6 @@ async def test_print_next_course(event):
 if __name__ == '__main__':
     send_logs("############################################", 'info')
     send_logs("Bot Started!", 'info')
-    #cProfile.run('aaaaa(week_day, cur_group, is_even)', sort='tottime')
     loop = client.loop
     loop.create_task(send_curr_course_users(df, week_day, is_even))
     loop.create_task(send_schedule_tomorrow(df))

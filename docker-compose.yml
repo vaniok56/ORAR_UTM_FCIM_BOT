@@ -15,7 +15,7 @@ services:
     command:
       - |
         while true; do
-          if [ $(date +'%H:%M') = 18:00 ] || [ $(date +'%H:%M') = 04:00 ]; then
+          if [ $(date +'%H:%M') = 17:10 ] || [ $(date +'%H:%M') = 04:00 ]; then
             docker restart orarbot
           fi
           sleep 60
