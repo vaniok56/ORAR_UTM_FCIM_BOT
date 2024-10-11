@@ -1,7 +1,8 @@
-# orar_utm_fcim_bot version 0.8.1
+# orar_utm_fcim_bot version 0.8.2
 ### changelog:
-# better timezone handle
-# bot resets 10 mins after tommorow mess
+# added admin feature - stats
+# added donations(give me your money)
+# a bit more error handling
 
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
@@ -43,12 +44,21 @@ df = pd.read_csv('BD.csv') #DB
 moldova_tz = pytz.timezone('Europe/Chisinau')
 week_day = int((datetime.datetime.now(moldova_tz)).weekday()) #weekday today(0-6)
 
+admins = df.loc[df['admin'] == 1, 'SENDER'].values
+
 #send a custom message to all active users
 async def send_mess(df):
     text = ""
-    #text = "Au fost facute careva modificari in orar pentru ziua de joi. Orarul se importeaza manual asa ca va rog sa verificati pe site \n"
+    text = "Salut tuturor! Nu mă așteptam să văd atât de mulți utilizatori! Mă bucur că botul se răspândește rapid prin UTM.\n"
+    text += "   În orice caz, am adăugat o secțiune de donații. Nu insist, dar mi-ar plăcea să vă gândiți la asta :)\n"
+    text += " /donatii\n"
     #text += "[orarul](https://fcim.utm.md/procesul-de-studii/orar/)\n"
-    if text !="":
+    now = datetime.datetime.now(moldova_tz).time()
+    current_time = datetime.datetime.strptime(str(now)[:-7], "%H:%M:%S")
+    scheduled = datetime.datetime.strptime("11:20:00", "%H:%M:%S")
+    if text != "":
+        send_logs("waiting to send a message to all users - " + str(scheduled - current_time), 'info')
+        #await asyncio.sleep((scheduled - current_time).total_seconds())
         #all_users = df.loc[df['group'].str.len() > -1, 'SENDER'].values
         all_users = df.loc[df['SENDER'] == 'U500303890', 'SENDER'].values
         #all_users = df.loc[df['group'] == 'TI-241', 'SENDER'].values
@@ -127,8 +137,7 @@ async def helpp(event):
     text += "/sapt_viitoare - orar pe saptamana viitoare\n"
     text += "/notifon - notificari on\n"
     text += "/notifoff - notificari off\n"
-    #text += "/alege - NOT IMPLEMENTED orar pe o zi concreta cu butoane\n"
-    #text += "/sesiuni - NOT IMPLEMENTED orarul sesiunilor\n"
+    text += "/donatii - donatii\n"
     await client.send_message(SENDER, text, parse_mode="HTML")
     send_logs("U"+str(SENDER) + " - /help", 'info')
 
@@ -345,8 +354,53 @@ async def group_callback(event):
             await event.answer('Grupa a fost selectata!')
             await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML")
 
+#/stats
+@client.on(events.NewMessage(pattern='/(?i)stats')) 
+async def statsss(event):
+    sender = await event.get_sender()
+    SENDER = sender.id
+    if "U"+str(SENDER) in admins:
+        text = "Stats:\n"
+        counted = {}
+        all_users = df.loc[df['group'].str.len() != "", 'SENDER'].values
+        for user in all_users:
+            user_id = int(user[1:])
+            group_name = df.loc[df['SENDER'] == "U"+str(user_id), 'group'].values[0]
+            if str(group_name) != "nan":
+                if group_name not in counted:
+                    counted[group_name] = 0
+                counted[group_name] += 1
+        # Build stats text
+        for group, count in counted.items():
+            text += f"{group} - {count} users\n"
+        text += "Total users - " + str(len(all_users)) + "\n"
+        text += "Active users - " + str(len(df.loc[df['group'].str.len() > -1, 'SENDER'].values)) + "\n"
+        text += "Users with notifications - " + str(len(df.loc[df['noti'] == 'on', 'SENDER'].values))
+        
+    else:
+        text = "Nu ai acces!"
+    await client.send_message(SENDER, text, parse_mode="HTML")
+    send_logs("U"+str(SENDER) + " - /stats", "info")
+
+@client.on(events.NewMessage(pattern='/(?i)donatii')) 
+async def donatiii(event):
+    sender = await event.get_sender()
+    SENDER = sender.id
+    text = "Buy me a coffee ☕️\n\n"
+    text += "      Destinatorul:\n"
+    text += "`Ivan Proscurchin`\n\n"
+    text += "       **MIA**\n"
+    text += "`79273147`\n\n"
+    text += "       **MICB**\n"
+    text += "`5574 8402 5994 1411`\n\n"
+    text += "       **MAIB**\n"
+    text += "`5102 1800 6389 5169`\n"
+
+    await client.send_message(SENDER, text, parse_mode="Markdown")
+    send_logs("U"+str(SENDER) + " - /donatii", 'info')
+
 #extract all users with notifications on
-async def send_curr_course_users(df, week_day, is_even):
+async def send_curr_course_users(week_day, is_even):
     send_logs("Total users - " +str(len(df.loc[df['group'].str.len() > -1, 'SENDER'].values)), 'info')
     send_logs("Notification on users - " +str(len(df.loc[df['noti'] == 'on', 'SENDER'].values)), 'info')
     current_time = datetime.datetime.now(moldova_tz).time()
@@ -382,8 +436,11 @@ async def send_curr_course_users(df, week_day, is_even):
                 async def send_message_later(sender, next_course):
                     await asyncio.sleep((time_before_course - current_time).total_seconds())
                     if str(df.loc[df['SENDER'] == "U"+str(sender), 'noti'].values[0]) == 'on':
-                        await client.send_message(sender, "\nPerechea urmatoare:" + next_course, parse_mode="HTML")
-                        send_logs("U"+str(sender) + " - send next course", "info")
+                        try:
+                            await client.send_message(sender, "\nPerechea urmatoare:" + next_course, parse_mode="HTML")
+                            send_logs("U"+str(sender) + " - send next course", "info")
+                        except Exception as e:
+                            send_logs(f"Error sending next course to {str(sender)}: {e}", 'error')
                 task = asyncio.create_task(send_message_later(sender, next_course))
                 tasks.append(task)
 
@@ -395,24 +452,24 @@ async def send_curr_course_users(df, week_day, is_even):
             send_logs(f"No users have the next course. Waiting - {str(time_before_course - current_time)}", 'info')
             await asyncio.sleep(3600)
     #repeat
-    await send_curr_course_users(df, week_day, is_even)
+    await send_curr_course_users(week_day, is_even)
     
-async def send_schedule_tomorrow(df):
+async def send_schedule_tomorrow():
     while True:
         #gain vars
-        now = datetime.datetime.now() + datetime.timedelta(hours=3, seconds=-1)
-        curr_time = datetime.datetime.strptime(str(now).split(" ")[1][:-7], "%H:%M:%S")
+        now = datetime.datetime.now(moldova_tz)
+        current_time = datetime.datetime.strptime(str(now.time())[:-7], "%H:%M:%S")
         week_day = int((now + datetime.timedelta(days=1)).weekday())
         scheduled = datetime.datetime.strptime("20:00:00", "%H:%M:%S")
         #wait 4h 1s if waiting is negative
-        if (scheduled - curr_time).total_seconds() < 1:
+        if (scheduled - current_time).total_seconds() < 1:
             send_logs("waiting positive for tomorrow", 'info')
             await asyncio.sleep(14401)
         else:
-            send_logs("waiting for tomorrow mess - " + str(scheduled - curr_time), 'info')
+            send_logs("waiting for tomorrow mess - " + str(scheduled - current_time), 'info')
             temp_is_even = (now + datetime.timedelta(days=1)).isocalendar().week % 2
             users_with_notification_on = df.loc[df['noti'] == 'on', 'SENDER'].values
-            await asyncio.sleep((scheduled - curr_time).total_seconds())
+            await asyncio.sleep((scheduled - current_time).total_seconds())
             for user in users_with_notification_on:
                 sender = int(user[1:])
                 csv_gr = list(df.loc[df['SENDER'] == "U"+str(sender), 'group'])[0]
@@ -455,7 +512,7 @@ if __name__ == '__main__':
     send_logs("############################################", 'info')
     send_logs("Bot Started!", 'info')
     loop = client.loop
-    loop.create_task(send_curr_course_users(df, week_day, is_even))
-    loop.create_task(send_schedule_tomorrow(df))
+    loop.create_task(send_curr_course_users(week_day, is_even))
+    loop.create_task(send_schedule_tomorrow())
     #loop.create_task(send_mess(df)) #mess to all users
     client.run_until_disconnected()
