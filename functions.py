@@ -19,7 +19,9 @@ logging.Formatter.converter = lambda *args: \
     datetime.datetime.now(time_zone).timetuple()
 
 #classes that are not splited by odd/even
-not_dual = np.array([4, 11, 24, 25, 38, 49, 50, 51, 64, 65, 66, 67, 68])
+####################################################################
+#not_dual = np.array([4, 11, 24, 25, 38, 49, 50, 51, 64, 65, 66, 67, 68])
+not_dual = np.array([12, 25, 26, 39, 50, 51, 66, 67, 68, 69, 70])
 
 is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
 
@@ -96,8 +98,10 @@ def print_daily(schedule, row_start, is_even, col_gr):
     seen = set() 
 
     #rowstart depending on not_dual
-    row_start -= sum(1 for i in range(1, row_start) if np.isin(i, not_dual) and i != 51 and i<65)
-    if (is_even == True) and (row_start != 51) and (row_start < 64):
+    #row_start -= sum(1 for i in range(1, row_start) if np.isin(i, not_dual) and i != 51 and i<65)
+    row_start -= sum(1 for i in range(1, row_start) if np.isin(i, not_dual) and i<66)
+    #if (is_even == True) and (row_start != 51) and (row_start < 64):
+    if (is_even == True) and (row_start < 65):
         row_start+=1
     match_is_even = not is_even
     #print("   " + str(row_start) + "\n")
@@ -118,8 +122,9 @@ def print_daily(schedule, row_start, is_even, col_gr):
             is_not_dual = True
             match_is_even = not match_is_even
         # friday is a cursed day
-        if i == 52 and is_even:
-            match_is_even = not match_is_even
+        #if i == 52 and is_even:
+            #match_is_even = not match_is_even
+        
         #Add the course if even/odd or a row was skiped
         if match_is_even == is_even or is_not_dual == True :
             #print(str(i) + "\n")

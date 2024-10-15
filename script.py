@@ -1,8 +1,7 @@
-# orar_utm_fcim_bot version 0.8.2
+# orar_utm_fcim_bot version 0.8.3
 ### changelog:
-# added admin feature - stats
-# added donations(give me your money)
-# a bit more error handling
+# updated orar.xlsx
+# minor changes
 
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
@@ -21,7 +20,7 @@ import asyncio
 
 #### Access credentials
 config = configparser.ConfigParser() # Define the method to read the configuration file
-config.read('config.ini') # read config.ini file
+config.read('config.ini') # read config.ini file #######################
 
 api_id = config.get('default','api_id') # get the api id
 api_hash = config.get('default','api_hash') # get the api hash
@@ -215,7 +214,7 @@ async def mainee(event):
             if day_sch != "":
                 text = "\n\nGrupa - " + cur_group + "\nOrarul de maine(" + week_days[week_day] +"):\n" + day_sch
             else: 
-                text = "\nGrupa - " + cur_group + "\nNu ai perechi azi(" + week_days[week_day] +")"
+                text = "\nGrupa - " + cur_group + "\nNu ai perechi maine(" + week_days[week_day] +")"
             await client.send_message(SENDER, text, parse_mode="HTML")
             send_logs("U"+str(SENDER) + " - /maine", 'info')
     except Exception as e:
@@ -401,8 +400,6 @@ async def donatiii(event):
 
 #extract all users with notifications on
 async def send_curr_course_users(week_day, is_even):
-    send_logs("Total users - " +str(len(df.loc[df['group'].str.len() > -1, 'SENDER'].values)), 'info')
-    send_logs("Notification on users - " +str(len(df.loc[df['noti'] == 'on', 'SENDER'].values)), 'info')
     current_time = datetime.datetime.now(moldova_tz).time()
     current_time = datetime.datetime.strptime(str(current_time)[:-7], "%H:%M:%S")
     #next course index
@@ -450,7 +447,7 @@ async def send_curr_course_users(week_day, is_even):
         #if there is no next course to any user
         else:
             send_logs(f"No users have the next course. Waiting - {str(time_before_course - current_time)}", 'info')
-            await asyncio.sleep(3600)
+            await asyncio.sleep((time_before_course - current_time).total_seconds())
     #repeat
     await send_curr_course_users(week_day, is_even)
     
