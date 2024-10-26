@@ -1,7 +1,9 @@
-# orar_utm_fcim_bot version 0.8.3
+# orar_utm_fcim_bot version 0.8.4
 ### changelog:
 # updated orar.xlsx
-# minor changes
+# updated README.md
+# added imgs for README.md
+# improved some stuff
 
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
@@ -20,7 +22,7 @@ import asyncio
 
 #### Access credentials
 config = configparser.ConfigParser() # Define the method to read the configuration file
-config.read('config.ini') # read config.ini file #######################
+config.read('config.ini') # read config.ini file 
 
 api_id = config.get('default','api_id') # get the api id
 api_hash = config.get('default','api_hash') # get the api hash
@@ -44,20 +46,21 @@ moldova_tz = pytz.timezone('Europe/Chisinau')
 week_day = int((datetime.datetime.now(moldova_tz)).weekday()) #weekday today(0-6)
 
 admins = df.loc[df['admin'] == 1, 'SENDER'].values
+noti_send = 0
 
 #send a custom message to all active users
 async def send_mess(df):
     text = ""
-    text = "Salut tuturor! Nu mă așteptam să văd atât de mulți utilizatori! Mă bucur că botul se răspândește rapid prin UTM.\n"
-    text += "   În orice caz, am adăugat o secțiune de donații. Nu insist, dar mi-ar plăcea să vă gândiți la asta :)\n"
-    text += " /donatii\n"
+    text = "Salut! Vă rog să citiți acest mesaj.\n"
+    text += "\nFără sprijinul decanului, botul va funcționa cel mult până anul viitor, din cauza formatului incomod al orarului de pe website. Vin cu rugamintea să reclamați colegilor de la UTM FCIM botul dat, pentru a avea mai multe șanse să primesc ajutorul necesar din partea decanului.\n"
+    text += "\nSucces la sesiunile rămase! Peace✌️\n"
     #text += "[orarul](https://fcim.utm.md/procesul-de-studii/orar/)\n"
     now = datetime.datetime.now(moldova_tz).time()
     current_time = datetime.datetime.strptime(str(now)[:-7], "%H:%M:%S")
-    scheduled = datetime.datetime.strptime("11:20:00", "%H:%M:%S")
+    scheduled = datetime.datetime.strptime("13:00:00", "%H:%M:%S")
     if text != "":
         send_logs("waiting to send a message to all users - " + str(scheduled - current_time), 'info')
-        #await asyncio.sleep((scheduled - current_time).total_seconds())
+        await asyncio.sleep((scheduled - current_time).total_seconds())
         #all_users = df.loc[df['group'].str.len() > -1, 'SENDER'].values
         all_users = df.loc[df['SENDER'] == 'U500303890', 'SENDER'].values
         #all_users = df.loc[df['group'] == 'TI-241', 'SENDER'].values
@@ -290,6 +293,7 @@ async def sapt_viit(event):
 #/alege_grupa
 @client.on(events.NewMessage(pattern='/(?i)alege_grupa')) 
 async def alege_grupaa(event):
+    global df
     sender = await event.get_sender()
     SENDER = sender.id
     text = "Alege specialitea:"
@@ -297,11 +301,22 @@ async def alege_grupaa(event):
     button_per_r = 4
     global button_rows_spec
     button_rows_spec = button_grid(spec_butt, button_per_r)
+    #if user is not in list, add it
+    if "U"+str(SENDER) not in "U"+str(df['SENDER'].to_list()):
+        data =  {'SENDER' : ["U"+str(SENDER)],
+                'group' : [""],
+                'spec' : [""],
+                'year' : [""],}
+        new_dat = pd.DataFrame(data)
+        df = pd.concat([df, new_dat]) 
+        df.to_csv('BD.csv', encoding='utf-8', index=False)
+        send_logs("New user! - " + "U"+str(SENDER), 'info')
     await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows_spec)
-
+    
 #speciality click event handle
 @client.on(events.CallbackQuery())
 async def speciality_callback(event):
+    global df
     sender = await event.get_sender()
     SENDER = sender.id
     if event.data in specialties:
@@ -332,17 +347,6 @@ async def group_callback(event):
     if event.data in group_items:
         cur_group = group_items.get(event.data).replace(" ", "")
         if cur_group:
-            #if user is not in list, add it
-            if "U"+str(SENDER) not in "U"+str(df['SENDER'].to_list()):
-                data =  {'SENDER' : ["U"+str(SENDER)],
-                        'group' : [""],
-                        'spec' : [""],
-                        'year' : [""],}
-                new_dat = pd.DataFrame(data)
-                df = pd.concat([df, new_dat]) 
-                df.to_csv('BD.csv', encoding='utf-8', index=False)
-                send_logs("New user! - " + "U"+str(SENDER), 'info')
-
             #updates the current group
             df.loc[df['SENDER'] == "U"+str(SENDER), 'group'] = cur_group #send cur_group to df
             df.to_csv('BD.csv', encoding='utf-8', index=False) #save df
@@ -369,8 +373,11 @@ async def statsss(event):
                 if group_name not in counted:
                     counted[group_name] = 0
                 counted[group_name] += 1
-        # Build stats text
-        for group, count in counted.items():
+
+        #sort
+        sorted_counted = dict(sorted(counted.items()))
+        
+        for group, count in sorted_counted.items():
             text += f"{group} - {count} users\n"
         text += "Total users - " + str(len(all_users)) + "\n"
         text += "Active users - " + str(len(df.loc[df['group'].str.len() > -1, 'SENDER'].values)) + "\n"
@@ -400,6 +407,8 @@ async def donatiii(event):
 
 #extract all users with notifications on
 async def send_curr_course_users(week_day, is_even):
+    global noti_send
+    noti_send = 0
     current_time = datetime.datetime.now(moldova_tz).time()
     current_time = datetime.datetime.strptime(str(current_time)[:-7], "%H:%M:%S")
     #next course index
@@ -422,8 +431,12 @@ async def send_curr_course_users(week_day, is_even):
         for user in all_users:
             sender = int(user[1:])
             csv_gr = df.loc[df['SENDER'] == "U"+str(sender), 'group'].values[0]
-            if str(csv_gr) != 'nan':
-                next_courses[sender] = print_next_course(week_day, csv_gr, is_even, course_index)
+            if str(csv_gr) != 'nan' or str(csv_gr) != '':
+                try:
+                    next_courses[sender] = print_next_course(week_day, csv_gr, is_even, course_index)
+                except Exception as e:
+                    send_logs(f"Error preparing next course to {str(sender)}: {e}", 'error')
+
         current_time = datetime.datetime.now(moldova_tz).time()
         current_time = datetime.datetime.strptime(str(current_time)[:-7], "%H:%M:%S")
         #create tasks to send next courses simultaneously to all users
@@ -431,11 +444,13 @@ async def send_curr_course_users(week_day, is_even):
         for sender, next_course in next_courses.items():
             if next_course != "":
                 async def send_message_later(sender, next_course):
+                    global noti_send
                     await asyncio.sleep((time_before_course - current_time).total_seconds())
                     if str(df.loc[df['SENDER'] == "U"+str(sender), 'noti'].values[0]) == 'on':
                         try:
                             await client.send_message(sender, "\nPerechea urmatoare:" + next_course, parse_mode="HTML")
                             send_logs("U"+str(sender) + " - send next course", "info")
+                            noti_send+=1
                         except Exception as e:
                             send_logs(f"Error sending next course to {str(sender)}: {e}", 'error')
                 task = asyncio.create_task(send_message_later(sender, next_course))
@@ -444,6 +459,7 @@ async def send_curr_course_users(week_day, is_even):
         if tasks:
             send_logs(f"Waiting for next course - {str(time_before_course - current_time)}", 'info')
             await asyncio.gather(*tasks)
+            send_logs(f"Send next course to {str(noti_send)} users",'info')
         #if there is no next course to any user
         else:
             send_logs(f"No users have the next course. Waiting - {str(time_before_course - current_time)}", 'info')
@@ -482,27 +498,6 @@ async def send_schedule_tomorrow():
                             send_logs("U"+str(sender) + " - send schedule for tomorrow", 'info')
                 except Exception as e:
                     send_logs(f"Error sending sch tomorr to {str(sender)}: {e}", 'error')
-
-
-
-
-@client.on(events.NewMessage(pattern='/(?i)test_noti')) 
-async def test_print_next_course(event):
-    week_day = int((datetime.datetime.now(moldova_tz)).weekday())    
-    is_even = datetime.datetime.today().isocalendar().week % 2
-    csv_gr = list(df.loc[df['SENDER'] == "U"+str(500303890), 'group'])[0]
-    sender = 500303890
-    for course_index in range(1,8):
-        #if seconds is negative
-        try:
-            next_course = print_next_course(week_day, csv_gr, is_even, course_index)
-        except: next_course = ""
-        if next_course != "":
-            await client.send_message(sender, str(course_index) + "\nPerechea urmatoare:" + next_course, parse_mode="HTML")
-            send_logs("U"+str(sender) + " - send next course", 'info')
-        
-    
-
 
 ### MAIN
 if __name__ == '__main__':
