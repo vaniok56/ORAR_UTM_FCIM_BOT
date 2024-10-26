@@ -15,7 +15,7 @@ Use these buttons to instantly access different parts of your schedule:
 - **Orarul saptamainii 🗓️** - View the schedule for the current week.
 - **Orele ⏰** - Check class times and breaks for the day.
 
-#### Sending next class and schedule for the next day
+### Sending next class and schedule for the next day
 
 Enable notifications at the start or use the `/notifon` commmand in the bot to receive:
 
