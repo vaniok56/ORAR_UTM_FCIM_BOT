@@ -21,7 +21,8 @@ logging.Formatter.converter = lambda *args: \
 #classes that are not splited by odd/even
 ####################################################################
 #not_dual = np.array([4, 11, 24, 25, 38, 49, 50, 51, 64, 65, 66, 67, 68])
-not_dual = np.array([12, 25, 26, 39, 50, 51, 66, 67, 68, 69, 70])
+#not_dual = np.array([12, 25, 26, 39, 50, 51, 66, 67, 68, 69, 70])
+not_dual = np.array([2, 9, 12, 25, 36, 37, 42, 47, 48, 59, 60, 63, 64 ,65 ,66])
 
 is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
 
@@ -99,9 +100,9 @@ def print_daily(schedule, row_start, is_even, col_gr):
 
     #rowstart depending on not_dual
     #row_start -= sum(1 for i in range(1, row_start) if np.isin(i, not_dual) and i != 51 and i<65)
-    row_start -= sum(1 for i in range(1, row_start) if np.isin(i, not_dual) and i<66)
+    row_start -= sum(1 for i in range(1, row_start) if np.isin(i, not_dual) and i<63)#and i< + number of first not dual course of suturday
     #if (is_even == True) and (row_start != 51) and (row_start < 64):
-    if (is_even == True) and (row_start < 65):
+    if (is_even == True) and (row_start < 63):
         row_start+=1
     match_is_even = not is_even
     #print("   " + str(row_start) + "\n")

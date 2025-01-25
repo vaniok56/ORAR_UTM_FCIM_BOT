@@ -1,9 +1,10 @@
-# orar_utm_fcim_bot version 0.8.4
+# orar_utm_fcim_bot version 0.8.5
 ### changelog:
 # updated orar.xlsx
-# updated README.md
-# added imgs for README.md
-# improved some stuff
+# added SIMU access button
+# added another admin rank
+# keyboard buttons now updates on each command
+# added /message command to send custom messages
 
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
@@ -35,8 +36,9 @@ client = TelegramClient('sessions/session_master', api_id, api_hash).start(bot_t
 bot_kb = [
         Button.text('Orarul de azi 📅', resize=True),
         Button.text('Orarul de maine 📅', resize=True),
-        Button.text('Orarul saptamainii 🗓️', resize=True),
-        Button.text('Orele ⏰', resize=True),
+        Button.text('Săptămâna curentă 🗓️', resize=True),
+        Button.text('Săptămâna viitoare 🗓️', resize=True),
+        types.KeyboardButtonSimpleWebView("SIMU📚", "https://simu.utm.md/students/"),
     ]
 
 df = pd.read_csv('BD.csv') #DB
@@ -45,33 +47,10 @@ df = pd.read_csv('BD.csv') #DB
 moldova_tz = pytz.timezone('Europe/Chisinau')
 week_day = int((datetime.datetime.now(moldova_tz)).weekday()) #weekday today(0-6)
 
-admins = df.loc[df['admin'] == 1, 'SENDER'].values
+#1 rank is higher
+admins1 = df.loc[df['admin'] == 1, 'SENDER'].values
+admins2 = df.loc[df['admin'] == 2, 'SENDER'].values
 noti_send = 0
-
-#send a custom message to all active users
-async def send_mess(df):
-    text = ""
-    text = "Salut! Vă rog să citiți acest mesaj.\n"
-    text += "\nFără sprijinul decanului, botul va funcționa cel mult până anul viitor, din cauza formatului incomod al orarului de pe website. Vin cu rugamintea să reclamați colegilor de la UTM FCIM botul dat, pentru a avea mai multe șanse să primesc ajutorul necesar din partea decanului.\n"
-    text += "\nSucces la sesiunile rămase! Peace✌️\n"
-    #text += "[orarul](https://fcim.utm.md/procesul-de-studii/orar/)\n"
-    now = datetime.datetime.now(moldova_tz).time()
-    current_time = datetime.datetime.strptime(str(now)[:-7], "%H:%M:%S")
-    scheduled = datetime.datetime.strptime("13:00:00", "%H:%M:%S")
-    if text != "":
-        send_logs("waiting to send a message to all users - " + str(scheduled - current_time), 'info')
-        await asyncio.sleep((scheduled - current_time).total_seconds())
-        #all_users = df.loc[df['group'].str.len() > -1, 'SENDER'].values
-        all_users = df.loc[df['SENDER'] == 'U500303890', 'SENDER'].values
-        #all_users = df.loc[df['group'] == 'TI-241', 'SENDER'].values
-        for user in all_users:
-            sender = int(user[1:])
-            try:
-                await client.send_message(sender, text, parse_mode="Markdown")
-                send_logs("Send succeseful to " + user, 'info')
-            except Exception as e:
-                send_logs(f"Error sending message to {str(sender)}: {e}", 'error')
-
 
 #/start
 @client.on(events.NewMessage(pattern="/(?i)start")) 
@@ -82,7 +61,6 @@ async def startt(event):
     text = "Salut!\nIn primul rand alege grupa\nPentru a afisa toate comenzile - /help\nContacte - /contacts\n"
     text += "Atentie! __**Orarul poate nu fi actual**__, nu raspund pentru absente"
     buttons_in_row = 2
-    #bot_kb.append(types.KeyboardButtonSimpleWebView("Orar pdf🥱", "https://fcim.utm.md/procesul-de-studii/orar/#toggle-id-2-closed",))
     button_rows = button_grid(bot_kb, buttons_in_row)
     await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows)
     #add the user to users
@@ -140,7 +118,8 @@ async def helpp(event):
     text += "/notifon - notificari on\n"
     text += "/notifoff - notificari off\n"
     text += "/donatii - donatii\n"
-    await client.send_message(SENDER, text, parse_mode="HTML")
+    button_rows = button_grid(bot_kb, 2)
+    await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
     send_logs("U"+str(SENDER) + " - /help", 'info')
 
 #/contacts
@@ -153,7 +132,8 @@ async def contactt(event):
     text += "[@vaniok56](https://t.me/vaniok56)\n"
     text += "Github repo: "
     text += "[ORAR_UTM_FCIM_BOT](https://github.com/vaniok56/ORAR_UTM_FCIM_BOT)\n"
-    await client.send_message(SENDER, text, parse_mode="Markdown")
+    button_rows = button_grid(bot_kb, 2)
+    await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows)
     send_logs("U"+str(SENDER) + " - /contacts", 'info')
 
 #/notifon
@@ -163,7 +143,8 @@ async def notifonn(event):
     sender = await event.get_sender()
     SENDER = sender.id
     text = "Notificarile sunt pornite!\n"
-    await client.send_message(SENDER, text, parse_mode="Markdown")
+    button_rows = button_grid(bot_kb, 2)
+    await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows)
     #noti is on
     df.loc[df['SENDER'] == "U"+str(SENDER), 'noti'] = "on"
     df.to_csv('BD.csv', encoding='utf-8', index=False)
@@ -176,7 +157,8 @@ async def notifofff(event):
     sender = await event.get_sender()
     SENDER = sender.id
     text = "Notificarile sunt stinse!\n"
-    await client.send_message(SENDER, text, parse_mode="Markdown")
+    button_rows = button_grid(bot_kb, 2)
+    await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows)
     #noti is on
     df.loc[df['SENDER'] == "U"+str(SENDER), 'noti'] = "off"
     df.to_csv('BD.csv', encoding='utf-8', index=False)
@@ -194,7 +176,8 @@ async def oree(event):
             text += "Pauza : " + "30 min\n"
         else:
             text += "Pauza : " + "15 min\n"
-    await client.send_message(SENDER, text, parse_mode="HTML")
+    button_rows = button_grid(bot_kb, 2)
+    await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
     send_logs("U"+str(SENDER) + " - /hours", 'info')
 
 #/maine
@@ -218,7 +201,8 @@ async def mainee(event):
                 text = "\n\nGrupa - " + cur_group + "\nOrarul de maine(" + week_days[week_day] +"):\n" + day_sch
             else: 
                 text = "\nGrupa - " + cur_group + "\nNu ai perechi maine(" + week_days[week_day] +")"
-            await client.send_message(SENDER, text, parse_mode="HTML")
+            button_rows = button_grid(bot_kb, 2)
+            await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
             send_logs("U"+str(SENDER) + " - /maine", 'info')
     except Exception as e:
         send_logs(f"Error sending sch tomorr to {str(SENDER)}: {e}", 'error')
@@ -243,14 +227,15 @@ async def azii(event):
                 text = "\n\nGrupa - " + cur_group + "\nOrarul de azi(" + week_days[week_day] +"):\n" + day_sch
             else: 
                 text = "\nGrupa - " + cur_group + "\nNu ai perechi azi(" + week_days[week_day] +")"
-            await client.send_message(SENDER, text, parse_mode="HTML")
+            button_rows = button_grid(bot_kb, 2)
+            await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
             send_logs("U"+str(SENDER) + " - /azi", 'info')
     except Exception as e:
         send_logs(f"Error sending sch today to {str(SENDER)}: {e}", 'info')
         await client.send_message(SENDER, "Inca nu ai ales grupa.\n/alege_grupa", parse_mode="HTML")
 
 #/sapt_cur
-@client.on(events.NewMessage(pattern='/(?i)sapt_curenta|Orarul saptamainii 🗓️')) 
+@client.on(events.NewMessage(pattern='/(?i)sapt_curenta|Săptămâna curentă 🗓️')) 
 async def sapt_curr(event):
     global df, cur_group, is_even
     sender = await event.get_sender()
@@ -263,14 +248,15 @@ async def sapt_curr(event):
         else: 
             is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
             text = "\nGrupa - " + cur_group + "\nOrarul pe saptamana aceasta:" + print_sapt(is_even, cur_group)
-            await client.send_message(SENDER, text, parse_mode="HTML")
+            button_rows = button_grid(bot_kb, 2)
+            await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
             send_logs("U"+str(SENDER) + " - /sapt_curenta", 'info')
     except Exception as e:
         send_logs(f"Error sending curr week to {str(SENDER)}: {e}", 'error')
         await client.send_message(SENDER, "Inca nu ai ales grupa.\n/alege_grupa", parse_mode="HTML")
 
 #/sapt_viit
-@client.on(events.NewMessage(pattern='/(?i)sapt_viitoare')) 
+@client.on(events.NewMessage(pattern='/(?i)sapt_viitoare|Săptămâna viitoare 🗓️')) 
 async def sapt_viit(event):
     global df, cur_group, is_even
     sender = await event.get_sender()
@@ -284,7 +270,8 @@ async def sapt_viit(event):
             is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
             is_even = not is_even
             text = "\nGrupa - " + cur_group + "\nOrarul pe saptamana viitoare:" + print_sapt(is_even, cur_group)
-            await client.send_message(SENDER, text, parse_mode="HTML")
+            button_rows = button_grid(bot_kb, 2)
+            await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
             send_logs("U"+str(SENDER) + " - /sapt_viitoare", 'info')
     except Exception as e:
         send_logs(f"Error sending next week to {str(SENDER)}: {e}", 'error')
@@ -306,7 +293,8 @@ async def alege_grupaa(event):
         data =  {'SENDER' : ["U"+str(SENDER)],
                 'group' : [""],
                 'spec' : [""],
-                'year' : [""],}
+                'year' : [""],
+                'noti' : ["off"],}
         new_dat = pd.DataFrame(data)
         df = pd.concat([df, new_dat]) 
         df.to_csv('BD.csv', encoding='utf-8', index=False)
@@ -362,7 +350,7 @@ async def group_callback(event):
 async def statsss(event):
     sender = await event.get_sender()
     SENDER = sender.id
-    if "U"+str(SENDER) in admins:
+    if "U"+str(SENDER) in admins2 or "U"+str(SENDER) in admins1:
         text = "Stats:\n"
         counted = {}
         all_users = df.loc[df['group'].str.len() != "", 'SENDER'].values
@@ -449,7 +437,7 @@ async def send_curr_course_users(week_day, is_even):
                     if str(df.loc[df['SENDER'] == "U"+str(sender), 'noti'].values[0]) == 'on':
                         try:
                             await client.send_message(sender, "\nPerechea urmatoare:" + next_course, parse_mode="HTML")
-                            send_logs("U"+str(sender) + " - send next course", "info")
+                            #send_logs("U"+str(sender) + " - send next course", "info")
                             noti_send+=1
                         except Exception as e:
                             send_logs(f"Error sending next course to {str(sender)}: {e}", 'error')
@@ -468,6 +456,7 @@ async def send_curr_course_users(week_day, is_even):
     await send_curr_course_users(week_day, is_even)
     
 async def send_schedule_tomorrow():
+    noti_day = 0
     while True:
         #gain vars
         now = datetime.datetime.now(moldova_tz)
@@ -495,9 +484,112 @@ async def send_schedule_tomorrow():
                         if day_sch != "":
                             text = "\nOrarul de maine(" + week_days[week_day] +"):\n" + day_sch
                             await client.send_message(sender, text, parse_mode="HTML")
-                            send_logs("U"+str(sender) + " - send schedule for tomorrow", 'info')
+                            #send_logs("U"+str(sender) + " - send schedule for tomorrow", 'info')
+                            noti_day+=1
                 except Exception as e:
                     send_logs(f"Error sending sch tomorr to {str(sender)}: {e}", 'error')
+        send_logs(f"Send next day to {str(noti_day)} users",'info')
+
+#message command handle
+@client.on(events.NewMessage(pattern='/(?i)message'))
+async def message_command(event):
+    sender = await event.get_sender()
+    SENDER = sender.id
+    if "U" + str(SENDER) in admins1:
+        text = "Select the recipient:"
+        buttons = [
+            Button.inline("Myself", data=b"to1"),
+            Button.inline("TI-241", data=b"to2"),
+            Button.inline("Notifon users", data=b"to3"),
+            Button.inline("A user", data=b"to4"),
+            Button.inline("All users", data=b"to5")
+        ]
+        buttons = button_grid(buttons, 2)
+        await client.send_message(SENDER, text, buttons=buttons)
+    else:
+        await client.send_message(SENDER, "You do not have permission to use this command.", parse_mode="HTML")
+
+@client.on(events.CallbackQuery())
+async def message_callback(event):
+    sender = await event.get_sender()
+    SENDER = sender.id
+    data = event.data.decode('utf-8')
+    
+    if data.startswith("to"):
+        await event.answer('The recipient was chosen')
+        global to_who, useridd, when, text, input_step
+        useridd = 0
+        to_who = int(data[2])
+        input_step = 1
+
+        if to_who == 4:
+            await client.send_message(SENDER, "Please enter the user ID(as int):")
+        else:
+            input_step = 2
+            await client.send_message(SENDER, "Please enter the time in HH:MM format or \"Now\":")
+
+        @client.on(events.NewMessage(from_users=SENDER))
+        async def handle_input(event):
+            global input_step, useridd, when, text
+            user_input = event.text
+
+            if input_step == 1:
+                if to_who == 4:
+                    useridd = int(user_input)
+                    input_step = 2
+                    await client.send_message(SENDER, "Please enter the time in HH:MM format or \"Now\":")
+                else:
+                    input_step = 2
+                    await client.send_message(SENDER, "Please enter the time in HH:MM format or \"Now\":")
+
+            elif input_step == 2:
+                when = user_input
+                input_step = 3
+                await client.send_message(SENDER, "Please enter the text:")
+
+            elif input_step == 3:
+                text = user_input
+                client.remove_event_handler(handle_input, events.NewMessage(from_users=SENDER))
+                await send_mess(to_who, when, useridd, df)
+
+#send a custom message to all active users
+async def send_mess(to_who, when, useridd, df):
+    now = datetime.datetime.now(moldova_tz).time()
+    current_time = datetime.datetime.strptime(str(now)[:-7], "%H:%M:%S")
+    if when == "Now":
+        scheduled = current_time
+    else:
+        scheduled = datetime.datetime.strptime(when, "%H:%M")
+    if text != "":
+        
+        if to_who == 1:
+            all_users = df.loc[df['SENDER'] == 'U500303890', 'SENDER'].values
+            send_logs("Sending to myself", 'info')
+        elif to_who == 2:
+            all_users = df.loc[df['group'] == 'TI-241', 'SENDER'].values
+            send_logs("Sending to TI-241", 'info')
+        elif to_who == 3:
+            all_users = df.loc[df['noti'] == 'on', 'SENDER'].values
+            send_logs("Sending to notifon users", 'info')
+        elif to_who == 4:
+            all_users = df.loc[df['SENDER'] == 'U'+str(useridd), 'SENDER'].values
+            send_logs("Sending to " + 'U'+str(useridd), 'info')
+        elif to_who == 5:
+            all_users = df.loc[df['group'].str.len() > -1, 'SENDER'].values
+            send_logs("Sending to everyone", 'info')
+        else:
+            send_logs("No users to send a message", 'info')
+            return
+        if when != "Now":
+            send_logs("waiting to send a message - " + str(scheduled - current_time), 'info')
+            await asyncio.sleep((scheduled - current_time).total_seconds())
+        for user in all_users:
+            sender = int(user[1:])
+            try:
+                await client.send_message(sender, text, parse_mode="Markdown")
+                send_logs("Send succeseful to " + user, 'info')
+            except Exception as e:
+                send_logs(f"Error sending message to {str(sender)}: {e}", 'error')
 
 ### MAIN
 if __name__ == '__main__':
@@ -506,5 +598,4 @@ if __name__ == '__main__':
     loop = client.loop
     loop.create_task(send_curr_course_users(week_day, is_even))
     loop.create_task(send_schedule_tomorrow())
-    #loop.create_task(send_mess(df)) #mess to all users
     client.run_until_disconnected()
