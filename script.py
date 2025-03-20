@@ -1,9 +1,9 @@
-# orar_utm_fcim_bot version 0.8.6
+# orar_utm_fcim_bot version 0.8.7
 ### changelog:
-# added the ability to chose the year of study(schedule not yet ready)
-# improved message command
-# improved and oprimised the print daily function(now it does not depend on not_dual array)
-# other minor changes
+# added caching for daily schedule
+# improved stats
+# code cleanup/optimization/bug fixes
+# added more DB columns
 
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
@@ -68,7 +68,10 @@ async def startt(event):
                  'group' : [""],
                  'spec' : [""],
                  'year' : [""],
-                 'noti' : ["off"],}
+                 'noti' : ["off"],
+                 'admin' : [0],
+                 'prem' : [0],
+                 'subgrupa' : [0]}
         new_dat = pd.DataFrame(data)
         df = pd.concat([df, new_dat])
         df.to_csv('BD.csv', encoding='utf-8', index=False)
@@ -163,7 +166,7 @@ async def notifofff(event):
     df.to_csv('BD.csv', encoding='utf-8', index=False)
     send_logs("U"+str(SENDER) + " - /notifoff", 'info')
 
-#/hours
+#/ore
 @client.on(events.NewMessage(pattern='/(?i)ore|Orele ⏰')) 
 async def oree(event):
     sender = await event.get_sender()
@@ -294,7 +297,10 @@ async def alege_grupaa(event):
                 'group' : [""],
                 'spec' : [""],
                 'year' : [""],
-                'noti' : ["off"],}
+                'noti' : ["off"],
+                'admin' : [0],
+                'prem' : [0],
+                'subgrupa' : [0]}
         new_dat = pd.DataFrame(data)
         df = pd.concat([df, new_dat]) 
         df.to_csv('BD.csv', encoding='utf-8', index=False)
@@ -319,6 +325,7 @@ async def year_callback(event):
             df.loc[df['SENDER'] == "U"+str(SENDER), 'year'] = int(cur_year) #send cur_year to df
             df.to_csv('BD.csv', encoding='utf-8', index=False) #save df
             await event.answer('Anul a fost selectat!')
+            send_logs("U"+str(SENDER) + " - /alege_grupa year - " + cur_year, "info")
 
 #speciality click event handle
 @client.on(events.CallbackQuery())
@@ -326,7 +333,7 @@ async def speciality_callback(event):
     global df
     sender = await event.get_sender()
     SENDER = sender.id
-    year = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'year'])[0]
+    year = int(list(df.loc[df['SENDER'] == "U"+str(SENDER), 'year'])[0])
     spec_items = specialties.get(str(year), {})
     if event.data in spec_items:
         cur_speciality = spec_items.get(event.data).replace(" ", "")
@@ -341,6 +348,7 @@ async def speciality_callback(event):
             button_rows = button_grid(spec_butt, button_per_r)
             await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
             await event.answer('Specialitatea a fost selectata!')
+            send_logs("U"+str(SENDER) + " - /alege_grupa spec - " + cur_speciality, "info")
 
 #group click event handle
 @client.on(events.CallbackQuery())
@@ -349,7 +357,7 @@ async def group_callback(event):
     sender = await event.get_sender()
     SENDER = sender.id
     cur_speciality = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'spec'])[0]
-    year = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'year'])[0]
+    year = int(list(df.loc[df['SENDER'] == "U"+str(SENDER), 'year'])[0])
     group_items = group_list.get(str(year), {})
     group_items = group_items.get(cur_speciality + str(year), {})
     if event.data in group_items:
@@ -370,32 +378,75 @@ async def group_callback(event):
 async def statsss(event):
     sender = await event.get_sender()
     SENDER = sender.id
-    if "U"+str(SENDER) in admins2 or "U"+str(SENDER) in admins1:
-        text = "Stats:\n"
-        counted = {}
-        all_users = df.loc[df['group'].str.len() != "", 'SENDER'].values
-        for user in all_users:
-            user_id = int(user[1:])
-            group_name = df.loc[df['SENDER'] == "U"+str(user_id), 'group'].values[0]
-            if str(group_name) != "nan":
-                if group_name not in counted:
-                    counted[group_name] = 0
-                counted[group_name] += 1
+    
+    # Check admin access first
+    if "U"+str(SENDER) not in admins1 and "U"+str(SENDER) not in admins2:
+        await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+        send_logs("U"+str(SENDER) + " - /stats - no acces", "info")
+        return
+    
+    # Filter for users with valid groups
+    users_with_groups = df[df['group'].notna() & (df['group'] != "")]
+    
+    # Get group counts efficiently using pandas
+    group_counts = users_with_groups['group'].value_counts().to_dict()
+    
+    # Process groups by year
+    groups_by_year = {}
+    categorized_groups = set()
+    
+    for group_name, count in group_counts.items():
+        try:
+            # Extract year from group name (e.g., TI-241 -> 24)
+            year = int(group_name[-3:-1])
+            
+            if year not in groups_by_year:
+                groups_by_year[year] = {}
+            
+            groups_by_year[year][group_name] = count
+            categorized_groups.add(group_name)
+        except (ValueError, IndexError):
+            pass
+    
+    # Build the report
+    text = "📊 Stats:\n\n"
+    
+    # Show years in descending order
+    for year in sorted(groups_by_year.keys(), reverse=True):
+        text += (f"🎓 Year {5-(year-20)}" if 20 <= year <= 24 else f"Year {year}")
+        
+        # Sort groups by count (descending) then name
+        sorted_groups = sorted(groups_by_year[year].items(), key=lambda x: (-x[1], x[0]))
+        
+        text += f" - {len(sorted_groups)} groups, {sum(count for group, count in sorted_groups)} users\n"
 
-        #sort
-        sorted_counted = dict(sorted(counted.items()))
+        for group, count in sorted_groups:
+            text += f"  • {group}: {count} users\n"
+        text += "\n"
+    
+    # Add uncategorized groups
+    other_groups = {g: c for g, c in group_counts.items() if g not in categorized_groups}
+    
+    if other_groups:
+        text += "📋 Other groups:\n"
+        for group, count in sorted(other_groups.items(), key=lambda x: (-x[1], x[0])):
+            text += f"  • {group}: {count} users\n"
+        text += "\n"
+    
+    # Add summary statistics
+    total_users = len(df)
+    users_with_groups_count = len(users_with_groups)
+    users_with_notifications = len(df[df['noti'] == 'on'])
+    
+    text += f"📈 Summary:\n"
+    text += f"  • Total users: {total_users}\n"
+    text += f"  • Total users with groups: {users_with_groups_count}\n"
+    text += f"  • Users with notifications: {users_with_notifications}"
         
-        for group, count in sorted_counted.items():
-            text += f"{group} - {count} users\n"
-        text += "Total users - " + str(len(all_users)) + "\n"
-        text += "Active users - " + str(len(df.loc[df['group'].str.len() > -1, 'SENDER'].values)) + "\n"
-        text += "Users with notifications - " + str(len(df.loc[df['noti'] == 'on', 'SENDER'].values))
-        
-    else:
-        text = "Nu ai acces!"
     await client.send_message(SENDER, text, parse_mode="HTML")
     send_logs("U"+str(SENDER) + " - /stats", "info")
 
+#/donatii
 @client.on(events.NewMessage(pattern='/(?i)donatii')) 
 async def donatiii(event):
     sender = await event.get_sender()
@@ -408,128 +459,154 @@ async def donatiii(event):
     text += "       **MICB**\n"
     text += "`5574 8402 5994 1411`\n\n"
     text += "       **MAIB**\n"
-    text += "`5102 1800 6389 5169`\n"
+    text += "`5397 0200 3403 5186`\n"
 
     await client.send_message(SENDER, text, parse_mode="Markdown")
     send_logs("U"+str(SENDER) + " - /donatii", 'info')
 
 
+async def get_next_course_time():
+    current_time = datetime.datetime.now(moldova_tz).time()
+    current_time = datetime.datetime.strptime(str(current_time)[:-7], "%H:%M:%S")
+    
+    #find next course index
+    course_index = 0
+    for i, hour in enumerate(hours):
+        course_time = datetime.datetime.strptime(hour[0].split("-")[0], "%H.%M")
+        if (course_time - datetime.timedelta(minutes=15)).time() > current_time.time():
+            course_index = i
+            break
+    
+    #15 min before the next course
+    time_before_course = course_time - datetime.timedelta(minutes=15)
+    
+    return current_time, course_index + 1, time_before_course
+
+async def prepare_next_courses(week_day, is_even, course_index):
+    next_courses = {}
+    all_users = df.loc[df['group'].str.len() > -1, 'SENDER'].values
+    
+    for user in all_users:
+        sender = int(user[1:])
+        csv_gr = df.loc[df['SENDER'] == f"U{sender}", 'group'].values[0]
+        if str(csv_gr) == 'nan' or str(csv_gr) == '':
+            continue
+        try:
+            next_course = print_next_course(week_day, csv_gr, is_even, course_index)
+            if next_course:
+                next_courses[sender] = next_course
+        except Exception as e:
+            send_logs(f"Error preparing next course to {sender}: {e}", 'error')
+    
+    return next_courses
+
+async def send_notification(sender, next_course, wait_time):
+    global noti_send
+    
+    await asyncio.sleep(wait_time)
+    
+    #re-check if notifications are still enabled for this user
+    if str(df.loc[df['SENDER'] == f"U{sender}", 'noti'].values[0]) != 'on':
+        return
+    
+    try:
+        await client.send_message(sender, f"\nPerechea urmatoare:{next_course}", parse_mode="HTML")
+        noti_send += 1
+        return True
+    except Exception as e:
+        send_logs(f"Error sending next course to {sender}: {e}", 'error')
+        return False
+
 #send current course to users with notifications on
 async def send_curr_course_users(week_day, is_even):
     global noti_send
     noti_send = 0
-    current_time = datetime.datetime.now(moldova_tz).time()
-    current_time = datetime.datetime.strptime(str(current_time)[:-7], "%H:%M:%S")
-    #next course index
-    for course_index, hour in enumerate(hours):
-        course_time = datetime.datetime.strptime(hour[0].split("-")[0], "%H.%M")
-        if (course_time - datetime.timedelta(minutes=15)).time() > current_time.time():
-            break
-    course_index += 1
-    #15 min before the next course
-    time_before_course = course_time - datetime.timedelta(minutes=15)
-
-    #if negative
-    if (time_before_course - current_time).total_seconds() < 1:
-        send_logs(f"No more courses for today. Waiting - 4:00:00", 'info')
-        await asyncio.sleep(14400)
+    
+    #get next course time, index and time before course
+    current_time, course_index, time_before_course = await get_next_course_time()
+    
+    #if no more courses today, wait and retry
+    wait_time = (time_before_course - current_time).total_seconds()
+    if wait_time < 1:
+        send_logs("No more courses for today. Waiting - 4:00:00", 'info')
+        await asyncio.sleep(14400)  # Wait 4 hours
+        return await send_curr_course_users(week_day, is_even)
+    
+    #prepare next courses for all users
+    next_courses = await prepare_next_courses(week_day, is_even, course_index)
+    
+    if next_courses:
+        send_logs(f"Waiting for next course - {time_before_course - current_time}", 'info')
+        
+        #create and schedule tasks for all notifications
+        tasks = [
+            send_notification(sender, course, wait_time) 
+            for sender, course in next_courses.items()
+        ]
+        
+        await asyncio.gather(*tasks)
+        send_logs(f"Sent next course to {noti_send} users", 'info')
     else:
-        #get users with notif on and save all next courses into an array
-        all_users = df.loc[df['group'].str.len() > -1, 'SENDER'].values
-        next_courses = {}
-        for user in all_users:
-            sender = int(user[1:])
-            csv_gr = df.loc[df['SENDER'] == "U"+str(sender), 'group'].values[0]
-            if str(csv_gr) != 'nan' or str(csv_gr) != '':
-                try:
-                    next_courses[sender] = print_next_course(week_day, csv_gr, is_even, course_index)
-                except Exception as e:
-                    send_logs(f"Error preparing next course to {str(sender)}: {e}", 'error')
-
-        current_time = datetime.datetime.now(moldova_tz).time()
-        current_time = datetime.datetime.strptime(str(current_time)[:-7], "%H:%M:%S")
-        #create tasks to send next courses simultaneously to all users
-        tasks = []
-        for sender, next_course in next_courses.items():
-            if next_course != "":
-                async def send_message_later(sender, next_course):
-                    global noti_send
-                    await asyncio.sleep((time_before_course - current_time).total_seconds())
-                    if str(df.loc[df['SENDER'] == "U"+str(sender), 'noti'].values[0]) == 'on':
-                        try:
-                            await client.send_message(sender, "\nPerechea urmatoare:" + next_course, parse_mode="HTML")
-                            #send_logs("U"+str(sender) + " - send next course", "info")
-                            noti_send+=1
-                        except Exception as e:
-                            send_logs(f"Error sending next course to {str(sender)}: {e}", 'error')
-                task = asyncio.create_task(send_message_later(sender, next_course))
-                tasks.append(task)
-
-        if tasks:
-            send_logs(f"Waiting for next course - {str(time_before_course - current_time)}", 'info')
-            await asyncio.gather(*tasks)
-            send_logs(f"Send next course to {str(noti_send)} users",'info')
-        #if there is no next course to any user
-        else:
-            send_logs(f"No users have the next course. Waiting - {str(time_before_course - current_time)}", 'info')
-            await asyncio.sleep((time_before_course - current_time).total_seconds())
-    #repeat
-    await send_curr_course_users(week_day, is_even)
+        send_logs(f"No users have the next course. Waiting - {time_before_course - current_time}", 'info')
+        await asyncio.sleep(wait_time)
+    
+    return await send_curr_course_users(week_day, is_even)
+    
 
 #send schedule for tomorrow to users with notifications on
 async def send_schedule_tomorrow():
     noti_day = 0
-    while True:
-        #gain vars
-        now = datetime.datetime.now(moldova_tz)
-        current_time = datetime.datetime.strptime(str(now.time())[:-7], "%H:%M:%S")
-        week_day = int((now + datetime.timedelta(days=1)).weekday())
-        scheduled = datetime.datetime.strptime("20:00:00", "%H:%M:%S")
-        #wait 4h 1s if waiting is negative
-        if (scheduled - current_time).total_seconds() < 1:
-            send_logs("waiting positive for tomorrow", 'info')
-            await asyncio.sleep(14401)
-        else:
-            send_logs("waiting for tomorrow mess - " + str(scheduled - current_time), 'info')
-            temp_is_even = (now + datetime.timedelta(days=1)).isocalendar().week % 2
-            users_with_notification_on = df.loc[df['noti'] == 'on', 'SENDER'].values
-            await asyncio.sleep((scheduled - current_time).total_seconds())
-            for user in users_with_notification_on:
-                sender = int(user[1:])
-                csv_gr = list(df.loc[df['SENDER'] == "U"+str(sender), 'group'])[0]
-                try:
-                    if csv_gr == "" or str(csv_gr) == 'nan':
-                        raise ValueError(str(sender) + 'no gr')
-                    else:
-                        #send the schedule
-                        day_sch = print_day(week_day, csv_gr, temp_is_even)
-                        if day_sch != "":
-                            text = "\nOrarul de maine(" + week_days[week_day] +"):\n" + day_sch
-                            await client.send_message(sender, text, parse_mode="HTML")
-                            #send_logs("U"+str(sender) + " - send schedule for tomorrow", 'info')
-                            noti_day+=1
-                except Exception as e:
-                    send_logs(f"Error sending sch tomorr to {str(sender)}: {e}", 'error')
-        send_logs(f"Send next day to {str(noti_day)} users",'info')
+    #gain vars
+    now = datetime.datetime.now(moldova_tz)
+    current_time = datetime.datetime.strptime(str(now.time())[:-7], "%H:%M:%S")
+    week_day = int((now + datetime.timedelta(days=1)).weekday())
+    scheduled = datetime.datetime.strptime("20:00:00", "%H:%M:%S")
+    #wait 4h 1s if waiting is negative
+    if (scheduled - current_time).total_seconds() < 1:
+        send_logs("waiting positive for tomorrow", 'info')
+        await asyncio.sleep(14401)
+        return await send_schedule_tomorrow()
+    send_logs("waiting for tomorrow mess - " + str(scheduled - current_time), 'info')
+    temp_is_even = (now + datetime.timedelta(days=1)).isocalendar().week % 2
+    users_with_notification_on = df.loc[df['noti'] == 'on', 'SENDER'].values
+    await asyncio.sleep((scheduled - current_time).total_seconds())
+    for user in users_with_notification_on:
+        sender = int(user[1:])
+        csv_gr = list(df.loc[df['SENDER'] == "U"+str(sender), 'group'])[0]
+        try:
+            if csv_gr == "" or str(csv_gr) == 'nan':
+                raise ValueError(str(sender) + 'no gr')
+            #send the schedule
+            day_sch = print_day(week_day, csv_gr, temp_is_even)
+            if day_sch == "":
+                continue
+            text = "\nOrarul de maine(" + week_days[week_day] +"):\n" + day_sch
+            await client.send_message(sender, text, parse_mode="HTML")
+            #send_logs("U"+str(sender) + " - send schedule for tomorrow", 'info')
+            noti_day+=1
+        except Exception as e:
+            send_logs(f"Error sending sch tomorr to {str(sender)}: {e}", 'error')
+    send_logs(f"Send next day to {str(noti_day)} users",'info')
+    return await send_schedule_tomorrow()
 
-#message command handle
+#/message
 @client.on(events.NewMessage(pattern='/(?i)message'))
 async def message_command(event):
     sender = await event.get_sender()
     SENDER = sender.id
-    if "U" + str(SENDER) in admins1:
-        text = "Select the recipient:"
-        buttons = [
-            Button.inline("Myself", data=b"to1"),
-            Button.inline("TI-241", data=b"to2"),
-            Button.inline("Notifon users", data=b"to3"),
-            Button.inline("A user", data=b"to4"),
-            Button.inline("All users", data=b"to5")
-        ]
-        buttons = button_grid(buttons, 2)
-        await client.send_message(SENDER, text, buttons=buttons)
-    else:
+    if "U" + str(SENDER) not in admins1:
         await client.send_message(SENDER, "You do not have permission to use this command.", parse_mode="HTML")
+        return
+    text = "Select the recipient:"
+    buttons = [
+        Button.inline("Myself", data=b"to1"),
+        Button.inline("TI-241", data=b"to2"),
+        Button.inline("Notifon users", data=b"to3"),
+        Button.inline("A user", data=b"to4"),
+        Button.inline("All users", data=b"to5")
+    ]
+    buttons = button_grid(buttons, 2)
+    await client.send_message(SENDER, text, buttons=buttons)
 
 @client.on(events.CallbackQuery())
 async def message_callback(event):
@@ -537,64 +614,73 @@ async def message_callback(event):
     SENDER = sender.id
     data = event.data.decode('utf-8')
     
-    if data.startswith("to"):
-        global to_who, useridd, when, text, input_step
-        useridd = 0
-        to_who = int(data[2])
-        input_step = 1
-        recipient_dict = {
-            1: "Myself",
-            2: "TI-241",
-            3: "Notifon users",
-            4: "A user",
-            5: "All users"
-        }
-        await event.answer()
-        await client.edit_message(SENDER, event.message_id, "Selected: " + recipient_dict.get(to_who))
-        if to_who == 4:
-            await client.send_message(SENDER, "Please enter the user ID(as int):")
-        else:
+    if not data.startswith("to"):
+        return
+    global to_who, useridd, when, text, input_step
+    useridd = 0
+    to_who = int(data[2])
+    input_step = 1
+    recipient_dict = {
+        1: "Myself",
+        2: "TI-241",
+        3: "Notifon users",
+        4: "A user",
+        5: "All users"
+    }
+    await event.answer()
+    await client.edit_message(SENDER, event.message_id, "Selected: " + recipient_dict.get(to_who))
+    if to_who == 4:
+        await client.send_message(SENDER, "Please enter the user ID(as int):")
+    else:
+        input_step = 2
+        await client.send_message(SENDER, "Please enter the time in HH:MM format or \"Now\":")
+
+    @client.on(events.NewMessage(from_users=SENDER))
+    async def handle_input(event):
+        global input_step, useridd, when, text
+        user_input = event.text
+
+        if input_step == 1 and to_who == 4:
+            useridd = int(user_input)
             input_step = 2
             await client.send_message(SENDER, "Please enter the time in HH:MM format or \"Now\":")
+        elif input_step == 2:
+            when = user_input
+            input_step = 3
+            await client.send_message(SENDER, "Please enter the text:")
+        elif input_step == 3:
+            text = user_input
+            client.remove_event_handler(handle_input, events.NewMessage(from_users=SENDER))
 
-        @client.on(events.NewMessage(from_users=SENDER))
-        async def handle_input(event):
-            global input_step, useridd, when, text
-            user_input = event.text
+            summary = f"\nSend to: {recipient_dict.get(to_who)}"
+            if useridd != 0:
+                summary += f"\nUser ID: {useridd}"
+            summary += f"\nTime: {when}\nMessage: \n{text}"
+            await client.send_message(SENDER, summary)
 
-            if input_step == 1 and to_who == 4:
-                useridd = int(user_input)
-                input_step = 2
-                await client.send_message(SENDER, "Please enter the time in HH:MM format or \"Now\":")
-            elif input_step == 2:
-                when = user_input
-                input_step = 3
-                await client.send_message(SENDER, "Please enter the text:")
-            elif input_step == 3:
-                text = user_input
-                client.remove_event_handler(handle_input, events.NewMessage(from_users=SENDER))
+            buttons = button_grid([Button.inline("Yes", data=b"yes"), Button.inline("No", data=b"no")], 2)
+            await client.send_message(SENDER, "Send the message?", buttons=buttons)
 
-                summary = f"\nSend to: {recipient_dict.get(to_who)}"
-                if useridd != 0:
-                    summary += f"\nUser ID: {useridd}"
-                summary += f"\nTime: {when}\nMessage: \n{text}"
-                await client.send_message(SENDER, summary)
-
-                buttons = button_grid([Button.inline("Yes", data=b"yes"), Button.inline("No", data=b"no")], 2)
-                await client.send_message(SENDER, "Send the message?", buttons=buttons)
-
-                @client.on(events.CallbackQuery())
-                async def confirmation_callback(event):
-                    global to_who, when, useridd, df, text
-                    sender = await event.get_sender()
-                    SENDER = sender.id
-                    if event.data == b"yes":
-                        await event.answer()
+            @client.on(events.CallbackQuery())
+            async def confirmation_callback(event):
+                global to_who, when, useridd, df, text
+                sender = await event.get_sender()
+                SENDER = sender.id
+                if event.data == b"yes":
+                    try:
+                        await event.answer("Scheduling message...")
                         await client.edit_message(SENDER, event.message_id, "Message scheduled successfully!")
                         await send_mess(to_who, when, useridd, df)
-                    elif event.data == b"no":
-                        await event.answer()
+                    except Exception as e:
+                        send_logs(f"Error confirmation_callback(yes): {e}", 'error')
+                elif event.data == b"no":
+                    try:
+                        await event.answer("Canceling...")
                         await client.edit_message(SENDER, event.message_id, "Message sending canceled.")
+                    except Exception as e:
+                        send_logs(f"Error confirmation_callback(no): {e}", 'error')
+                client.remove_event_handler(confirmation_callback, events.CallbackQuery())
+
 
 #send a custom message to all active users
 async def send_mess(to_who, when, useridd, df):
@@ -634,6 +720,24 @@ async def send_mess(to_who, when, useridd, df):
                 send_logs("Send succeseful to " + user, 'info')
             except Exception as e:
                 send_logs(f"Error sending message to {str(sender)}: {e}", 'error')
+
+#debug print next course
+@client.on(events.NewMessage(pattern='/(?i)debug_next'))
+async def debugg(event):
+    global df
+    if "U"+str(event.sender_id) not in admins1:
+        await client.send_message(event.sender_id, "Nu ai acces.", parse_mode="HTML")
+        return
+    sender = await event.get_sender()
+    SENDER = sender.id
+    week_day = int((datetime.datetime.now(moldova_tz)).weekday())
+    is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
+    for i in range(1, 8):
+        text = "Perechea urmatore: #" + str(i) + "\n"
+        text += print_next_course(week_day, 'TI-241', is_even, i)
+        if text:
+            await client.send_message(SENDER, text, parse_mode="HTML")
+    send_logs("U"+str(SENDER) + " - /debug_next", 'info')
 
 ### MAIN
 if __name__ == '__main__':

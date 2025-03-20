@@ -4,8 +4,11 @@ services:
     image: orarbot:latest
     container_name: orarbot
     volumes:
-      - /Users/milkshake/Desktop/Folders/ORAR_UTM_FCIM_BOT/BD.csv:/BD.csv
-      - /Users/milkshake/Desktop/Folders/ORAR_UTM_FCIM_BOT/orarbot.log:/orarbot.log
+      - /Users/milkshake/Desktop/Home/ORAR_UTM_FCIM_BOT/BD.csv:/BD.csv
+      - /Users/milkshake/Desktop/Home/ORAR_UTM_FCIM_BOT/orarbot.log:/orarbot.log
+    environment:
+      - PYTHONUNBUFFERED=1
+    tty: true
   restarter:
     image: docker:cli
     container_name: restarter
@@ -15,7 +18,7 @@ services:
     command:
       - |
         while true; do
-          if [ $(date +'%H:%M') = 17:10 ] || [ $(date +'%H:%M') = 04:00 ]; then
+          if [ $(date +'%H:%M') = 18:10 ] || [ $(date +'%H:%M') = 05:00 ]; then
             docker restart orarbot
           fi
           sleep 60
