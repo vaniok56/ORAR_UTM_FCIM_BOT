@@ -128,26 +128,33 @@ def button_grid(buttons, butoane_rand):
     return grid
 
 #get daily schedule
-def print_day(week_day, cur_group, is_even):
+def print_day(week_day, cur_group, is_even, subgrupa):
     schedule, groups = get_schedule_and_groups(cur_group)[0:2]
     col_gr = groups.index(cur_group) + 3  # column with the selected group
-    return print_daily(schedule, is_even, col_gr, week_day)
-    
-def print_daily(schedule, is_even, col_gr, week_day):
+    return print_daily(schedule, is_even, col_gr, week_day, subgrupa)
+     
+#extract daily schedule
+def print_daily(schedule, is_even, col_gr, week_day, subgrupa):
     #cache key
-    cache_key = (id(schedule), is_even, col_gr, week_day)
+    cache_key = (id(schedule), is_even, col_gr, week_day, subgrupa)
     
     #find daily schedule in cache
     if cache_key in daily_schedule_cache:
         #send_logs(f"Cache hit schedule for {cache_key}", 'info')
         return daily_schedule_cache[cache_key]
     
+    #subgrupa - 0/1/2
+    subgrupa = int(subgrupa)
+    #if is even, change the subgrupa
+    if is_even and subgrupa != 0:
+        subgrupa = 3 - subgrupa
+
     day_sch = []
     seen = set() 
     day_name = week_days[week_day]
     
     #find row start in cache
-    schedule_day_key = (id(schedule), day_name)
+    schedule_day_key = (id(schedule), day_name, is_even)
     if schedule_day_key in day_row_start_cache:
         #send_logs(f"Cache hit row_start for {schedule_day_key}", 'info')
         row_start = day_row_start_cache[schedule_day_key]
@@ -170,35 +177,53 @@ def print_daily(schedule, is_even, col_gr, week_day):
         #send_logs(f"Cache hit orele for {orele_key}", 'info')
         orele = orele_cache[orele_key]
     else:
-        orele = {i: getMergedCellVal(schedule, schedule.cell(row=i, column=2)) for i in range(row_start, row_start + 14)}
+        orele = {i: getMergedCellVal(schedule, schedule.cell(row=i, column=2)) 
+                for i in range(row_start, row_start + 14)}
         orele_cache[orele_key] = orele
     #extract the daily schedule
     for i in range(row_start, row_start + 13):
         if orele[i] in seen:
             continue
         if is_even and orele.get(i + 1) == orele[i]:
-            day_sch.append(getMergedCellVal(schedule, schedule.cell(row=i + 1, column=col_gr)))
+            cell_value = getMergedCellVal(schedule, schedule.cell(row=i + 1, column=col_gr))
         else:
-            day_sch.append(getMergedCellVal(schedule, schedule.cell(row=i, column=col_gr)))
+            cell_value = getMergedCellVal(schedule, schedule.cell(row=i, column=col_gr))
+        day_sch.append(cell_value)
         seen.add(orele[i])
 
-    day_sch = [
-        f"\nPerechea: #{i + 1}\n<b>{course}</b>\nOra : {hours[i][0].replace('.', ':')}\n" if course else ""
-        for i, course in enumerate(day_sch)
-    ]
+    processed_courses = []
 
-    result = "".join(day_sch)
+    for i, course in enumerate(day_sch):
+        if course is None or course == "":
+            continue
+
+        if subgrupa != 0:
+            count_05 = course.count("0.5") + course.count("0,5")
+            if count_05 == 2:
+                if subgrupa == 1:
+                    course = course.split("\n2)")[0]
+                else:
+                    course = "2)" + course.split("\n2)")[1]
+            elif count_05 == 1:
+                if subgrupa == 2:
+                    course = ""
+        
+        if course:
+            processed_courses.append(f"\nPerechea: #{i + 1}\n<b>{course}</b>\nOra : {hours[i][0].replace('.', ':')}\n")
+            
+    # Join the properly formatted strings
+    result = "".join(processed_courses)
     daily_schedule_cache[cache_key] = result
     return result
 
-def print_next_course(week_day, cur_group, is_even, course_index):
-    cache_key = (week_day, cur_group, is_even, course_index)
+def print_next_course(week_day, cur_group, is_even, course_index, subgrupa):
+    cache_key = (week_day, cur_group, is_even, course_index, subgrupa)
     if cache_key in next_course_cache:
         #send_logs(f"Cache hit next_course for {cache_key}", 'info')
         return next_course_cache[cache_key]
     
     #get daily schedule
-    daily = print_day(week_day, cur_group, is_even)
+    daily = print_day(week_day, cur_group, is_even, subgrupa)
     if not daily:
         next_course_cache[cache_key] = ""
         return ""
@@ -219,8 +244,8 @@ def print_next_course(week_day, cur_group, is_even, course_index):
     return ""
 
 #get weekly schedule
-def print_sapt(is_even, cur_group) :
-    cache_key = (cur_group, is_even)
+def print_sapt(is_even, cur_group, subgrupa):
+    cache_key = (cur_group, is_even, subgrupa)
     if cache_key in weekly_schedule_cache:
         #send_logs(f"Cache hit print_sapt for {cache_key}", 'info')
         return weekly_schedule_cache[cache_key]
@@ -229,7 +254,7 @@ def print_sapt(is_even, cur_group) :
 
     week_sch = ""
     for j in range(1, 7):
-        daily = print_daily(schedule, is_even, col_gr, j-1)
+        daily = print_daily(schedule, is_even, col_gr, j-1, subgrupa)
         #do not print an empty weekday
         if str(daily) == "":
             continue
