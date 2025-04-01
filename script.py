@@ -1,11 +1,8 @@
-# orar_utm_fcim_bot version 0.8.8
+# orar_utm_fcim_bot version 0.9.0
 ### changelog:
-# implimented subgroups
-# added admin_help
-# better stats
-# daily database backup
-# keep network alive to stop from sleeping
-# added version tracking and last update
+# GAME UPDATE
+# Games - slot machine, bowling, dice, darts, basketball, football
+# Separated handlers for games, admin commands and groups
 
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
@@ -14,9 +11,13 @@ import configparser # read
 import datetime
 import pytz
 
-from functions import print_day, print_sapt, print_next_course, button_grid, send_logs
+from functions import print_day, print_sapt, print_next_course, button_grid, send_logs, get_next_course_time
 from functions import cur_group, hours, week_days, is_even
 from group_lists import years, group_list, specialties
+
+from handlers.game_handlers import register_games_handlers
+from handlers.admin_handlers import register_admin_handlers
+from handlers.group_handlers import register_group_handlers
 
 import pandas as pd
 import numpy as np
@@ -40,6 +41,7 @@ bot_kb = [
         Button.text('Săptămâna curentă 🗓️', resize=True),
         Button.text('Săptămâna viitoare 🗓️', resize=True),
         types.KeyboardButtonSimpleWebView("SIMU📚", "https://simu.utm.md/students/"),
+        Button.text('Jocuri 🎮', resize=True),
     ]
 
 df = pd.read_csv('BD.csv') #DB
@@ -52,6 +54,10 @@ week_day = int((datetime.datetime.now(moldova_tz)).weekday()) #weekday today(0-6
 admins1 = df.loc[df['admin'] == 1, 'SENDER'].values
 admins2 = df.loc[df['admin'] == 2, 'SENDER'].values
 noti_send = 0
+
+register_games_handlers(client, bot_kb, df)
+register_admin_handlers(client, df, admins1, admins2)
+register_group_handlers(client, df, years, specialties, group_list)
 
 #/start
 @client.on(events.NewMessage(pattern="/(?i)start")) 
@@ -79,8 +85,6 @@ async def startt(event):
         df.to_csv('BD.csv', encoding='utf-8', index=False)
         send_logs("New user! - " + "U"+str(SENDER), 'info')
 
-    await alege_grupaa(event)
-
     text = "Doresti sa pornesti notificarile pentru pereche?"
     buttons = [ Button.inline("Da", data=b"on"),
                 Button.inline("Nu", data=b"off")]
@@ -107,46 +111,6 @@ async def notiff(event):
         await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML")
         send_logs("U"+str(SENDER) + " - Notif on", 'info')
 
-#/alege_subgrupa
-@client.on(events.NewMessage(pattern='/(?i)alege_subgrupa'))
-async def alege_subgrupa(event):
-    global df
-    sender = await event.get_sender()
-    SENDER = sender.id
-    text = "Alege subgrupa:" # -1/1/deselect(0)
-    subgrupa_butt = [Button.inline("   1   ", data=b"sub1"),
-                     Button.inline("   2   ", data=b"sub2"),
-                     Button.inline("Deselecteaza", data=b"sub0"),
-    ]
-    button_per_r = 2
-    button_rows = button_grid(subgrupa_butt, button_per_r)
-    await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
-
-#subgrupa click event handle
-@client.on(events.CallbackQuery())
-async def subgrupa_callback(event):
-    global df
-    sender = await event.get_sender()
-    SENDER = sender.id
-    if event.data == b"sub0":
-        df.loc[df['SENDER'] == "U"+str(SENDER), 'subgrupa'] = 0
-        df.to_csv('BD.csv', encoding='utf-8', index=False) #save df
-        await event.answer('Subgrupa a fost deselectata!')
-        await client.edit_message(SENDER, event.message_id, "Subgrupa a fost deselectata!", parse_mode="HTML")
-        send_logs("U"+str(SENDER) + " - /alege_subgrupa - deselect(0)", "info")
-    elif event.data == b"sub1":
-        df.loc[df['SENDER'] == "U"+str(SENDER), 'subgrupa'] = 1
-        df.to_csv('BD.csv', encoding='utf-8', index=False)
-        await event.answer('Subgrupa 1 a fost selectata!')
-        await client.edit_message(SENDER, event.message_id, "Subgrupa 1 a fost selectata!", parse_mode="HTML")
-        send_logs("U"+str(SENDER) + " - /alege_subgrupa - 1", "info")
-    elif event.data == b"sub2":
-        df.loc[df['SENDER'] == "U"+str(SENDER), 'subgrupa'] = 2
-        df.to_csv('BD.csv', encoding='utf-8', index=False)
-        await event.answer('Subgrupa 2 a fost selectata!')
-        await client.edit_message(SENDER, event.message_id, "Subgrupa 2 a fost selectata!", parse_mode="HTML")
-        send_logs("U"+str(SENDER) + " - /alege_subgrupa - 2", "info")
-
 #/help
 @client.on(events.NewMessage(pattern='/(?i)help')) 
 async def helpp(event):
@@ -162,6 +126,7 @@ async def helpp(event):
     text += "/sapt_viitoare - orar pe saptamana viitoare\n"
     text += "/notifon - notificari on\n"
     text += "/notifoff - notificari off\n"
+    text += "/games - jocuri\n"
     text += "/donatii - donatii\n"
     text += "/version - versiunea\n"
     text += "/admin_help - admin commands\n"
@@ -174,8 +139,8 @@ async def helpp(event):
 async def versionn(event):
     sender = await event.get_sender()
     SENDER = sender.id
-    text = "Version 0.8.8\n"
-    text += "Last update: 26-03-2025\n"
+    text = "Version 0.9.0\n"
+    text += "Last update: 01-04-2025\n"
     text += "Github: [ORAR_UTM_FCIM_BOT](https://github.com/vaniok56/ORAR_UTM_FCIM_BOT)\n"
     button_rows = button_grid(bot_kb, 2)
     await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows, link_preview=False)
@@ -340,101 +305,6 @@ async def sapt_viit(event):
         send_logs(f"Error sending next week to {str(SENDER)}: {e}", 'error')
         await client.send_message(SENDER, "A intervenit o eroare, posibil nu ai ales grupa /alege_grupa", parse_mode="HTML")
 
-#/alege_grupa
-@client.on(events.NewMessage(pattern='/(?i)alege_grupa')) 
-async def alege_grupaa(event):
-    global df
-    sender = await event.get_sender()
-    SENDER = sender.id
-    text = "Alege anul:"
-    year_butt = [Button.inline("  " + year + "  ", data=data) for data, year in years.items()]
-    button_per_r = 4
-    global button_rows_year
-    button_rows_year = button_grid(year_butt, button_per_r)
-
-    #if user is not in list, add it
-    if "U"+str(SENDER) not in "U"+str(df['SENDER'].to_list()):
-        data =  {'SENDER' : ["U"+str(SENDER)],
-                'group' : [""],
-                'spec' : [""],
-                'year' : [""],
-                'noti' : ["off"],
-                'admin' : [0],
-                'prem' : [0],
-                'subgrupa' : [0]}
-        new_dat = pd.DataFrame(data)
-        df = pd.concat([df, new_dat]) 
-        df.to_csv('BD.csv', encoding='utf-8', index=False)
-        send_logs("New user! - " + "U"+str(SENDER), 'info')
-    await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows_year)
-    
-#year click event handle
-@client.on(events.CallbackQuery())
-async def year_callback(event):
-    global df
-    sender = await event.get_sender()
-    SENDER = sender.id
-    if event.data in years:
-        cur_year = years.get(event.data).replace(" ", "")
-        if cur_year:
-            text = f"Alege specialitatea pentru anul {cur_year}:"
-            spec_items = specialties.get(cur_year, {})
-            spec_butt = [Button.inline(spec, data=data) for data, spec in spec_items.items()]
-            button_per_r = 4
-            button_rows = button_grid(spec_butt, button_per_r)
-            await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
-            df.loc[df['SENDER'] == "U"+str(SENDER), 'year'] = int(cur_year) #send cur_year to df
-            df.to_csv('BD.csv', encoding='utf-8', index=False) #save df
-            await event.answer('Anul a fost selectat!')
-            send_logs("U"+str(SENDER) + " - /alege_grupa year - " + cur_year, "info")
-
-#speciality click event handle
-@client.on(events.CallbackQuery())
-async def speciality_callback(event):
-    global df
-    sender = await event.get_sender()
-    SENDER = sender.id
-    year = int(list(df.loc[df['SENDER'] == "U"+str(SENDER), 'year'])[0])
-    spec_items = specialties.get(str(year), {})
-    if event.data in spec_items:
-        cur_speciality = spec_items.get(event.data).replace(" ", "")
-        if cur_speciality:
-            text = f"Alege grupa pentru {cur_speciality}:"
-            group_items = group_list.get(str(year), {})
-            group_items = group_items.get(cur_speciality + str(year), {})
-            df.loc[df['SENDER'] == "U"+str(SENDER), 'spec'] = cur_speciality #send cur_speciality to df
-            df.to_csv('BD.csv', encoding='utf-8', index=False) #save df
-            spec_butt = [Button.inline(group, data=data) for data, group in group_items.items()]
-            button_per_r = 4
-            button_rows = button_grid(spec_butt, button_per_r)
-            await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
-            await event.answer('Specialitatea a fost selectata!')
-            send_logs("U"+str(SENDER) + " - /alege_grupa spec - " + cur_speciality, "info")
-
-#group click event handle
-@client.on(events.CallbackQuery())
-async def group_callback(event):
-    global df, cur_group
-    sender = await event.get_sender()
-    SENDER = sender.id
-    cur_speciality = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'spec'])[0]
-    year = int(list(df.loc[df['SENDER'] == "U"+str(SENDER), 'year'])[0])
-    group_items = group_list.get(str(year), {})
-    group_items = group_items.get(cur_speciality + str(year), {})
-    if event.data in group_items:
-        cur_group = group_items.get(event.data).replace(" ", "")
-        if cur_group:
-            #updates the current group
-            df.loc[df['SENDER'] == "U"+str(SENDER), 'group'] = cur_group #send cur_group to df
-            df.to_csv('BD.csv', encoding='utf-8', index=False) #save df
-
-            send_logs("U"+str(SENDER) + " - /alege_grupa - " + cur_group, "info")
-
-            text = f"Grupa ta este: {cur_group}"
-            await event.answer('Grupa a fost selectata!')
-            await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML")
-            await alege_subgrupa(event)
-
 #/donatii
 @client.on(events.NewMessage(pattern='/(?i)donatii')) 
 async def donatiii(event):
@@ -452,24 +322,6 @@ async def donatiii(event):
 
     await client.send_message(SENDER, text, parse_mode="Markdown")
     send_logs("U"+str(SENDER) + " - /donatii", 'info')
-
-
-def get_next_course_time():
-    current_time = datetime.datetime.now(moldova_tz).time()
-    current_time = datetime.datetime.strptime(str(current_time)[:-7], "%H:%M:%S")
-    
-    #find next course index
-    course_index = 0
-    for i, hour in enumerate(hours):
-        course_time = datetime.datetime.strptime(hour[0].split("-")[0], "%H.%M")
-        if (course_time - datetime.timedelta(minutes=15)).time() > current_time.time():
-            course_index = i
-            break
-    
-    #15 min before the next course
-    time_before_course = course_time - datetime.timedelta(minutes=15)
-    
-    return current_time, course_index + 1, time_before_course
 
 def prepare_next_courses(week_day, is_even, course_index):
     next_courses = {}
@@ -492,7 +344,6 @@ def prepare_next_courses(week_day, is_even, course_index):
 
 async def send_notification(sender, next_course, wait_time):
     global noti_send
-    
     await asyncio.sleep(wait_time)
     
     #re-check if notifications are still enabled for this user
@@ -580,236 +431,6 @@ async def send_schedule_tomorrow():
     send_logs(f"Send next day to {str(noti_day)} users",'info')
     return await send_schedule_tomorrow()
 
-#/admin_help admin
-@client.on(events.NewMessage(pattern='/(?i)admin_help'))
-async def admin_help(event):
-    sender = await event.get_sender()
-    SENDER = sender.id
-    if "U"+str(SENDER) not in admins1 and "U"+str(SENDER) not in admins2:
-        await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
-        return
-    text = "Admin commands:\n"
-    text += "/stats - show statistics\n"
-    text += "/backup - manual database backup\n"
-    text += "/message - send a message to users\n"
-    text += "/debug_next - debug print next course\n"
-    await client.send_message(SENDER, text, parse_mode="HTML")
-    send_logs("U"+str(SENDER) + " - /admin_help", 'info')
-
-#/stats admin
-@client.on(events.NewMessage(pattern='/(?i)stats')) 
-async def statsss(event):
-    sender = await event.get_sender()
-    SENDER = sender.id
-    
-    if "U"+str(SENDER) not in admins1 and "U"+str(SENDER) not in admins2:
-        await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
-        send_logs("U"+str(SENDER) + " - /stats - no acces", "info")
-        return
-    
-    users_with_groups = df[df['group'].notna() & (df['group'] != "")]
-    
-    group_counts = users_with_groups['group'].value_counts().to_dict()
-    
-    groups_by_year = {}
-    categorized_groups = set()
-    
-    for group_name, count in group_counts.items():
-        try:
-            #TI-241 -> 24)
-            year = int(group_name[-3:-1])
-            
-            if year not in groups_by_year:
-                groups_by_year[year] = {}
-            
-            groups_by_year[year][group_name] = count
-            categorized_groups.add(group_name)
-        except (ValueError, IndexError):
-            pass
-    
-    text = "📊 Stats:\n\n"
-    for year in sorted(groups_by_year.keys(), reverse=True):
-        text += (f"🎓 Year {5-(year-20)}" if 20 <= year <= 24 else f"Year {year}")
-        sorted_groups = sorted(groups_by_year[year].items(), key=lambda x: (-x[1], x[0]))
-        text += f" - {len(sorted_groups)} groups, {sum(count for group, count in sorted_groups)} users\n"
-
-        for group, count in sorted_groups:
-            text += f"  • {group}: {count} users\n"
-        text += "\n"
-    
-    other_groups = {g: c for g, c in group_counts.items() if g not in categorized_groups}
-    
-    if other_groups:
-        text += "📋 Other groups:\n"
-        for group, count in sorted(other_groups.items(), key=lambda x: (-x[1], x[0])):
-            text += f"  • {group}: {count} users\n"
-        text += "\n"
-    
-    total_users = len(df)
-    users_with_groups_count = len(users_with_groups)
-    users_with_notifications = len(df[df['noti'] == 'on'])
-    users_with_subgroups = len(df[df['subgrupa'].astype(int) != 0])
-    
-    text += f"📈 Summary:\n"
-    text += f"  • Total users: {total_users}\n"
-    text += f"  • Total users with groups: {users_with_groups_count}\n"
-    text += f"  • Users with notifications: {users_with_notifications}\n"
-    text += f"  • Users with selected sub-group: {users_with_subgroups}\n"
-        
-    await client.send_message(SENDER, text, parse_mode="HTML")
-    send_logs("U"+str(SENDER) + " - /stats", "info")
-
-#/message admin
-@client.on(events.NewMessage(pattern='/(?i)message'))
-async def message_command(event):
-    sender = await event.get_sender()
-    SENDER = sender.id
-    if "U" + str(SENDER) not in admins1:
-        await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
-        return
-    text = "Select the recipient:"
-    buttons = [
-        Button.inline("Myself", data=b"to1"),
-        Button.inline("TI-241", data=b"to2"),
-        Button.inline("Notifon users", data=b"to3"),
-        Button.inline("A user", data=b"to4"),
-        Button.inline("All users", data=b"to5")
-    ]
-    buttons = button_grid(buttons, 2)
-    await client.send_message(SENDER, text, buttons=buttons)
-
-@client.on(events.CallbackQuery())
-async def message_callback(event):
-    sender = await event.get_sender()
-    SENDER = sender.id
-    data = event.data.decode('utf-8')
-    
-    if not data.startswith("to"):
-        return
-    global to_who, useridd, when, text, input_step
-    useridd = 0
-    to_who = int(data[2])
-    input_step = 1
-    recipient_dict = {
-        1: "Myself",
-        2: "TI-241",
-        3: "Notifon users",
-        4: "A user",
-        5: "All users"
-    }
-    await event.answer()
-    await client.edit_message(SENDER, event.message_id, "Selected: " + recipient_dict.get(to_who))
-    if to_who == 4:
-        await client.send_message(SENDER, "Please enter the user ID(as int):")
-    else:
-        input_step = 2
-        await client.send_message(SENDER, "Please enter the time in HH:MM format or \"Now\":")
-
-    @client.on(events.NewMessage(from_users=SENDER))
-    async def handle_input(event):
-        global input_step, useridd, when, text
-        user_input = event.text
-
-        if input_step == 1 and to_who == 4:
-            useridd = int(user_input)
-            input_step = 2
-            await client.send_message(SENDER, "Please enter the time in HH:MM format or \"Now\":")
-        elif input_step == 2:
-            when = user_input
-            input_step = 3
-            await client.send_message(SENDER, "Please enter the text:")
-        elif input_step == 3:
-            text = user_input
-            client.remove_event_handler(handle_input, events.NewMessage(from_users=SENDER))
-
-            summary = f"\nSend to: {recipient_dict.get(to_who)}"
-            if useridd != 0:
-                summary += f"\nUser ID: {useridd}"
-            summary += f"\nTime: {when}\nMessage: \n{text}"
-            await client.send_message(SENDER, summary)
-
-            buttons = button_grid([Button.inline("Yes", data=b"yes"), Button.inline("No", data=b"no")], 2)
-            await client.send_message(SENDER, "Send the message?", buttons=buttons)
-
-            @client.on(events.CallbackQuery())
-            async def confirmation_callback(event):
-                global to_who, when, useridd, df, text
-                sender = await event.get_sender()
-                SENDER = sender.id
-                if event.data == b"yes":
-                    try:
-                        await event.answer("Scheduling message...")
-                        await client.edit_message(SENDER, event.message_id, "Message scheduled successfully!")
-                        await send_mess(to_who, when, useridd, df)
-                    except Exception as e:
-                        send_logs(f"Error confirmation_callback(yes): {e}", 'error')
-                elif event.data == b"no":
-                    try:
-                        await event.answer("Canceling...")
-                        await client.edit_message(SENDER, event.message_id, "Message sending canceled.")
-                    except Exception as e:
-                        send_logs(f"Error confirmation_callback(no): {e}", 'error')
-                client.remove_event_handler(confirmation_callback, events.CallbackQuery())
-
-
-#send the custom message
-async def send_mess(to_who, when, useridd, df):
-    now = datetime.datetime.now(moldova_tz).time()
-    current_time = datetime.datetime.strptime(str(now)[:-7], "%H:%M:%S")
-    if when == "Now":
-        scheduled = current_time
-    else:
-        scheduled = datetime.datetime.strptime(when, "%H:%M")
-    if text != "":
-        
-        if to_who == 1:
-            all_users = df.loc[df['SENDER'] == 'U500303890', 'SENDER'].values
-            send_logs("Sending to myself", 'info')
-        elif to_who == 2:
-            all_users = df.loc[df['group'] == 'TI-241', 'SENDER'].values
-            send_logs("Sending to TI-241", 'info')
-        elif to_who == 3:
-            all_users = df.loc[df['noti'] == 'on', 'SENDER'].values
-            send_logs("Sending to notifon users", 'info')
-        elif to_who == 4:
-            all_users = df.loc[df['SENDER'] == 'U'+str(useridd), 'SENDER'].values
-            send_logs("Sending to " + 'U'+str(useridd), 'info')
-        elif to_who == 5:
-            all_users = df.loc[df['group'].str.len() > -1, 'SENDER'].values
-            send_logs("Sending to everyone", 'info')
-        else:
-            send_logs("No users to send a message", 'info')
-            return
-        if when != "Now":
-            send_logs("waiting to send a message - " + str(scheduled - current_time), 'info')
-            await asyncio.sleep((scheduled - current_time).total_seconds())
-        for user in all_users:
-            sender = int(user[1:])
-            try:
-                await client.send_message(sender, text, parse_mode="Markdown")
-                send_logs("Send succeseful to " + user, 'info')
-            except Exception as e:
-                send_logs(f"Error sending message to {str(sender)}: {e}", 'error')
-
-#/debug_next admin
-@client.on(events.NewMessage(pattern='/(?i)debug_next'))
-async def debugg(event):
-    global df
-    subgrupa = list(df.loc[df['SENDER'] == "U"+str(event.sender_id), 'subgrupa'])[0]
-    if "U"+str(event.sender_id) not in admins1:
-        await client.send_message(event.sender_id, "Nu ai acces!", parse_mode="HTML")
-        return
-    sender = await event.get_sender()
-    SENDER = sender.id
-    week_day = int((datetime.datetime.now(moldova_tz)).weekday())
-    is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
-    for i in range(1, 8):
-        text = "Perechea urmatore: #" + str(i)
-        text += print_next_course(week_day, 'TI-241', is_even, i, subgrupa)
-        if text:
-            await client.send_message(SENDER, text, parse_mode="HTML")
-    send_logs("U"+str(SENDER) + " - /debug_next", 'info')
-
 #backup BD automation
 async def backup_database():
     try:
@@ -847,40 +468,6 @@ async def backup_database():
             
     except Exception as e:
         send_logs(f"Error in database backup: {str(e)}", 'error')
-
-#/backup admin
-@client.on(events.NewMessage(pattern='/(?i)backup')) 
-async def manual_backup(event):
-    sender = await event.get_sender()
-    SENDER = sender.id
-    if "U"+str(SENDER) != "U500303890":
-        await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
-        return
-    
-    try:
-        #file
-        now = datetime.datetime.now(moldova_tz)
-        timestamp = now.strftime("%Y%m%d")
-        backup_filename = f"BD_backup_{timestamp}.csv"
-        import shutil
-        shutil.copy2('BD.csv', backup_filename)
-
-        #send
-        await client.send_file(
-            SENDER,
-            backup_filename,
-            caption=f"📊 Database backup\n{now.strftime('%Y-%m-%d %H:%M:%S')} - {len(df)} users"
-        )
-
-        #delete
-        import os
-        if os.path.exists(backup_filename):
-            os.remove(backup_filename)
-            
-        send_logs(f"Manual backup sent to {SENDER}", 'info')
-    except Exception as e:
-        send_logs(f"Error sending manual backup: {str(e)}", 'error')
-        await client.send_message(SENDER, f"Error sending backup: {str(e)}", parse_mode="HTML")
 
 #keep network alive
 async def keep_network_alive():

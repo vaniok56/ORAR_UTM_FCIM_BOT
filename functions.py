@@ -273,3 +273,20 @@ def send_logs(message, type):
         logging.critical(message)
     else: 
         logging.info(message)
+
+def get_next_course_time():
+    current_time = datetime.datetime.now(moldova_tz).time()
+    current_time = datetime.datetime.strptime(str(current_time)[:-7], "%H:%M:%S")
+    
+    #find next course index
+    course_index = 0
+    for i, hour in enumerate(hours):
+        course_time = datetime.datetime.strptime(hour[0].split("-")[0], "%H.%M")
+        if (course_time - datetime.timedelta(minutes=15)).time() > current_time.time():
+            course_index = i
+            break
+    
+    #15 min before the next course
+    time_before_course = course_time - datetime.timedelta(minutes=15)
+    
+    return current_time, course_index + 1, time_before_course
