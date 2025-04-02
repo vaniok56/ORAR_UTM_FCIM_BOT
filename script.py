@@ -1,8 +1,9 @@
-# orar_utm_fcim_bot version 0.9.0
+# orar_utm_fcim_bot version 0.9.1
 ### changelog:
-# GAME UPDATE
-# Games - slot machine, bowling, dice, darts, basketball, football
-# Separated handlers for games, admin commands and groups
+# spam protection added
+# ban, unban and list_bann functions added
+# games ballanced
+# minor fixes
 
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
@@ -11,7 +12,7 @@ import configparser # read
 import datetime
 import pytz
 
-from functions import print_day, print_sapt, print_next_course, button_grid, send_logs, get_next_course_time
+from functions import print_day, print_sapt, print_next_course, button_grid, send_logs, get_next_course_time, is_rate_limited
 from functions import cur_group, hours, week_days, is_even
 from group_lists import years, group_list, specialties
 
@@ -65,6 +66,9 @@ async def startt(event):
     global df
     sender = await event.get_sender()
     SENDER = sender.id
+    if is_rate_limited(SENDER, df):
+        send_logs(f"Rate limited user: {SENDER}", 'warning')
+        return
     text = "Salut!\nIn primul rand alege grupa - /alege_grupa\nPentru a afisa toate comenzile - /help\nContacte - /contacts\n"
     text += "Atentie! __**Orarul poate nu fi actual**__, nu raspund pentru absente"
     buttons_in_row = 2
@@ -79,7 +83,12 @@ async def startt(event):
                  'noti' : ["off"],
                  'admin' : [0],
                  'prem' : [0],
-                 'subgrupa' : [0]}
+                 'subgrupa' : [0],
+                 'gamble' : [""],
+                 'ban' : ['none'],
+                 'ban_time' : ['none'],
+                 'ban_reason' : [""],
+                 'last_cmd' : [""]}
         new_dat = pd.DataFrame(data)
         df = pd.concat([df, new_dat])
         df.to_csv('BD.csv', encoding='utf-8', index=False)
@@ -116,6 +125,9 @@ async def notiff(event):
 async def helpp(event):
     sender = await event.get_sender()
     SENDER = sender.id
+    if is_rate_limited(SENDER, df):
+        send_logs(f"Rate limited user: {SENDER}", 'warning')
+        return
     text = "/contacts - contacte\n"
     text += "/azi - orarul de azi\n"
     text += "/maine - orarul de maine\n"
@@ -139,8 +151,11 @@ async def helpp(event):
 async def versionn(event):
     sender = await event.get_sender()
     SENDER = sender.id
-    text = "Version 0.9.0\n"
-    text += "Last update: 01-04-2025\n"
+    if is_rate_limited(SENDER, df):
+        send_logs(f"Rate limited user: {SENDER}", 'warning')
+        return
+    text = "Version 0.9.1\n"
+    text += "Last update: 02-04-2025\n"
     text += "Github: [ORAR_UTM_FCIM_BOT](https://github.com/vaniok56/ORAR_UTM_FCIM_BOT)\n"
     button_rows = button_grid(bot_kb, 2)
     await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows, link_preview=False)
@@ -151,6 +166,9 @@ async def versionn(event):
 async def contactt(event):
     sender = await event.get_sender()
     SENDER = sender.id
+    if is_rate_limited(SENDER, df):
+        send_logs(f"Rate limited user: {SENDER}", 'warning')
+        return
     text = "Salut! Acest bot a fost creat din dorința de a simplifica accesul la orar. În prezent, botul este în faza de dezvoltare și îmbunătățire, deci unele funcții pot să nu fie operaționale, iar disponibilitatea poate varia. \n__**Orarul poate nu fi actual**__, nu raspund pentru absente\n\nSunt deschis pentru întrebări și sugestii:\n"
     text += "Telegram: "
     text += "[@vaniok56](https://t.me/vaniok56)\n"
@@ -166,6 +184,9 @@ async def notifonn(event):
     global df
     sender = await event.get_sender()
     SENDER = sender.id
+    if is_rate_limited(SENDER, df):
+        send_logs(f"Rate limited user: {SENDER}", 'warning')
+        return
     text = "Notificarile sunt pornite!\n"
     button_rows = button_grid(bot_kb, 2)
     await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows)
@@ -180,6 +201,9 @@ async def notifofff(event):
     global df
     sender = await event.get_sender()
     SENDER = sender.id
+    if is_rate_limited(SENDER, df):
+        send_logs(f"Rate limited user: {SENDER}", 'warning')
+        return
     text = "Notificarile sunt stinse!\n"
     button_rows = button_grid(bot_kb, 2)
     await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows)
@@ -193,6 +217,9 @@ async def notifofff(event):
 async def oree(event):
     sender = await event.get_sender()
     SENDER = sender.id
+    if is_rate_limited(SENDER, df):
+        send_logs(f"Rate limited user: {SENDER}", 'warning')
+        return
     text = "Graficul de ore:\n"
     for i in range(0, 7):
         text += "\nPerechea: #" + str(i+1) + "\nOra : " + ''.join(hours[i]) + "\n"
@@ -211,6 +238,9 @@ async def mainee(event):
     week_day = int((datetime.datetime.now(moldova_tz) + datetime.timedelta(days=1)).weekday()) #weekday tomorrow(0-6)
     sender = await event.get_sender()
     SENDER = sender.id
+    if is_rate_limited(SENDER, df):
+        send_logs(f"Rate limited user: {SENDER}", 'warning')
+        return
     subgrupa = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'subgrupa'])[0]
     try:
         #get the user's selected group
@@ -239,6 +269,9 @@ async def azii(event):
     global df, cur_group
     sender = await event.get_sender()
     SENDER = sender.id
+    if is_rate_limited(SENDER, df):
+        send_logs(f"Rate limited user: {SENDER}", 'warning')
+        return
     subgrupa = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'subgrupa'])[0]
     try:
         csv_gr = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'group'])[0]
@@ -266,6 +299,9 @@ async def sapt_curr(event):
     global df, cur_group, is_even
     sender = await event.get_sender()
     SENDER = sender.id
+    if is_rate_limited(SENDER, df):
+        send_logs(f"Rate limited user: {SENDER}", 'warning')
+        return
     subgrupa = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'subgrupa'])[0]
     try:
         csv_gr = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'group'])[0]
@@ -288,6 +324,9 @@ async def sapt_viit(event):
     global df, cur_group, is_even
     sender = await event.get_sender()
     SENDER = sender.id
+    if is_rate_limited(SENDER, df):
+        send_logs(f"Rate limited user: {SENDER}", 'warning')
+        return
     subgrupa = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'subgrupa'])[0]
     try:
         csv_gr = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'group'])[0]
@@ -310,6 +349,9 @@ async def sapt_viit(event):
 async def donatiii(event):
     sender = await event.get_sender()
     SENDER = sender.id
+    if is_rate_limited(SENDER, df):
+        send_logs(f"Rate limited user: {SENDER}", 'warning')
+        return
     text = "Buy me a coffee ☕️\n\n"
     text += "      Destinatorul:\n"
     text += "`Ivan Proscurchin`\n\n"
@@ -325,7 +367,8 @@ async def donatiii(event):
 
 def prepare_next_courses(week_day, is_even, course_index):
     next_courses = {}
-    all_users = df.loc[df['group'].str.len() > -1, 'SENDER'].values
+    # Get all users with a group set and who are not banned
+    all_users = df.loc[(df['group'].str.len() > -1) & (df['ban'] != 1) & (df['ban'] != '1'), 'SENDER'].values
     
     for user in all_users:
         sender = int(user[1:])
@@ -409,7 +452,7 @@ async def send_schedule_tomorrow():
         return await send_schedule_tomorrow()
     send_logs("waiting for tomorrow mess - " + str(scheduled - current_time), 'info')
     temp_is_even = (now + datetime.timedelta(days=1)).isocalendar().week % 2
-    users_with_notification_on = df.loc[df['noti'] == 'on', 'SENDER'].values
+    users_with_notification_on = df.loc[(df['group'].str.len() > -1) & (df['ban'] != 1) & (df['ban'] != '1'), 'SENDER'].values
     await asyncio.sleep((scheduled - current_time).total_seconds())
     for user in users_with_notification_on:
         sender = int(user[1:])

@@ -4,7 +4,7 @@ import pytz
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
 
-from functions import button_grid, send_logs
+from functions import button_grid, send_logs, is_rate_limited
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
 
@@ -17,6 +17,9 @@ def register_group_handlers(client, df, years, specialties, group_list):
         nonlocal df
         sender = await event.get_sender()
         SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
         text = "Alege anul:"
         year_butt = [Button.inline("  " + year + "  ", data=data) for data, year in years.items()]
         button_per_r = 4
@@ -32,7 +35,12 @@ def register_group_handlers(client, df, years, specialties, group_list):
                     'noti' : ["off"],
                     'admin' : [0],
                     'prem' : [0],
-                    'subgrupa' : [0]}
+                    'subgrupa' : [0],
+                    'gamble' : [""],
+                    'ban' : ['none'],
+                    'ban_time' : ['none'],
+                    'ban_reason' : [""],
+                    'last_cmd' : [""]}
             new_dat = pd.DataFrame(data)
             df = pd.concat([df, new_dat]) 
             df.to_csv('BD.csv', encoding='utf-8', index=False)
@@ -112,6 +120,9 @@ def register_group_handlers(client, df, years, specialties, group_list):
         nonlocal df
         sender = await event.get_sender()
         SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
         text = "Alege subgrupa:" # -1/1/deselect(0)
         subgrupa_butt = [Button.inline("   1   ", data=b"sub1"),
                         Button.inline("   2   ", data=b"sub2"),

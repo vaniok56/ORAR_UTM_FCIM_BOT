@@ -290,3 +290,42 @@ def get_next_course_time():
     time_before_course = course_time - datetime.timedelta(minutes=15)
     
     return current_time, course_index + 1, time_before_course
+
+
+import time
+from collections import defaultdict
+last_command_time = defaultdict(float)
+messages_per_minute = defaultdict(list)
+COMMAND_COOLDOWN = 1 # seconds
+MAX_MESSAGES_PER_MINUTE = 10 # messages
+
+def is_rate_limited(user_id, df):
+    if user_id == 500303890:
+        return False
+    
+    try:
+        if int(float(df.loc[df['SENDER'] == f"U{user_id}", 'ban'].values[0])) == 1:
+            return True
+    except:
+        pass
+
+    current_time = time.time()
+    minute_ago = current_time - 60
+
+    messages = messages_per_minute.get(user_id, [])
+
+    # Remove messages older than a minute
+    if messages and messages[0] < minute_ago:
+        messages = [t for t in messages if t > minute_ago]
+    
+    # Add current message timestamp
+    messages.append(current_time)
+    messages_per_minute[user_id] = messages
+    
+    # Apply 1-second cooldown only if more than 5 messages in the last minute
+    if len(messages) > MAX_MESSAGES_PER_MINUTE:
+        if current_time - last_command_time.get(user_id, 0) < COMMAND_COOLDOWN:
+            return True
+    
+    last_command_time[user_id] = current_time
+    return False

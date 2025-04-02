@@ -7,7 +7,7 @@ import pytz
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
 
-from functions import button_grid, send_logs, print_next_course
+from functions import button_grid, send_logs, print_next_course, is_rate_limited
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
 
@@ -17,6 +17,9 @@ def register_admin_handlers(client, df, admins1, admins2):
     async def admin_help(event):
         sender = await event.get_sender()
         SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
         if "U"+str(SENDER) not in admins1 and "U"+str(SENDER) not in admins2:
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
@@ -25,6 +28,9 @@ def register_admin_handlers(client, df, admins1, admins2):
         text += "/backup - manual database backup\n"
         text += "/message - send a message to users\n"
         text += "/debug_next - debug print next course\n"
+        text += "/ban - ban a user\n"
+        text += "/unban - unban a user\n"
+        text += "/list_ban - show banned users\n"
         await client.send_message(SENDER, text, parse_mode="HTML")
         send_logs("U"+str(SENDER) + " - /admin_help", 'info')
     
@@ -33,7 +39,9 @@ def register_admin_handlers(client, df, admins1, admins2):
     async def statsss(event):
         sender = await event.get_sender()
         SENDER = sender.id
-        
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
         if "U"+str(SENDER) not in admins1 and "U"+str(SENDER) not in admins2:
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             send_logs("U"+str(SENDER) + " - /stats - no acces", "info")
@@ -96,6 +104,9 @@ def register_admin_handlers(client, df, admins1, admins2):
     async def message_command(event):
         sender = await event.get_sender()
         SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
         if "U" + str(SENDER) not in admins1:
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
@@ -226,12 +237,16 @@ def register_admin_handlers(client, df, admins1, admins2):
     #/debug_next admin
     @client.on(events.NewMessage(pattern='/(?i)debug_next'))
     async def debugg(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
         subgrupa = list(df.loc[df['SENDER'] == "U"+str(event.sender_id), 'subgrupa'])[0]
         if "U"+str(event.sender_id) not in admins1:
             await client.send_message(event.sender_id, "Nu ai acces!", parse_mode="HTML")
             return
-        sender = await event.get_sender()
-        SENDER = sender.id
+        
         week_day = int((datetime.datetime.now(moldova_tz)).weekday())
         is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
         for i in range(1, 8):
@@ -246,6 +261,9 @@ def register_admin_handlers(client, df, admins1, admins2):
     async def manual_backup(event):
         sender = await event.get_sender()
         SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
         if "U"+str(SENDER) != "U500303890":
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
@@ -274,3 +292,122 @@ def register_admin_handlers(client, df, admins1, admins2):
         except Exception as e:
             send_logs(f"Error sending manual backup: {str(e)}", 'error')
             await client.send_message(SENDER, f"Error sending backup: {str(e)}", parse_mode="HTML")
+    
+    # Dictionary to track users in ban process
+    ban_users_waiting = {}
+    
+    #/ban a user(ban=1) and set ban_time 1 day
+    @client.on(events.NewMessage(pattern='/(?i)ban'))
+    async def ban_user_command(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
+        if "U"+str(SENDER) not in admins1:
+            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+            return
+        text = "Please enter the user ID(as int):"
+        await client.send_message(SENDER, text)
+        # Mark this user as waiting for a user ID to ban
+        ban_users_waiting[SENDER] = True
+        send_logs("U"+str(SENDER) + " - initiated /ban command", 'info')
+    
+    # Handle user input for ban command
+    @client.on(events.NewMessage())
+    async def ban_user_input_handler(event):
+        if event.text.startswith('/'):
+            return
+        sender = await event.get_sender()
+        SENDER = sender.id
+        
+        # Check if this user is waiting to provide a user ID to ban
+        if SENDER in ban_users_waiting and ban_users_waiting[SENDER]:
+            useridd = event.text
+            try:
+                useridd = int(useridd)
+                df.loc[df['SENDER'] == 'U'+str(useridd), 'ban'] = 1
+                df.loc[df['SENDER'] == 'U'+str(useridd), 'noti'] = 'off'
+                #dd-mm-yyyy/hh:mm:ss
+                ban_time = datetime.datetime.now(moldova_tz) + datetime.timedelta(days=1)
+                ban_time = ban_time.strftime("%d-%m-%y %H:%M:%S")
+                df.loc[df['SENDER'] == 'U'+str(useridd), 'ban_time'] = str(ban_time)
+                df.to_csv('BD.csv', encoding='utf-8', index=False)
+                await client.send_message(SENDER, f"User U{useridd} banned", parse_mode="HTML")
+                send_logs("U"+str(SENDER) + " - /ban - U"+str(useridd), 'info')
+            except ValueError:
+                await client.send_message(SENDER, "Invalid user ID!", parse_mode="HTML")
+            except Exception as e:
+                send_logs(f"Error banning user {useridd}: {str(e)}", 'error')
+            finally:
+                # Remove user from waiting list
+                del ban_users_waiting[SENDER]
+                # Return True to prevent other handlers from processing this message
+                return True
+
+    # Dictionary to track users in unban process
+    unban_users_waiting = {}
+    
+    #/unban user
+    @client.on(events.NewMessage(pattern='/(?i)unban'))
+    async def unban_user_command(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
+        if "U"+str(SENDER) not in admins1:
+            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+            return
+        text = "Please enter the user ID(as int):"
+        await client.send_message(SENDER, text)
+        # Mark this user as waiting for a user ID to unban
+        unban_users_waiting[SENDER] = True
+        send_logs("U"+str(SENDER) + " - initiated /unban command", 'info')
+    
+    # Handle user input for unban command
+    @client.on(events.NewMessage())
+    async def unban_user_input_handler(event):
+        if event.text.startswith('/'):
+            return
+        sender = await event.get_sender()
+        SENDER = sender.id
+        
+        # Check if this user is waiting to provide a user ID to unban
+        if SENDER in unban_users_waiting and unban_users_waiting[SENDER]:
+            useridd = event.text
+            try:
+                useridd = int(useridd)
+                df.loc[df['SENDER'] == 'U'+str(useridd), 'ban'] = 'none'
+                df.to_csv('BD.csv', encoding='utf-8', index=False)
+                await client.send_message(SENDER, f"User U{useridd} unbanned", parse_mode="HTML")
+                send_logs("U"+str(SENDER) + " - /unban - U"+str(useridd), 'info')
+            except ValueError:
+                await client.send_message(SENDER, "Invalid user ID!", parse_mode="HTML")
+            except Exception as e:
+                send_logs(f"Error unbanning user {useridd}: {str(e)}", 'error')
+            finally:
+                # Remove user from waiting list
+                del unban_users_waiting[SENDER]
+                # Return True to prevent other handlers from processing this message
+                return True
+    #/ban_list admin
+    @client.on(events.NewMessage(pattern='/(?i)list_ban'))
+    async def ban_list(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
+        if "U"+str(SENDER) not in admins1:
+            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+            return
+        text = "Banned users:\n"
+        banned_users = df[df['ban'] == 1]
+        if len(banned_users) > 0:
+            for index, row in banned_users.iterrows():
+                text += f"{row['SENDER']} - {row['ban_time']}\n"
+        else:
+            text += "No banned users"
+        await client.send_message(SENDER, text, parse_mode="HTML")
+        send_logs("U"+str(SENDER) + " - /ban_list", 'info')

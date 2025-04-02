@@ -5,7 +5,7 @@ from telethon.tl.types import InputMediaDice
 
 import pandas as pd
 
-from functions import button_grid, send_logs
+from functions import button_grid, send_logs, is_rate_limited
 
 def register_games_handlers(client, bot_kb, df):
     #/games menu
@@ -13,6 +13,9 @@ def register_games_handlers(client, bot_kb, df):
     async def games_help(event):
         sender = await event.get_sender()
         SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
         text = "Meniu jocuri\n"
         buttons = [
             Button.text('Slot 🎰', resize=True),
@@ -32,6 +35,9 @@ def register_games_handlers(client, bot_kb, df):
     async def back(event):
         sender = await event.get_sender()
         SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
         #change the buttons back to the main menu
         buttons_in_row = 2
         button_rows = button_grid(bot_kb, buttons_in_row)
@@ -43,11 +49,15 @@ def register_games_handlers(client, bot_kb, df):
     async def spin(event):
         sender = await event.get_sender()
         SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
         user_score = get_user_money(df, SENDER)
         if check_enough_money(df, SENDER, 20) == False:
             await event.respond("❌ Nu ai destui bani ❌")
             return
         user_score -= 20
+        save_score(df, SENDER, user_score)
         try:
             await event.respond("🎰 -20$ 🎰")
             dice_value = await send_dice(event, '🎰')
@@ -63,6 +73,7 @@ def register_games_handlers(client, bot_kb, df):
             combo_text = get_combo_text(dice_value)
             text = f"Combinatia ta: {combo_text}\n" + f"{result_text}"
             text += f"\nDepozit: {new_score}$\n"
+
             await asyncio.sleep(2)
             await event.respond(text)
             send_logs("U"+str(SENDER) + " - game - /spin", 'info')
@@ -84,11 +95,15 @@ def register_games_handlers(client, bot_kb, df):
     async def basketball(event):
         sender = await event.get_sender()
         SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
         user_score = get_user_money(df, SENDER)
         if check_enough_money(df, SENDER, 20) == False:
             await event.respond("❌ Nu ai destui bani ❌")
             return
         user_score -= 20
+        save_score(df, SENDER, user_score)
         try:
             await event.respond("🏀 -20$ 🏀")
             dice_value = await send_dice(event, '🏀')
@@ -96,18 +111,15 @@ def register_games_handlers(client, bot_kb, df):
             new_score = user_score + current_score
             save_score(df, SENDER, new_score)
 
-            if dice_value == 4:
-                await asyncio.sleep(4.5)
-                text = f"🏀 Ai castigat {current_score}$! 🏀"
-            elif dice_value == 5:
-                await asyncio.sleep(3.5)
+
+            if dice_value in [4, 5]:
                 text = f"🏀 Ai castigat {current_score}$! 🏀"
             else:
-                await asyncio.sleep(4)
                 text = "❌ Ai ratat! ❌"
             
             text += f"\nDepozit: {new_score}$\n"
 
+            await asyncio.sleep(4)
             await event.respond(text)
             send_logs("U"+str(SENDER) + " - game - /basketball", 'info')
         except Exception as e:
@@ -115,7 +127,7 @@ def register_games_handlers(client, bot_kb, df):
 
     def get_score_change_basketball(dice_value):
         if dice_value >= 4:
-            return 100
+            return 60
         else:
             return 0
     
@@ -124,18 +136,22 @@ def register_games_handlers(client, bot_kb, df):
     async def football(event):
         sender = await event.get_sender()
         SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
         user_score = get_user_money(df, SENDER)
         if check_enough_money(df, SENDER, 20) == False:
             await event.respond("❌ Nu ai destui bani ❌")
             return
         user_score -= 20
+        save_score(df, SENDER, user_score)
         try:
             await event.respond("⚽ -20$ ⚽")
             dice_value = await send_dice(event, '⚽')
             current_score = get_score_change_football(dice_value)
             new_score = user_score + current_score
             save_score(df, SENDER, new_score)
-            await asyncio.sleep(4)
+
             if dice_value in [3, 4, 5]:
                 text = f"⚽ Ai castigat {current_score}$! ⚽"
             else:
@@ -143,6 +159,7 @@ def register_games_handlers(client, bot_kb, df):
                 
             text += f"\nDepozit: {new_score}$\n"
 
+            await asyncio.sleep(4)
             await event.respond(text)
             send_logs("U"+str(SENDER) + " - game - /football", 'info')
         except Exception as e:
@@ -159,17 +176,20 @@ def register_games_handlers(client, bot_kb, df):
     async def dice(event):
         sender = await event.get_sender()
         SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
         user_score = get_user_money(df, SENDER)
         try:
             dice_value = await send_dice(event, '🎲')
-            current_score = dice_value * 10
+            current_score = dice_value * 5
             new_score = user_score + current_score
             save_score(df, SENDER, new_score)
             
-            await asyncio.sleep(3.5)
-            
             text = f"🎲 Ai castigat {current_score}$! 🎲"
             text += f"\nDepozit: {new_score}$\n"
+
+            await asyncio.sleep(3.5)
             await event.respond(text)
             send_logs("U"+str(SENDER) + " - game - /dice", 'info')
         except Exception as e:
@@ -180,22 +200,24 @@ def register_games_handlers(client, bot_kb, df):
     async def bowling(event):
         sender = await event.get_sender()
         SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
         user_score = get_user_money(df, SENDER)
         if check_enough_money(df, SENDER, 20) == False:
             await event.respond("❌ Nu ai destui bani ❌")
             return
         user_score -= 20
+        save_score(df, SENDER, user_score)
         try:
             await event.respond("🎳 -20$ 🎳")
             dice_value = await send_dice(event, '🎳')
             current_score = get_score_change_bowling(dice_value)
             new_score = user_score + current_score
             save_score(df, SENDER, new_score)
-
-            await asyncio.sleep(3)
             
             if dice_value == 6:
-                text = f"🎳 STRIKE! Ai castigat {current_score} 🎳"
+                text = f"🎳 STRIKE! Ai castigat {current_score}$ 🎳"
             elif dice_value == 1:
                 text = f"❌ EPIC FAIL {current_score}$ ❌"
             elif dice_value == 2:
@@ -204,6 +226,8 @@ def register_games_handlers(client, bot_kb, df):
                 text = f"❌ Ai dat jos doar {dice_value} ❌"
                 
             text += f"\nDepozit: {new_score}$\n"
+
+            await asyncio.sleep(3)
             await event.respond(text)
             send_logs("U"+str(SENDER) + " - game - /bowling", 'info')
         except Exception as e:
@@ -221,11 +245,15 @@ def register_games_handlers(client, bot_kb, df):
     async def darts(event):
         sender = await event.get_sender()
         SENDER = sender.id
+        if is_rate_limited(SENDER, df):
+            send_logs(f"Rate limited user: {SENDER}", 'warning')
+            return
         user_score = get_user_money(df, SENDER)
         if check_enough_money(df, SENDER, 20) == False:
             await event.respond("❌ Nu ai destui bani ❌")
             return
         user_score -= 20
+        save_score(df, SENDER, user_score)
         try:
             await event.respond("🎯 -20$ 🎯")
             dice_value = await send_dice(event, '🎯')
@@ -233,19 +261,18 @@ def register_games_handlers(client, bot_kb, df):
             new_score = user_score + current_score
             save_score(df, SENDER, new_score)
             
-            await asyncio.sleep(2.5)
-            
             if dice_value == 6:
                 text = f"🎯 Ai castigat {current_score}$ 🎯"
             elif dice_value == 1:
                 text = f"❌ EPIC FAIL {current_score}$ ❌"
             elif dice_value == 5:
-                text = f"🎯 Ai castigat {current_score + 20}$ 🎯"
+                text = f"🎯 Ai castigat {current_score}$ 🎯"
             else:
                 text = "❌ Ai pierdut! ❌"
             
             text += f"\nDepozit: {new_score}$\n"
 
+            await asyncio.sleep(2.5)
             await event.respond(text)
             send_logs("U"+str(SENDER) + " - game - /darts", 'info')
         except Exception as e:
@@ -256,6 +283,8 @@ def register_games_handlers(client, bot_kb, df):
             return 200
         elif dice_value == 1:
             return -200
+        elif dice_value == 5:
+            return 20
         else:
             return 0
     
