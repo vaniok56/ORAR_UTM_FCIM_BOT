@@ -1,20 +1,62 @@
 version: '3'
 services:
-  orarbot:
-    image: orarbot:latest
-    container_name: orarbot
+
+  mysql:
+    image: mysql:8.0
+    env_file: mysql.env
+    container_name: orar_mysql
+    restart: always
     volumes:
-      - /Users/milkshake/Desktop/Home/ORAR_UTM_FCIM_BOT/BD.csv:/BD.csv
-      - /Users/milkshake/Desktop/Home/ORAR_UTM_FCIM_BOT/orarbot.log:/orarbot.log
+      - ./mysql:/var/lib/mysql
+      - ./init:/docker-entrypoint-initdb.d/:ro
+
+    ports:
+      - "3306:3306"
+    command: >
+      --default-authentication-plugin=caching_sha2_password --log-error-verbosity=1 --console=1
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - orar_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        # More aggressive filtering
+        tag: "mysql"
+
+  orarbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: orarbot:latest
+    container_name: orar_bot
+    restart: always
+    env_file: mysql.env
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ./sessions:/sessions
+      - /Users/milkshake/Desktop/Home/ORAR_UTM_FCIM_BOT_MySQL/BD.csv:/BD.csv
+      - /Users/milkshake/Desktop/Home/ORAR_UTM_FCIM_BOT_MySQL/orarbot.log:/orarbot.log
     environment:
+      - MYSQL_HOST=mysql
+      - TZ=Europe/Chisinau
       - PYTHONUNBUFFERED=1
     tty: true
+    networks:
+      - orar_network
   restarter:
     image: docker:cli
     container_name: restarter
     restart: unless-stopped
-    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
-    entrypoint: ["/bin/sh","-c"]
+    volumes: [ "/var/run/docker.sock:/var/run/docker.sock" ]
+    entrypoint: [ "/bin/sh", "-c" ]
     command:
       - |
         while true; do
@@ -23,4 +65,6 @@ services:
           fi
           sleep 60
         done
-        
+networks:
+  orar_network:
+    driver: bridge

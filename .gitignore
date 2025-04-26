@@ -1,0 +1,41 @@
+# Development environments
+.vscode/
+.idea/
+venv/
+
+# Python files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Configuration & sensitive files
+config*.ini
+*.env
+
+# Database files
+mysql/
+*.sql
+*.csv
+init/
+
+# Project directories
+sessions/
+temp/
+
+# Backup files
+*.bak
+
+# Log files
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project-specific excludes
+game_handlers.py

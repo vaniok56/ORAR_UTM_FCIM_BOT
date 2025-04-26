@@ -4,53 +4,41 @@ import pytz
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
 
-from functions import button_grid, send_logs, is_rate_limited
+import handlers.db as db
+from functions import button_grid, send_logs, is_rate_limited, format_id
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
 
-def register_group_handlers(client, df, years, specialties, group_list):
-    if df.empty:
-        send_logs("DataFrame is empty!", "error")
+def register_group_handlers(client, years, specialties, group_list):
     #/alege_grupa
-    @client.on(events.NewMessage(pattern='/(?i)alege_grupa')) 
+    @client.on(events.NewMessage(pattern='/alege_grupa')) 
     async def alege_grupaa(event):
-        nonlocal df
         sender = await event.get_sender()
         SENDER = sender.id
-        if is_rate_limited(SENDER, df):
+        if is_rate_limited(SENDER):
             send_logs(f"Rate limited user: {SENDER}", 'warning')
             return
         text = "Alege anul:"
         year_butt = [Button.inline("  " + year + "  ", data=data) for data, year in years.items()]
         button_per_r = 4
-        global button_rows_year
         button_rows_year = button_grid(year_butt, button_per_r)
 
         #if user is not in list, add it
-        if "U"+str(SENDER) not in "U"+str(df['SENDER'].to_list()):
-            data =  {'SENDER' : ["U"+str(SENDER)],
-                    'group' : [""],
-                    'spec' : [""],
-                    'year' : [""],
-                    'noti' : ["off"],
-                    'admin' : [0],
-                    'prem' : [0],
-                    'subgrupa' : [0],
-                    'gamble' : [""],
-                    'ban' : ['none'],
-                    'ban_time' : ['none'],
-                    'ban_reason' : [""],
-                    'last_cmd' : [""]}
-            new_dat = pd.DataFrame(data)
-            df = pd.concat([df, new_dat]) 
-            df.to_csv('BD.csv', encoding='utf-8', index=False)
-            send_logs("New user! - " + "U"+str(SENDER), 'info')
+        if not db.is_user_exists(format_id(SENDER)):
+            result = db.add_new_user(format_id(SENDER))
+            if result:
+                send_logs("New user! - " + format_id(SENDER), 'info')
+                
+            else:
+                send_logs("Failed to add new user! - " + format_id(SENDER), 'error')
+                await client.send_message(SENDER, "Eroare la adaugarea utilizatorului! Te rog sa incerci din nou mai tarziu.", parse_mode="HTML")
+                return
         await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows_year)
+        
         
     #year click event handle
     @client.on(events.CallbackQuery())
     async def year_callback(event):
-        nonlocal df
         sender = await event.get_sender()
         SENDER = sender.id
         if event.data in years:
@@ -62,18 +50,25 @@ def register_group_handlers(client, df, years, specialties, group_list):
                 button_per_r = 4
                 button_rows = button_grid(spec_butt, button_per_r)
                 await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
-                df.loc[df['SENDER'] == "U"+str(SENDER), 'year'] = int(cur_year) #send cur_year to df
-                df.to_csv('BD.csv', encoding='utf-8', index=False) #save df
+                db.update_user_field(format_id(SENDER), 'year_s', int(cur_year))
                 await event.answer('Anul a fost selectat!')
-                send_logs("U"+str(SENDER) + " - /alege_grupa year - " + cur_year, "info")
+                send_logs(format_id(SENDER) + " - /alege_grupa year - " + cur_year, "info")
 
     #speciality click event handle
     @client.on(events.CallbackQuery())
     async def speciality_callback(event):
-        nonlocal df
+        is_specialty_event = False
+        for year_key, specs in specialties.items():
+            if event.data in specs:
+                is_specialty_event = True
+                break
+                
+        if not is_specialty_event:
+            return
         sender = await event.get_sender()
         SENDER = sender.id
-        year = int(list(df.loc[df['SENDER'] == "U"+str(SENDER), 'year'])[0])
+        year = db.locate_field(format_id(SENDER), 'year_s')
+        send_logs("speciality handle - year - " + str(year), "info")
         spec_items = specialties.get(str(year), {})
         if event.data in spec_items:
             cur_speciality = spec_items.get(event.data).replace(" ", "")
@@ -81,33 +76,51 @@ def register_group_handlers(client, df, years, specialties, group_list):
                 text = f"Alege grupa pentru {cur_speciality}:"
                 group_items = group_list.get(str(year), {})
                 group_items = group_items.get(cur_speciality + str(year), {})
-                df.loc[df['SENDER'] == "U"+str(SENDER), 'spec'] = cur_speciality #send cur_speciality to df
-                df.to_csv('BD.csv', encoding='utf-8', index=False) #save df
+                db.update_user_field(format_id(SENDER), 'spec', cur_speciality)
                 spec_butt = [Button.inline(group, data=data) for data, group in group_items.items()]
                 button_per_r = 4
                 button_rows = button_grid(spec_butt, button_per_r)
                 await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
                 await event.answer('Specialitatea a fost selectata!')
-                send_logs("U"+str(SENDER) + " - /alege_grupa spec - " + cur_speciality, "info")
+                send_logs(format_id(SENDER) + " - /alege_grupa spec - " + cur_speciality, "info")
 
     #group click event handle
     @client.on(events.CallbackQuery())
     async def group_callback(event):
-        nonlocal df
+        is_group_event = False
+        for year_key, year_groups in group_list.items():
+            for spec_key, groups in year_groups.items():
+                if event.data in groups:
+                    is_group_event = True
+                    break
+            if is_group_event:
+                break
+                
+        if not is_group_event:
+            return
         sender = await event.get_sender()
         SENDER = sender.id
-        cur_speciality = list(df.loc[df['SENDER'] == "U"+str(SENDER), 'spec'])[0]
-        year = int(list(df.loc[df['SENDER'] == "U"+str(SENDER), 'year'])[0])
+        cur_speciality = db.locate_field(format_id(SENDER), 'spec')
+        year = db.locate_field(format_id(SENDER), 'year_s')
+        send_logs("group handle - year - " + str(year) + " spec - "+ str(cur_speciality), "info")
+        
+        # Check if cur_speciality and year are valid
+        if not cur_speciality or not year or cur_speciality == 'none':
+            await event.answer('Eroare: Lipsește specializarea sau anul. Te rog să începi din nou.')
+            send_logs(f"U{SENDER} - group selection failed - Missing specialty or year", "warning")
+            return
+            
         group_items = group_list.get(str(year), {})
-        group_items = group_items.get(cur_speciality + str(year), {})
+        key = cur_speciality + str(year)
+        group_items = group_items.get(key, {})
+        
         if event.data in group_items:
             cur_group = group_items.get(event.data).replace(" ", "")
             if cur_group:
                 #updates the current group
-                df.loc[df['SENDER'] == "U"+str(SENDER), 'group'] = cur_group #send cur_group to df
-                df.to_csv('BD.csv', encoding='utf-8', index=False) #save df
+                db.update_user_field(format_id(SENDER), 'group_n', cur_group)
 
-                send_logs("U"+str(SENDER) + " - /alege_grupa - " + cur_group, "info")
+                send_logs(format_id(SENDER) + " - /alege_grupa - " + cur_group, "info")
 
                 text = f"Grupa ta este: {cur_group}"
                 await event.answer('Grupa a fost selectata!')
@@ -115,12 +128,11 @@ def register_group_handlers(client, df, years, specialties, group_list):
                 await alege_subgrupa(event)
     
     #/alege_subgrupa
-    @client.on(events.NewMessage(pattern='/(?i)alege_subgrupa'))
+    @client.on(events.NewMessage(pattern='/alege_subgrupa'))
     async def alege_subgrupa(event):
-        nonlocal df
         sender = await event.get_sender()
         SENDER = sender.id
-        if is_rate_limited(SENDER, df):
+        if is_rate_limited(SENDER):
             send_logs(f"Rate limited user: {SENDER}", 'warning')
             return
         text = "Alege subgrupa:" # -1/1/deselect(0)
@@ -135,24 +147,20 @@ def register_group_handlers(client, df, years, specialties, group_list):
     #subgrupa click event handle
     @client.on(events.CallbackQuery())
     async def subgrupa_callback(event):
-        nonlocal df
         sender = await event.get_sender()
         SENDER = sender.id
         if event.data == b"sub0":
-            df.loc[df['SENDER'] == "U"+str(SENDER), 'subgrupa'] = 0
-            df.to_csv('BD.csv', encoding='utf-8', index=False) #save df
+            db.update_user_field(format_id(SENDER), 'subgrupa', 0)
             await event.answer('Subgrupa a fost deselectata!')
             await client.edit_message(SENDER, event.message_id, "Subgrupa a fost deselectata!", parse_mode="HTML")
-            send_logs("U"+str(SENDER) + " - /alege_subgrupa - deselect(0)", "info")
+            send_logs(format_id(SENDER) + " - /alege_subgrupa - deselect(0)", "info")
         elif event.data == b"sub1":
-            df.loc[df['SENDER'] == "U"+str(SENDER), 'subgrupa'] = 1
-            df.to_csv('BD.csv', encoding='utf-8', index=False)
+            db.update_user_field(format_id(SENDER), 'subgrupa', 1)
             await event.answer('Subgrupa 1 a fost selectata!')
             await client.edit_message(SENDER, event.message_id, "Subgrupa 1 a fost selectata!", parse_mode="HTML")
-            send_logs("U"+str(SENDER) + " - /alege_subgrupa - 1", "info")
+            send_logs(format_id(SENDER) + " - /alege_subgrupa - 1", "info")
         elif event.data == b"sub2":
-            df.loc[df['SENDER'] == "U"+str(SENDER), 'subgrupa'] = 2
-            df.to_csv('BD.csv', encoding='utf-8', index=False)
+            db.update_user_field(format_id(SENDER), 'subgrupa', 2)
             await event.answer('Subgrupa 2 a fost selectata!')
             await client.edit_message(SENDER, event.message_id, "Subgrupa 2 a fost selectata!", parse_mode="HTML")
-            send_logs("U"+str(SENDER) + " - /alege_subgrupa - 2", "info")
+            send_logs(format_id(SENDER) + " - /alege_subgrupa - 2", "info")

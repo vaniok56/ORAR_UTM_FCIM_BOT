@@ -2,18 +2,64 @@ import numpy as np
 import openpyxl # excel read library
 import datetime
 import pytz
-moldova_tz = pytz.timezone('Europe/Chisinau')
+import threading
+import handlers.db as db
 
+moldova_tz = pytz.timezone('Europe/Chisinau')
 time_zone = pytz.timezone('Europe/Chisinau')
 #logs
 import logging
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s.%(msecs)03d | [%(levelname)s] %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S',
-                    handlers=[
-                        logging.FileHandler("orarbot.log"),
-                        logging.StreamHandler()
-                    ])
+class ColoredFormatter(logging.Formatter):
+    COLORS = {
+        'DEBUG': '\033[94m',  # Blue
+        'INFO': '\033[92m',   # Green
+        'WARNING': '\033[93m', # Yellow
+        'ERROR': '\033[91m',   # Red
+        'CRITICAL': '\033[91m\033[1m', # Bold Red
+        'RESET': '\033[0m'    # Reset color
+    }
+
+    def format(self, record):
+        # Format without the levelname, which we'll add separately with color
+        formatter = logging.Formatter(
+            '%(asctime)s.%(msecs)03d | %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        
+        # Get the log message without the level
+        log_message = formatter.format(record)
+        
+        # Add the colored level tag
+        colored_level = f"{self.COLORS.get(record.levelname, self.COLORS['RESET'])}[{record.levelname}]{self.COLORS['RESET']}"
+        
+        # Insert the colored level at the position after the timestamp
+        parts = log_message.split(' | ', 1)
+        if len(parts) == 2:
+            return f"{parts[0]} | {colored_level} {parts[1]}"
+        return log_message
+
+# Create formatters - one with color for console, one without for file
+file_formatter = logging.Formatter(
+    '%(asctime)s.%(msecs)03d | [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+console_formatter = ColoredFormatter(
+    '%(asctime)s.%(msecs)03d | [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# Create handlers
+file_handler = logging.FileHandler("orarbot.log")
+file_handler.setFormatter(file_formatter)
+
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(console_formatter)
+
+# Configure the root logger
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[file_handler, console_handler]
+)
 
 logging.Formatter.converter = lambda *args: \
     datetime.datetime.now(time_zone).timetuple()
@@ -201,7 +247,10 @@ def print_daily(schedule, is_even, col_gr, week_day, subgrupa):
             count_05 = course.count("0.5") + course.count("0,5")
             if count_05 == 2:
                 if subgrupa == 1:
-                    course = course.split("\n2)")[0]
+                    try:
+                        course = course.split("\n2)")[1]
+                    except:
+                        course = course
                 else:
                     course = "2)" + course.split("\n2)")[1]
             elif count_05 == 1:
@@ -299,12 +348,12 @@ messages_per_minute = defaultdict(list)
 COMMAND_COOLDOWN = 1 # seconds
 MAX_MESSAGES_PER_MINUTE = 10 # messages
 
-def is_rate_limited(user_id, df):
+def is_rate_limited(user_id):
     if user_id == 500303890:
         return False
     
     try:
-        if int(float(df.loc[df['SENDER'] == f"U{user_id}", 'ban'].values[0])) == 1:
+        if db.locate_field("U"+str(user_id), "ban") == 1:
             return True
     except:
         pass
@@ -329,3 +378,6 @@ def is_rate_limited(user_id, df):
     
     last_command_time[user_id] = current_time
     return False
+
+def format_id(user_id):
+    return f"U{user_id}"
