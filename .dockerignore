@@ -1,0 +1,55 @@
+# Version control
+.git/
+.github/
+.gitignore
+
+# Development environments
+.vscode/
+.idea/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Configuration & sensitive files
+*.env
+.env
+
+# Local data that shouldn't be in image
+mysql/
+BD_backup_*.sql
+*.csv
+
+# Session data (if mounted as volume)
+sessions/
+
+# Temporary and backup files
+temp/
+*.bak
+*.tmp
+
+# Documentation
+*.md
+LICENSE
+imgs/
+
+# Docker files
+docker-compose.yml
+.dockerignore
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Log files (if mounted as volume)
+*.log
+
+# Keep init.sql for database setup
+!init/init.sql

@@ -367,19 +367,29 @@ def get_admins(rank):
         try:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute('''
+                results_iter = cursor.execute('''
                 CALL get_admins(%s)
                 ''', (rank,), multi=True)
-                result = cursor.fetchall()
+                
+                admins = []
+                for result_set in results_iter:
+                    if result_set.with_rows:
+                        rows = result_set.fetchall()
+                        if rows:
+                            admins = [row[0] for row in rows]
+                            break
+                
+                # Process any remaining result sets to avoid "unread result" errors
                 while cursor.nextset():
                     pass
-                if result:
-                    admins = [row[0] for row in result]
-                    send_logs(f"Admins retrieved: {admins}", "info")
+                
+                if admins:
+                    send_logs(f"Admins rank [{rank}] retrieved: {admins}", "info")
                     return admins
                 else:
                     send_logs("No admins found", "info")
                     return []
+                    
         except mysql.connector.Error as db_err:
             if attempt < MAX_RETRIES - 1:
                 delay = 0.5 * (2 ** attempt)

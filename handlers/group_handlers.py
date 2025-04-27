@@ -1,7 +1,7 @@
 import pandas as pd
 import pytz
 
-from telethon import TelegramClient, events, types
+from telethon import TelegramClient, events, functions, types
 from telethon.tl.custom import Button
 
 import handlers.db as db
@@ -10,6 +10,15 @@ from functions import button_grid, send_logs, is_rate_limited, format_id
 moldova_tz = pytz.timezone('Europe/Chisinau')
 
 def register_group_handlers(client, years, specialties, group_list):
+
+    #alege_grupa button
+    @client.on(events.CallbackQuery(data=b"select_group"))
+    async def select_group_callback(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+        await event.delete()
+        await alege_grupaa(event)
+
     #/alege_grupa
     @client.on(events.NewMessage(pattern='/alege_grupa')) 
     async def alege_grupaa(event):
@@ -18,6 +27,10 @@ def register_group_handlers(client, years, specialties, group_list):
         if is_rate_limited(SENDER):
             send_logs(f"Rate limited user: {SENDER}", 'warning')
             return
+        await client(functions.messages.SetTypingRequest(
+            peer=SENDER,
+            action=types.SendMessageTypingAction()
+        ))
         text = "Alege anul:"
         year_butt = [Button.inline("  " + year + "  ", data=data) for data, year in years.items()]
         button_per_r = 4
@@ -126,6 +139,12 @@ def register_group_handlers(client, years, specialties, group_list):
                 await event.answer('Grupa a fost selectata!')
                 await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML")
                 await alege_subgrupa(event)
+                notification_text = "Dorești să primești notificări înainte de fiecare pereche?"
+                notification_buttons = [
+                    Button.inline("✅ Da", data=b"on"),
+                    Button.inline("❌ Nu", data=b"off")
+                ]
+                await client.send_message(SENDER, notification_text, parse_mode="Markdown", buttons=notification_buttons)
     
     #/alege_subgrupa
     @client.on(events.NewMessage(pattern='/alege_subgrupa'))
@@ -135,6 +154,10 @@ def register_group_handlers(client, years, specialties, group_list):
         if is_rate_limited(SENDER):
             send_logs(f"Rate limited user: {SENDER}", 'warning')
             return
+        await client(functions.messages.SetTypingRequest(
+            peer=SENDER,
+            action=types.SendMessageTypingAction()
+        ))
         text = "Alege subgrupa:" # -1/1/deselect(0)
         subgrupa_butt = [Button.inline("   1   ", data=b"sub1"),
                         Button.inline("   2   ", data=b"sub2"),

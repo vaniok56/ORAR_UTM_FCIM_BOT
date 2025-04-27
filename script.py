@@ -1,8 +1,4 @@
-# orar_utm_fcim_bot version 0.10.0
-### changelog:
-# moved changelog to separate file(CHANGELOG.md)
-
-from telethon import TelegramClient, events, types
+from telethon import TelegramClient, events, functions, types
 from telethon.tl.custom import Button
 
 import configparser # read
@@ -14,17 +10,16 @@ from functions import print_day, print_sapt, print_next_course, button_grid, sen
 from functions import cur_group, hours, week_days, is_even
 from group_lists import years, group_list, specialties
 
-#from handlers.game_handlers import register_games_handlers
-from handlers.admin_handlers import register_admin_handlers
-from handlers.group_handlers import register_group_handlers
+import handlers.admin_handlers as admin_handlers
+import handlers.group_handlers as group_handlers
 
 import pandas as pd
 import numpy as np
 import asyncio
 
 #### Access credentials
-config = configparser.ConfigParser() # Define the method to read the configuration file
-config.read('config2.ini') # read config.ini file 
+config = configparser.ConfigParser()
+config.read('config2.ini') # read config.ini file
 
 api_id = config.get('default','api_id') # get the api id
 api_hash = config.get('default','api_hash') # get the api hash
@@ -40,7 +35,6 @@ bot_kb = [
         Button.text('Săptămâna curentă 🗓️', resize=True),
         Button.text('Săptămâna viitoare 🗓️', resize=True),
         types.KeyboardButtonSimpleWebView("SIMU📚", "https://simu.utm.md/students/"),
-        # Button.text('Jocuri 🎮', resize=True),
     ]
 
 if not db.initialize_mysql_connection():
@@ -51,15 +45,14 @@ moldova_tz = pytz.timezone('Europe/Chisinau')
 week_day = int((datetime.datetime.now(moldova_tz)).weekday()) #weekday today(0-6)
 
 #1 rank is higher
-#concatinate "U500303890" to admin list
-admins1 = db.get_admins(1) + ["U500303890"]
-admins2 = db.get_admins(2) + ["U500303890"]
+admins1 = db.get_admins(1)
+admins2 = db.get_admins(2)
 
 noti_send = 0
 
 #register_games_handlers(client, bot_kb)
-register_admin_handlers(client, admins1, admins2)
-register_group_handlers(client, years, specialties, group_list)
+admin_handlers.register_admin_handlers(client, admins1, admins2)
+group_handlers.register_group_handlers(client, years, specialties, group_list)
 
 #/start
 @client.on(events.NewMessage(pattern="/start")) 
@@ -72,11 +65,11 @@ async def startt(event):
     
     text = "👋 Bun venit la botul pentru orarul UTM FCIM!\n\n"
     text += "Pentru a începe:\n"
-    text += "1️⃣ Selectează grupa ta folosind comanda /alege_grupa\n"
-    text += "2️⃣ Opțional, alege subgrupa cu /alege_subgrupa\n\n"
+    text += "1️⃣ Selectează grupa ta\n"
+    text += "2️⃣ Opțional, alege subgrupa\n\n"
     text += "📋 Vezi toate comenzile disponibile cu /help\n"
     text += "📞 Pentru suport folosește /contacts\n\n"
-    text += "⚠️ ATENȚIE! __**Orarul poate să nu fie actualizat**__, nu răspundem pentru absențe."
+    text += "⚠️ ATENȚIE! __**Orarul poate să nu fie actualizat**__, nu răspund pentru absențe."
     
     buttons_in_row = 2
     button_rows = button_grid(bot_kb, buttons_in_row)
@@ -86,14 +79,10 @@ async def startt(event):
         result = db.add_new_user(format_id(SENDER))
         if result:
             send_logs("New user! - " + format_id(SENDER), 'info')
-        await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows)
-        
-        notification_text = "Dorești să primești notificări înainte de fiecare pereche?"
-        notification_buttons = [
-            Button.inline("✅ Da", data=b"on"),
-            Button.inline("❌ Nu", data=b"off")
-        ]
-        await client.send_message(SENDER, notification_text, parse_mode="Markdown", buttons=notification_buttons)
+    await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows)
+    
+    select_group_button = [Button.inline("Selectează grupa", data=b"select_group")]
+    await client.send_message(SENDER, "Pentru a continua, selectează grupa:", buttons=select_group_button)
 
 #notif button handle
 @client.on(events.CallbackQuery())
@@ -122,6 +111,10 @@ async def helpp(event):
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
+    await client(functions.messages.SetTypingRequest(
+            peer=SENDER,
+            action=types.SendMessageTypingAction()
+        ))
     text = "/contacts - contacte\n"
     text += "/azi - orarul de azi\n"
     text += "/maine - orarul de maine\n"
@@ -148,8 +141,12 @@ async def versionn(event):
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
-    text = "Version 0.10.0\n"
-    text += "Last update: 16-04-2025\n"
+    await client(functions.messages.SetTypingRequest(
+            peer=SENDER,
+            action=types.SendMessageTypingAction()
+        ))
+    text = "Version 0.10.1\n"
+    text += "Last update: 27-04-2025\n"
     text += "Github: [ORAR_UTM_FCIM_BOT](https://github.com/vaniok56/ORAR_UTM_FCIM_BOT)\n"
     button_rows = button_grid(bot_kb, 2)
     await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows, link_preview=False)
@@ -163,11 +160,14 @@ async def contactt(event):
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
-    
+    await client(functions.messages.SetTypingRequest(
+            peer=SENDER,
+            action=types.SendMessageTypingAction()
+        ))
     text = (
         "Salut! Acest bot a fost creat pentru a simplifica accesul la orarul UTM FCIM. "
         "Botul este în continuă dezvoltare și îmbunătățire.\n\n"
-        "⚠️ __**Orarul poate să nu fie actualizat**__, nu răspundem pentru absențe.\n\n"
+        "⚠️ __**Orarul poate să nu fie actualizat**__, nu răspund pentru absențe.\n\n"
         "Pentru întrebări și sugestii:\n"
         "👤 Telegram: [@vaniok56](https://t.me/vaniok56)\n"
         "💻 Github: [ORAR_UTM_FCIM_BOT](https://github.com/vaniok56/ORAR_UTM_FCIM_BOT)\n"
@@ -185,6 +185,10 @@ async def notifonn(event):
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
+    await client(functions.messages.SetTypingRequest(
+            peer=SENDER,
+            action=types.SendMessageTypingAction()
+        ))
     text = "Notificarile sunt pornite!\n"
     button_rows = button_grid(bot_kb, 2)
     await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows)
@@ -200,6 +204,10 @@ async def notifofff(event):
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
+    await client(functions.messages.SetTypingRequest(
+            peer=SENDER,
+            action=types.SendMessageTypingAction()
+        ))
     text = "Notificarile sunt stinse!\n"
     button_rows = button_grid(bot_kb, 2)
     await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows)
@@ -215,6 +223,10 @@ async def oree(event):
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
+    await client(functions.messages.SetTypingRequest(
+            peer=SENDER,
+            action=types.SendMessageTypingAction()
+        ))
     text = "Graficul de ore:\n"
     for i in range(0, 7):
         text += "\nPerechea: #" + str(i+1) + "\nOra : " + ''.join(hours[i]) + "\n"
@@ -236,6 +248,10 @@ async def mainee(event):
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
+    await client(functions.messages.SetTypingRequest(
+            peer=SENDER,
+            action=types.SendMessageTypingAction()
+        ))
     subgrupa = db.locate_field(format_id(SENDER), 'subgrupa')
     try:
         #get the user's selected group
@@ -267,6 +283,10 @@ async def azii(event):
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
+    await client(functions.messages.SetTypingRequest(
+            peer=SENDER,
+            action=types.SendMessageTypingAction()
+        ))
     subgrupa = db.locate_field(format_id(SENDER), 'subgrupa')
     try:
         csv_gr = db.locate_field(format_id(SENDER), 'group_n')
@@ -297,6 +317,10 @@ async def sapt_curr(event):
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
+    await client(functions.messages.SetTypingRequest(
+            peer=SENDER,
+            action=types.SendMessageTypingAction()
+        ))
     subgrupa = db.locate_field(format_id(SENDER), 'subgrupa')
     try:
         csv_gr = db.locate_field(format_id(SENDER), 'group_n')
@@ -322,6 +346,10 @@ async def sapt_viit(event):
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
+    await client(functions.messages.SetTypingRequest(
+            peer=SENDER,
+            action=types.SendMessageTypingAction()
+        ))
     subgrupa = db.locate_field(format_id(SENDER), 'subgrupa')
     try:
         csv_gr = db.locate_field(format_id(SENDER), 'group_n')
@@ -347,6 +375,10 @@ async def donatiii(event):
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
+    await client(functions.messages.SetTypingRequest(
+            peer=SENDER,
+            action=types.SendMessageTypingAction()
+        ))
     text = "Buy me a coffee ☕️\n\n"
     text += "      Destinatorul:\n"
     text += "`Ivan Proscurchin`\n\n"
@@ -363,17 +395,14 @@ async def donatiii(event):
 def prepare_next_courses(week_day, is_even, course_index):
     next_courses = {}
     # Get all users with a group set and who are not banned
-    #except group = 'none' / ban = 1 /
+    #only group != 'none' / ban != 1 / noti == 1
     try:
         all_users = db.get_all_users()
         filtered_users = all_users[
-                (all_users['group_n'] != 'none') & 
+                (all_users['group_n'].astype(str) != 'none') & 
                 (all_users['ban'] != 1) &
                 (all_users['noti'] == 1)
             ]
-            
-        send_logs(f"Preparing next courses for {len(all_users)} users", 'info')
-
         
         for index, row in filtered_users.iterrows():
             try:
@@ -396,6 +425,7 @@ def prepare_next_courses(week_day, is_even, course_index):
                     next_courses[sender] = next_course
             except Exception as e:
                 send_logs(f"Error preparing next course to {sender}: {e}", 'error')
+        send_logs(f"Prepared next course to {len(next_courses)} users", "info")
     except Exception as e:
         send_logs(f"Error preparing next courses: {e}", 'error')
         return {}
@@ -425,16 +455,16 @@ async def send_curr_course_users(week_day, is_even):
     
     #get next course time, index and time before course
     current_time, course_index, time_before_course = get_next_course_time()
-    
+
+    #prepare next courses for all users
+    next_courses = prepare_next_courses(week_day, is_even, course_index)
+
     #if no more courses today, wait and retry
     wait_time = (time_before_course - current_time).total_seconds()
     if wait_time < 1:
         send_logs("No more courses for today. Waiting - 4:00:00", 'info')
         await asyncio.sleep(14400)  # Wait 4 hours
         return await send_curr_course_users(week_day, is_even)
-    
-    #prepare next courses for all users
-    next_courses = prepare_next_courses(week_day, is_even, course_index)
     
     if next_courses:
         send_logs(f"Waiting for next course - {time_before_course - current_time}", 'info')
@@ -473,12 +503,12 @@ async def send_schedule_tomorrow():
     users_with_notification_on = db.get_all_users_with('noti', 'on')
 
     await asyncio.sleep((scheduled - current_time).total_seconds())
-    for user in users_with_notification_on:
-        sender = int(user[1:])
+    for index, row in users_with_notification_on.iterrows():
+        sender = int(row['SENDER'][1:])
         csv_gr = db.locate_field(format_id(sender), 'group_n')
         subgrupa = db.locate_field(format_id(sender), 'subgrupa')
         try:
-            if csv_gr == "" or str(csv_gr) == 'nan':
+            if csv_gr == "" or str(csv_gr) == 'none':
                 raise ValueError(str(sender) + 'no gr')
             #send the schedule
             day_sch = print_day(week_day, csv_gr, temp_is_even, subgrupa)
@@ -506,8 +536,6 @@ async def backup_database():
         wait_seconds = (target_time - now).total_seconds()
         send_logs(f"Scheduled database backup in {wait_seconds/60/60:.2f} hours", 'info')
         await asyncio.sleep(wait_seconds)
-        
-        
 
         #file
         now = datetime.datetime.now(moldova_tz)
@@ -535,17 +563,28 @@ async def backup_database():
 
 #keep network alive
 async def keep_network_alive():
-    import socket
+    ping_interval = 30
+    ping_counter = 0
     while True:
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(2)
-            s.connect(("8.8.8.8", 53))
-            s.close()
-            #send_logs("Network keep-alive check successful", 'debug')
+            await client.get_me()
+
+            ping_counter += 1
+            if ping_counter % 120 == 0:
+                send_logs(f"Keep-alive ping successful - ping #{ping_counter}", 'debug')
+                
+        except ConnectionError as e:
+            send_logs(f"Telegram connection error: {str(e)}", 'warning')
+            try:
+                await client.connect()
+                send_logs("Reconnection successful", 'info')
+            except Exception as reconnect_error:
+                send_logs(f"Failed to reconnect: {str(reconnect_error)}", 'error')
+                
         except Exception as e:
-            send_logs(f"Network keep-alive error: {str(e)}", 'warning')
-        await asyncio.sleep(60)
+            send_logs(f"Telegram keep-alive error: {str(e)}", 'warning')
+            
+        await asyncio.sleep(ping_interval)
 
 ### MAIN
 if __name__ == '__main__':

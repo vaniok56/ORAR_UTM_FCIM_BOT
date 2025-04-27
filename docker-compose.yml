@@ -8,8 +8,7 @@ services:
     restart: always
     volumes:
       - ./mysql:/var/lib/mysql
-      - ./init:/docker-entrypoint-initdb.d/:ro
-
+      - ./init:/docker-entrypoint-initdb.d:ro
     ports:
       - "3306:3306"
     command: >
@@ -42,8 +41,8 @@ services:
         condition: service_healthy
     volumes:
       - ./sessions:/sessions
-      - /Users/milkshake/Desktop/Home/ORAR_UTM_FCIM_BOT_MySQL/BD.csv:/BD.csv
-      - /Users/milkshake/Desktop/Home/ORAR_UTM_FCIM_BOT_MySQL/orarbot.log:/orarbot.log
+      - ./BD.csv:/BD.csv
+      - ./orarbot.log:/orarbot.log
     environment:
       - MYSQL_HOST=mysql
       - TZ=Europe/Chisinau
@@ -60,8 +59,8 @@ services:
     command:
       - |
         while true; do
-          if [ $(date +'%H:%M') = 18:10 ] || [ $(date +'%H:%M') = 05:00 ]; then
-            docker restart orarbot
+          if [ $(date +'%H:%M') = 17:10 ] || [ $(date +'%H:%M') = 04:00 ]; then
+            docker restart orar_bot
           fi
           sleep 60
         done

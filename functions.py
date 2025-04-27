@@ -5,6 +5,13 @@ import pytz
 import threading
 import handlers.db as db
 
+import time
+from collections import defaultdict
+last_command_time = defaultdict(float)
+messages_per_minute = defaultdict(list)
+COMMAND_COOLDOWN = 1 # seconds
+MAX_MESSAGES_PER_MINUTE = 5 # messages
+
 moldova_tz = pytz.timezone('Europe/Chisinau')
 time_zone = pytz.timezone('Europe/Chisinau')
 #logs
@@ -339,14 +346,6 @@ def get_next_course_time():
     time_before_course = course_time - datetime.timedelta(minutes=15)
     
     return current_time, course_index + 1, time_before_course
-
-
-import time
-from collections import defaultdict
-last_command_time = defaultdict(float)
-messages_per_minute = defaultdict(list)
-COMMAND_COOLDOWN = 1 # seconds
-MAX_MESSAGES_PER_MINUTE = 10 # messages
 
 def is_rate_limited(user_id):
     if user_id == 500303890:
