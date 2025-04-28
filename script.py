@@ -145,8 +145,8 @@ async def versionn(event):
             peer=SENDER,
             action=types.SendMessageTypingAction()
         ))
-    text = "Version 0.10.1\n"
-    text += "Last update: 27-04-2025\n"
+    text = "Version 0.10.2\n"
+    text += "Last update: 28-04-2025\n"
     text += "Github: [ORAR_UTM_FCIM_BOT](https://github.com/vaniok56/ORAR_UTM_FCIM_BOT)\n"
     button_rows = button_grid(bot_kb, 2)
     await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows, link_preview=False)
@@ -437,11 +437,12 @@ async def send_notification(sender, next_course, wait_time):
     await asyncio.sleep(wait_time)
     
     #re-check if notifications are still enabled for this user
-    if db.locate_field(format_id(sender), 'noti') != 'on':
+    if db.locate_field(format_id(sender), 'noti') != 1:
         return
     
     try:
         await client.send_message(sender, f"\nPerechea urmatoare:{next_course}", parse_mode="HTML")
+        send_logs(f"Sent next course to {sender}", 'info')
         noti_send += 1
         return True
     except Exception as e:
@@ -526,7 +527,7 @@ async def send_schedule_tomorrow():
 #backup BD automation
 async def backup_database():
     try:
-        admin_id = 500303890
+        admin_id = int(admins1[0][1:])
 
         #wait
         now = datetime.datetime.now(moldova_tz)
@@ -568,7 +569,12 @@ async def keep_network_alive():
     while True:
         try:
             await client.get_me()
-
+            #is typing
+            admin_id = int(admins1[0][1:])
+            await client(functions.messages.SetTypingRequest(
+                peer=admin_id,
+                action=types.SendMessageTypingAction()
+            ))
             ping_counter += 1
             if ping_counter % 120 == 0:
                 send_logs(f"Keep-alive ping successful - ping #{ping_counter}", 'debug')

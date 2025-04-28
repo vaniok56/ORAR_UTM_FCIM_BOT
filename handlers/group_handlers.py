@@ -9,6 +9,8 @@ from functions import button_grid, send_logs, is_rate_limited, format_id
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
 
+temp_selection = {}
+
 def register_group_handlers(client, years, specialties, group_list):
 
     #alege_grupa button
@@ -63,7 +65,9 @@ def register_group_handlers(client, years, specialties, group_list):
                 button_per_r = 4
                 button_rows = button_grid(spec_butt, button_per_r)
                 await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
-                db.update_user_field(format_id(SENDER), 'year_s', int(cur_year))
+                if SENDER not in temp_selection:
+                    temp_selection[SENDER] = {}
+                temp_selection[SENDER]['year'] = cur_year
                 await event.answer('Anul a fost selectat!')
                 send_logs(format_id(SENDER) + " - /alege_grupa year - " + cur_year, "info")
 
@@ -80,8 +84,7 @@ def register_group_handlers(client, years, specialties, group_list):
             return
         sender = await event.get_sender()
         SENDER = sender.id
-        year = db.locate_field(format_id(SENDER), 'year_s')
-        send_logs("speciality handle - year - " + str(year), "info")
+        year = temp_selection.get(SENDER, {}).get('year')
         spec_items = specialties.get(str(year), {})
         if event.data in spec_items:
             cur_speciality = spec_items.get(event.data).replace(" ", "")
@@ -89,7 +92,7 @@ def register_group_handlers(client, years, specialties, group_list):
                 text = f"Alege grupa pentru {cur_speciality}:"
                 group_items = group_list.get(str(year), {})
                 group_items = group_items.get(cur_speciality + str(year), {})
-                db.update_user_field(format_id(SENDER), 'spec', cur_speciality)
+                temp_selection[SENDER]['speciality'] = cur_speciality
                 spec_butt = [Button.inline(group, data=data) for data, group in group_items.items()]
                 button_per_r = 4
                 button_rows = button_grid(spec_butt, button_per_r)
@@ -113,9 +116,8 @@ def register_group_handlers(client, years, specialties, group_list):
             return
         sender = await event.get_sender()
         SENDER = sender.id
-        cur_speciality = db.locate_field(format_id(SENDER), 'spec')
-        year = db.locate_field(format_id(SENDER), 'year_s')
-        send_logs("group handle - year - " + str(year) + " spec - "+ str(cur_speciality), "info")
+        cur_speciality = temp_selection.get(SENDER, {}).get('speciality')
+        year = temp_selection.get(SENDER, {}).get('year')
         
         # Check if cur_speciality and year are valid
         if not cur_speciality or not year or cur_speciality == 'none':
@@ -130,8 +132,10 @@ def register_group_handlers(client, years, specialties, group_list):
         if event.data in group_items:
             cur_group = group_items.get(event.data).replace(" ", "")
             if cur_group:
-                #updates the current group
+                #updates all fields in db
                 db.update_user_field(format_id(SENDER), 'group_n', cur_group)
+                db.update_user_field(format_id(SENDER), 'year_s', int(year))
+                db.update_user_field(format_id(SENDER), 'spec', cur_speciality)
 
                 send_logs(format_id(SENDER) + " - /alege_grupa - " + cur_group, "info")
 

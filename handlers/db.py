@@ -175,9 +175,7 @@ def update_user_field(sender_id, field, value):
         try:                
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                
-                send_logs(f"Executing: CALL update_field({sender_id}, {field}, {value})", "debug")
-                
+                                
                 cursor.execute("CALL update_field(%s, %s, %s)", 
                             (sender_id, field, value))
                 conn.commit()
@@ -191,10 +189,7 @@ def update_user_field(sender_id, field, value):
                 # Use consistent cache key format for invalidation
                 if sender_id in user_data_cache:
                     del user_data_cache[sender_id]
-                    send_logs(f"Cache entry for user {sender_id} invalidated", "debug")
                 
-                # Log success
-                send_logs(f"Successfully updated {field}={value} for user {sender_id} ({result_count} result sets processed)", "info")
                 return True
         except mysql.connector.Error as db_err:
             if attempt < MAX_RETRIES - 1:
@@ -312,7 +307,7 @@ def migrate_csv_to_mysql(csv_path="BD.csv"):
 def locate_field(sender_id, field):
     """Locate a specific field for a user with retry logic"""    
     if sender_id in user_data_cache and user_data_cache[sender_id] is not None:
-        send_logs(f"Cache hit for {sender_id}", "info")
+        #send_logs(f"Cache hit for {sender_id}", "info")
         return user_data_cache[sender_id].get(field)
 
     for attempt in range(MAX_RETRIES):
@@ -408,13 +403,23 @@ def get_user_count():
         try:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute('''
+                results_iter = cursor.execute('''
                 CALL get_user_count()
                 ''', multi=True)
-                result = cursor.fetchall()
+                
+                count = 0
+                for result_set in results_iter:
+                    if result_set.with_rows:
+                        row = result_set.fetchone()
+                        if row:
+                            count = row[0]
+                            break
+                
+                # Process any remaining result sets
                 while cursor.nextset():
                     pass
-                return result[0] if result else 0
+                
+                return count
         except mysql.connector.Error as db_err:
             if attempt < MAX_RETRIES - 1:
                 delay = 0.5 * (2 ** attempt)
@@ -578,6 +583,9 @@ def get_all_users_without(field, value):
         
 def is_user_exists(sender_id):
     """Check if a user exists in the database"""
+    if sender_id in user_data_cache:
+        send_logs(f"User {sender_id} exists in the database(from cache)", "info")
+        return True
     for attempt in range(MAX_RETRIES):
         try:
             with get_db_connection() as conn:
