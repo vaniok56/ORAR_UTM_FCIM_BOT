@@ -145,8 +145,8 @@ async def versionn(event):
             peer=SENDER,
             action=types.SendMessageTypingAction()
         ))
-    text = "Version 0.10.2\n"
-    text += "Last update: 28-04-2025\n"
+    text = "Version 0.10.3\n"
+    text += "Last update: 30-04-2025\n"
     text += "Github: [ORAR_UTM_FCIM_BOT](https://github.com/vaniok56/ORAR_UTM_FCIM_BOT)\n"
     button_rows = button_grid(bot_kb, 2)
     await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows, link_preview=False)
@@ -452,77 +452,101 @@ async def send_notification(sender, next_course, wait_time):
 #send current course to users with notifications on
 async def send_curr_course_users(week_day, is_even):
     global noti_send
-    noti_send = 0
-    
-    #get next course time, index and time before course
-    current_time, course_index, time_before_course = get_next_course_time()
-
-    #prepare next courses for all users
-    next_courses = prepare_next_courses(week_day, is_even, course_index)
-
-    #if no more courses today, wait and retry
-    wait_time = (time_before_course - current_time).total_seconds()
-    if wait_time < 1:
-        send_logs("No more courses for today. Waiting - 4:00:00", 'info')
-        await asyncio.sleep(14400)  # Wait 4 hours
-        return await send_curr_course_users(week_day, is_even)
-    
-    if next_courses:
-        send_logs(f"Waiting for next course - {time_before_course - current_time}", 'info')
+    while True:
+        noti_send = 0
         
-        #create and schedule tasks for all notifications
-        tasks = [
-            send_notification(sender, course, wait_time) 
-            for sender, course in next_courses.items()
-        ]
+        #get next course time, index and time before course
+        current_time, course_index, time_before_course = get_next_course_time()
+
+        #prepare next courses for all users
+        next_courses = prepare_next_courses(week_day, is_even, course_index)
+
+        #if no more courses today, wait and retry
+        wait_time = (time_before_course - current_time).total_seconds()
+        if wait_time < 1:
+            send_logs("No more courses for today. Waiting - 4:00:00", 'info')
+            await asyncio.sleep(14400)  # Wait 4 hours
+            return await send_curr_course_users(week_day, is_even)
         
-        await asyncio.gather(*tasks)
-        send_logs(f"Sent next course to {noti_send} users", 'info')
-    else:
-        send_logs(f"No users have the next course. Waiting - {time_before_course - current_time}", 'info')
-        await asyncio.sleep(wait_time)
-    
-    return await send_curr_course_users(week_day, is_even)
-    
+        if next_courses:
+            send_logs(f"Waiting for next course - {time_before_course - current_time}", 'info')
+            
+            #create and schedule tasks for all notifications
+            tasks = [
+                send_notification(sender, course, wait_time) 
+                for sender, course in next_courses.items()
+            ]
+            
+            await asyncio.gather(*tasks)
+            send_logs(f"Sent next course to {noti_send} users", 'info')
+        else:
+            send_logs(f"No users have the next course. Waiting - {time_before_course - current_time}", 'info')
+            await asyncio.sleep(wait_time)
+        
 
 #send schedule for tomorrow to users with notifications on
 async def send_schedule_tomorrow():
-    noti_day = 0
-    #gain vars
-    now = datetime.datetime.now(moldova_tz)
-    current_time = datetime.datetime.strptime(str(now.time())[:-7], "%H:%M:%S")
-    week_day = int((now + datetime.timedelta(days=1)).weekday())
-    scheduled = datetime.datetime.strptime("20:00:00", "%H:%M:%S")
-    #wait 4h 1s if waiting is negative
-    if (scheduled - current_time).total_seconds() < 1:
-        send_logs("waiting positive for tomorrow", 'info')
-        await asyncio.sleep(14401)
-        return await send_schedule_tomorrow()
-    send_logs("waiting for tomorrow mess - " + str(scheduled - current_time), 'info')
-    temp_is_even = (now + datetime.timedelta(days=1)).isocalendar().week % 2
-
-    users_with_notification_on = db.get_all_users_with('noti', 'on')
-
-    await asyncio.sleep((scheduled - current_time).total_seconds())
-    for index, row in users_with_notification_on.iterrows():
-        sender = int(row['SENDER'][1:])
-        csv_gr = db.locate_field(format_id(sender), 'group_n')
-        subgrupa = db.locate_field(format_id(sender), 'subgrupa')
+    while True:
         try:
-            if csv_gr == "" or str(csv_gr) == 'none':
-                raise ValueError(str(sender) + 'no gr')
-            #send the schedule
-            day_sch = print_day(week_day, csv_gr, temp_is_even, subgrupa)
-            if day_sch == "":
-                continue
-            text = "\nOrarul de maine(" + week_days[week_day] +"):\n" + day_sch
-            await client.send_message(sender, text, parse_mode="HTML")
-            #send_logs(format_id(SENDER) + " - send schedule for tomorrow", 'info')
-            noti_day+=1
+            #gain vars
+            now = datetime.datetime.now(moldova_tz)
+            current_time = datetime.datetime.strptime(str(now.time())[:-7], "%H:%M:%S")
+            
+            # Calculate tomorrow and its weekday
+            tomorrow = now + datetime.timedelta(days=1)
+            week_day = int(tomorrow.weekday())
+            temp_is_even = tomorrow.isocalendar().week % 2
+            
+            # Set target time to 20:00 today
+            scheduled = datetime.datetime.strptime("20:00:00", "%H:%M:%S")
+            
+            # If it's already past 20:00, set target to tomorrow
+            wait_seconds = (scheduled - current_time).total_seconds()
+            if wait_seconds < 0:
+                send_logs("Already past schedule time, waiting until tomorrow 20:00", 'info')
+                target_time = now.replace(hour=20, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)
+                wait_seconds = (target_time - now).total_seconds()
+            else:
+                send_logs(f"Waiting until 20:00 to send tomorrow's schedule - {wait_seconds/60:.1f} minutes", 'info')
+            
+            # Wait until scheduled time
+            await asyncio.sleep(wait_seconds)
+            
+            # Get users with notifications enabled
+            all_users = db.get_all_users()
+            filtered_users = all_users[
+                    (all_users['group_n'].astype(str) != 'none') & 
+                    (all_users['ban'] != 1) &
+                    (all_users['noti'] == 1)
+                ]
+            
+            noti_day = 0  # Counter for successful notifications
+            send_logs(f"Starting to send tomorrow's schedule to {len(filtered_users)} eligible users", 'info')
+            
+            # Send notifications to each user
+            for index, row in filtered_users.iterrows():
+                try:
+                    sender = int(row['SENDER'][1:])
+                    csv_gr = row['group_n']
+                    subgrupa = row['subgrupa']
+                
+                    if pd.isna(csv_gr) or csv_gr == '' or csv_gr == 'none':
+                        continue
+                        
+                    # Get schedule and send if not empty
+                    day_sch = print_day(week_day, csv_gr, temp_is_even, subgrupa)
+                    if day_sch:
+                        text = f"\nOrarul de maine ({week_days[week_day]}):\n{day_sch}"
+                        await client.send_message(sender, text, parse_mode="HTML")
+                        noti_day += 1
+                except Exception as e:
+                    send_logs(f"Error sending schedule to {row['SENDER']}: {e}", 'error')
+                    
+            send_logs(f"Successfully sent tomorrow's schedule to {noti_day} users", 'info')
+            
         except Exception as e:
-            send_logs(f"Error sending sch tomorr to {str(sender)}: {e}", 'error')
-    send_logs(f"Send next day to {str(noti_day)} users",'info')
-    return await send_schedule_tomorrow()
+            send_logs(f"Error in send_schedule_tomorrow: {e}", 'error')
+            await asyncio.sleep(60)  # Wait 1 min
 
 #backup BD automation
 async def backup_database():

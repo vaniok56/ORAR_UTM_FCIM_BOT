@@ -255,7 +255,7 @@ def print_daily(schedule, is_even, col_gr, week_day, subgrupa):
             if count_05 == 2:
                 if subgrupa == 1:
                     try:
-                        course = course.split("\n2)")[1]
+                        course = course.split("\n2)")[0]
                     except:
                         course = course
                 else:

@@ -2,6 +2,21 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.10.3] - 2025-04-30
+
+### TL;DR
+Fixed subgroup schedule display, database stored procedure handling, and background notification task logic. Improved database connection pooling and caching.
+
+### Fixed
+- Corrected schedule display for subgroup 1 when a course is split between subgroups in [`functions.py`](./functions.py).
+- Resolved potential "unread result" errors by correctly handling stored procedure results in database functions in [`handlers/db.py`](./handlers/db.py).
+- Fixed logic error in the background task for sending current course notifications (`send_curr_course_users`) in [`script.py`](./script.py).
+- Improved reliability and logic of the background task for sending tomorrow's schedule notifications (`send_schedule_tomorrow`) in [`script.py`](./script.py).
+
+### Updated
+- Enhanced MySQL connection pool management (increased size, unique names, reinitialization on errors) for better stability and performance in [`handlers/db.py`](./handlers/db.py).
+- Improved user data caching strategy, including preloading and fallback mechanisms during database issues in [`handlers/db.py`](./handlers/db.py).
+
 ## [0.10.2] - 2025-04-28
 
 ### TL;DR

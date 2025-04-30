@@ -18,7 +18,18 @@ user_data_cache = {}
 
 def initialize_mysql_connection():
     """Initialize MySQL connection pool with retry logic"""
-    global pool
+    global pool, _cached_all_users_df
+
+    # Initialize cached users dataframe if not already set
+    if '_cached_all_users_df' not in globals():
+        _cached_all_users_df = pd.DataFrame()
+    
+    # Close existing pool if it exists
+    if pool is not None:
+        try:
+            pool._remove_connections()
+        except:
+            pass
 
     # Get MySQL connection details from environment
     config = {
@@ -28,7 +39,9 @@ def initialize_mysql_connection():
         'database': os.environ.get('MYSQL_DATABASE'),
         'pool_reset_session': True,
         'autocommit': True,
-        'connection_timeout': 30
+        'connection_timeout': 30,
+        'pool_size': 32,  # Increase from 20 to handle more concurrent connections
+        'pool_name': f"orar_pool_{int(time.time())}"  # Unique pool name each time
     }
     
     # Print connection parameters for debugging
@@ -38,8 +51,6 @@ def initialize_mysql_connection():
         try:
             # Create connection pool
             pool = mysql.connector.pooling.MySQLConnectionPool(
-                pool_name="orar_pool",
-                pool_size=20,
                 **config
             )
             
@@ -49,7 +60,13 @@ def initialize_mysql_connection():
                 cursor.execute("SELECT VERSION()")
                 version = cursor.fetchone()
                 send_logs(f"Connected to MySQL version: {version[0]}", "info")
-            user_data_cache.clear()
+            
+            # refresh cache with new data if possible
+            try:
+                load_user_cache()
+            except:
+                send_logs("Failed to preload user cache, will use existing cache if available", "warning")
+                
             send_logs("MySQL connection established successfully", "info")
             return True
         except mysql.connector.Error as err:
@@ -64,6 +81,28 @@ def initialize_mysql_connection():
             send_logs(f"Unexpected error initializing MySQL: {str(e)}", "error")
             return False
 
+def load_user_cache():
+    """Preload user cache from database"""
+    global _cached_all_users_df
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor(dictionary=True, buffered=True)
+        results_iter = cursor.execute('CALL get_all_users()', multi=True)
+        
+        for result_set in results_iter:
+            if result_set.with_rows:
+                result = result_set.fetchall()
+                if result:
+                    df = pd.DataFrame(result)
+                    _cached_all_users_df = df
+                    for row in result:
+                        user_data_cache[row['SENDER']] = row
+                    send_logs(f"Preloaded {len(df)} users into cache", "info")
+                break
+        
+        while cursor.nextset():
+            pass
+
 @contextmanager
 def get_db_connection():
     """Context manager for database connections"""
@@ -72,8 +111,14 @@ def get_db_connection():
         # Get a connection from the pool
         for attempt in range(3):  # Try up to 3 times
             try:
+                if pool is None:
+                    raise Exception("Connection pool not initialized")
                 conn = pool.get_connection()
                 break
+            except mysql.connector.errors.PoolError as pool_err:
+                send_logs(f"Pool error: {pool_err}. Attempting to reinitialize pool...", "warning")
+                initialize_mysql_connection()
+                time.sleep(1)
             except mysql.connector.Error as err:
                 send_logs(f"DB connection attempt {attempt+1} failed: {err}. Retrying...", "warning")
                 time.sleep(0.5)  # in seconds
@@ -88,12 +133,9 @@ def get_db_connection():
     finally:
         if conn:
             try:
-                # Ensure all result sets are consumed
-                if hasattr(conn, '_cmysql') and not conn.is_closed():
-                    conn.cmd_reset_connection()
-            except:
-                pass
-            conn.close()
+                conn.close()
+            except Exception as close_err:
+                send_logs(f"Error closing connection: {close_err}", "warning")
 
 def save_dataframe(df):
     """Save DataFrame to database"""
@@ -175,16 +217,17 @@ def update_user_field(sender_id, field, value):
         try:                
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                                
-                cursor.execute("CALL update_field(%s, %s, %s)", 
-                            (sender_id, field, value))
+                
+                
+                cursor.callproc('update_field', [sender_id, field, value])
                 conn.commit()
-                result = cursor.fetchall()
-
-                # Process all result sets
-                result_count = 0
-                while cursor.nextset():
-                    result_count += 1
+                
+                # Process results from stored procedure
+                result_found = False
+                for result_set in cursor.stored_results():
+                    result = result_set.fetchall()
+                    result_found = True
+                    break
                 
                 # Use consistent cache key format for invalidation
                 if sender_id in user_data_cache:
@@ -213,18 +256,17 @@ def add_new_user(sender_id):
         try:
             with get_db_connection() as conn:
                 cursor = conn.cursor(buffered=True)
-                results_iter = cursor.execute('''
-                CALL add_new_user(%s)
-                ''', (sender_id,), multi=True)
+                
+                cursor.callproc('add_new_user', [sender_id])
                 
                 user_id = None
-                for result in results_iter:
-                    if result.with_rows:
-                        user_data = result.fetchone()
-                        if user_data and user_data[0]:
-                            user_id = user_data[0]
+                # Process each result set from stored procedure
+                for result_set in cursor.stored_results():
+                    user_data = result_set.fetchone()
+                    if user_data and user_data[0]:
+                        user_id = user_data[0]
+                        break
                 
-                # Explicitly commit the transaction
                 conn.commit()
                 
                 # Verify user was actually created
@@ -307,30 +349,21 @@ def migrate_csv_to_mysql(csv_path="BD.csv"):
 def locate_field(sender_id, field):
     """Locate a specific field for a user with retry logic"""    
     if sender_id in user_data_cache and user_data_cache[sender_id] is not None:
-        #send_logs(f"Cache hit for {sender_id}", "info")
         return user_data_cache[sender_id].get(field)
 
     for attempt in range(MAX_RETRIES):
         try:
             with get_db_connection() as conn:
-                cursor = conn.cursor()
-                results_iter = cursor.execute('''
-                CALL select_all_user_data(%s)
-                ''', (sender_id,), multi=True)
+                cursor = conn.cursor(dictionary=True)
                 
-                # Process each result set properly
+                cursor.callproc('select_all_user_data', [sender_id])
+                
                 all_user_data = {}
-                for result_set in results_iter:
-                    if result_set.with_rows:
-                        columns = [col[0] for col in cursor.description]
-                        row = result_set.fetchone()
-                        if row:
-                            all_user_data = dict(zip(columns, row))
-                            break
-                
-                # Process any remaining result sets to avoid "unread result" errors
-                while cursor.nextset():
-                    pass
+                for result_set in cursor.stored_results():
+                    row = result_set.fetchone()
+                    if row:
+                        all_user_data = row
+                        break
                 
                 # Only cache non-empty results
                 if all_user_data:
@@ -362,21 +395,16 @@ def get_admins(rank):
         try:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                results_iter = cursor.execute('''
-                CALL get_admins(%s)
-                ''', (rank,), multi=True)
+                
+                cursor.callproc('get_admins', [rank])
                 
                 admins = []
-                for result_set in results_iter:
-                    if result_set.with_rows:
-                        rows = result_set.fetchall()
-                        if rows:
-                            admins = [row[0] for row in rows]
-                            break
-                
-                # Process any remaining result sets to avoid "unread result" errors
-                while cursor.nextset():
-                    pass
+                # Process each result set from stored procedure
+                for result_set in cursor.stored_results():
+                    rows = result_set.fetchall()
+                    if rows:
+                        admins = [row[0] for row in rows]
+                        break
                 
                 if admins:
                     send_logs(f"Admins rank [{rank}] retrieved: {admins}", "info")
@@ -403,24 +431,20 @@ def get_user_count():
         try:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                results_iter = cursor.execute('''
-                CALL get_user_count()
-                ''', multi=True)
+                
+                cursor.callproc('get_user_count')
                 
                 count = 0
-                for result_set in results_iter:
-                    if result_set.with_rows:
-                        row = result_set.fetchone()
-                        if row:
-                            count = row[0]
-                            break
-                
-                # Process any remaining result sets
-                while cursor.nextset():
-                    pass
+                for result_set in cursor.stored_results():
+                    row = result_set.fetchone()
+                    if row:
+                        count = row[0]
+                        break
                 
                 return count
+                
         except mysql.connector.Error as db_err:
+            # Error handling remains the same
             if attempt < MAX_RETRIES - 1:
                 delay = 0.5 * (2 ** attempt)
                 send_logs(f"DB error in get_user_count (attempt {attempt+1}/{MAX_RETRIES}): {db_err}. Retrying in {delay}s...", "warning")
@@ -434,35 +458,44 @@ def get_user_count():
     
 def get_all_users():
     """Get all users from the database as a pandas DataFrame"""
+    # Try to use cached data if available when DB is down
+    global _cached_all_users_df
+    
     for attempt in range(MAX_RETRIES):
         try:
             with get_db_connection() as conn:
                 cursor = conn.cursor(dictionary=True, buffered=True)
-                results_iter = cursor.execute('''
-                CALL get_all_users()
-                ''', multi=True)
-                result = None
+                
+                cursor.callproc('get_all_users')
+                
                 # Process each result set
-                for result_set in results_iter:
-                    if result_set.with_rows:
-                        result = result_set.fetchall()
-                        break
-                while cursor.nextset():
-                    pass
+                result = None
+                for result_set in cursor.stored_results():
+                    result = result_set.fetchall()
+                    break
+                    
                 # Convert list of dictionaries to DataFrame and save cache
                 if result:
                     df = pd.DataFrame(result)
+                    # Update both individual user cache and full dataframe cache
                     for row in result:
                         user_data_cache[row['SENDER']] = row
+                    _cached_all_users_df = df.copy()  # Store a complete copy
                     send_logs(f"All users retrieved: {df.shape[0]} rows", "info")
                     return df
                 else:
+                    # Check if we have cached data before returning empty
+                    if '_cached_all_users_df' in globals() and not _cached_all_users_df.empty:
+                        send_logs("No users found in fresh query, using cached data", "warning")
+                        return _cached_all_users_df
+                    
                     send_logs("No users found", "info")
                     return pd.DataFrame(columns=[
                         'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                         'admins', 'prem', 'subgrupa', 'gamble', 
                         'ban', 'ban_time', 'last_cmd'
                     ])
+                    
         except mysql.connector.Error as db_err:
             if attempt < MAX_RETRIES - 1:
                 delay = 0.5 * (2 ** attempt)
@@ -470,7 +503,12 @@ def get_all_users():
                 time.sleep(delay)
             else:
                 send_logs(f"Failed to get all users after {MAX_RETRIES} attempts: {str(db_err)}", "error")
-                # Return empty DataFrame if all attempts fail
+                
+                # Return cached data if available instead of empty dataframe
+                if '_cached_all_users_df' in globals() and not _cached_all_users_df.empty:
+                    send_logs(f"Using cached user data ({len(_cached_all_users_df)} records) due to DB failure", "warning")
+                    return _cached_all_users_df
+                
                 return pd.DataFrame(columns=[
                     'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                     'admins', 'prem', 'subgrupa', 'gamble', 
@@ -478,7 +516,12 @@ def get_all_users():
                 ])
         except Exception as e:
             send_logs(f"Failed to get all users: {str(e)}", "error")
-            # Return empty DataFrame if query fails
+            
+            # Return cached data if available
+            if '_cached_all_users_df' in globals() and not _cached_all_users_df.empty:
+                send_logs(f"Using cached user data ({len(_cached_all_users_df)} records) due to error", "warning")
+                return _cached_all_users_df
+                
             return pd.DataFrame(columns=[
                 'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                 'admins', 'prem', 'subgrupa', 'gamble', 
@@ -491,17 +534,15 @@ def get_all_users_with(field, value):
         try:
             with get_db_connection() as conn:
                 cursor = conn.cursor(dictionary=True, buffered=True)
-                results_iter = cursor.execute('''
-                CALL get_all_users_with(%s, %s)
-                ''', (field, value,), multi=True)
+                
+                cursor.callproc('get_all_users_with', [field, value])
+                
                 result = None
-                # Process each result set
-                for result_set in results_iter:
-                    if result_set.with_rows:
-                        result = result_set.fetchall()
-                        break
-                while cursor.nextset():
-                    pass
+                # Process each result set from stored procedure
+                for result_set in cursor.stored_results():
+                    result = result_set.fetchall()
+                    break
+                    
                 if result:
                     df = pd.DataFrame(result)
                     return df
@@ -539,17 +580,15 @@ def get_all_users_without(field, value):
         try:
             with get_db_connection() as conn:
                 cursor = conn.cursor(dictionary=True, buffered=True)
-                results_iter = cursor.execute('''
-                CALL get_all_users_without(%s, %s)
-                ''', (field, value,), multi=True)
+                
+                cursor.callproc('get_all_users_without', [field, value])
+                
                 result = None
-                # Process each result set
-                for result_set in results_iter:
-                    if result_set.with_rows:
-                        result = result_set.fetchall()
-                        break
-                while cursor.nextset():
-                    pass
+                # Process each result set from stored procedure
+                for result_set in cursor.stored_results():
+                    result = result_set.fetchall()
+                    break
+                    
                 if result:
                     df = pd.DataFrame(result)
                     return df
@@ -563,10 +602,10 @@ def get_all_users_without(field, value):
         except mysql.connector.Error as db_err:
             if attempt < MAX_RETRIES - 1:
                 delay = 0.5 * (2 ** attempt)  # Exponential backoff
-                send_logs(f"DB error in get_all_users_with (attempt {attempt+1}/{MAX_RETRIES}): {db_err}. Retrying in {delay}s...", "warning")
+                send_logs(f"DB error in get_all_users_without (attempt {attempt+1}/{MAX_RETRIES}): {db_err}. Retrying in {delay}s...", "warning")
                 time.sleep(delay)
             else:
-                send_logs(f"Failed to get all users with {field}={value}: {str(db_err)}", "error")
+                send_logs(f"Failed to get all users without {field}={value}: {str(db_err)}", "error")
                 # Return empty DataFrame if all attempts fail
                 return pd.DataFrame(columns=[
                     'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
@@ -574,7 +613,7 @@ def get_all_users_without(field, value):
                     'ban', 'ban_time', 'last_cmd'
                 ])
         except Exception as e:
-            send_logs(f"Failed to get all users with {field}={value}: {str(e)}", "error")
+            send_logs(f"Failed to get all users without {field}={value}: {str(e)}", "error")
             return pd.DataFrame(columns=[
                 'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                 'admins', 'prem', 'subgrupa', 'gamble', 
