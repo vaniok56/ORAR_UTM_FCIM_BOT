@@ -124,7 +124,7 @@ def register_admin_handlers(client, admins1, admins2):
         await client.send_message(SENDER, text, buttons=buttons)
 
     #message callback
-    @client.on(events.CallbackQuery())
+    @client.on(events.CallbackQuery(pattern=lambda x: x.startswith(b"to")))
     async def message_callback(event):
         sender = await event.get_sender()
         SENDER = sender.id
@@ -196,22 +196,22 @@ def register_admin_handlers(client, admins1, admins2):
                 
                 await client.send_message(SENDER, summary)
                 
-                buttons = button_grid([Button.inline("Yes", data=b"yes"), Button.inline("No", data=b"no")], 2)
+                buttons = button_grid([Button.inline("Yes", data=b"send_mess_yes"), Button.inline("No", data=b"send_mess_no")], 2)
                 await client.send_message(SENDER, "Send the message?", buttons=buttons)
 
-                @client.on(events.CallbackQuery())
+                @client.on(events.CallbackQuery(pattern=lambda x: x in [b"send_mess_yes", b"send_mess_no"]))
                 async def confirmation_callback(event):
                     global to_who, when, useridd, text, media_path
                     sender = await event.get_sender()
                     SENDER = sender.id
-                    if event.data == b"yes":
+                    if event.data == b"send_mess_yes":
                         try:
                             await event.answer("Scheduling message...")
                             await client.edit_message(SENDER, event.message_id, "Message scheduled successfully!")
                             await send_mess(to_who, when, useridd)
                         except Exception as e:
                             send_logs(f"Error confirmation_callback(yes): {e}", 'error')
-                    elif event.data == b"no":
+                    elif event.data == b"send_mess_no":
                         try:
                             await event.answer("Canceling...")
                             await client.edit_message(SENDER, event.message_id, "Message sending canceled.")

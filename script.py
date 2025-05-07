@@ -62,8 +62,9 @@ async def startt(event):
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
-    
-    text = "👋 Bun venit la botul pentru orarul UTM FCIM!\n\n"
+    first_name = sender.first_name
+    text = f"Salut {first_name}👋\nÎti prezint botul pentru orarul UTM FCIM!\n\n"
+    text += "⚠️ NOTĂ: Momentan sunt disponibile doar orarele pentru anul 1 și 2!\n\n"
     text += "Pentru a începe:\n"
     text += "1️⃣ Selectează grupa ta\n"
     text += "2️⃣ Opțional, alege subgrupa\n\n"
@@ -79,24 +80,24 @@ async def startt(event):
         result = db.add_new_user(format_id(SENDER))
         if result:
             send_logs("New user! - " + format_id(SENDER), 'info')
-    await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows)
+    await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows, link_preview=False)
     
     select_group_button = [Button.inline("Selectează grupa", data=b"select_group")]
     await client.send_message(SENDER, "Pentru a continua, selectează grupa:", buttons=select_group_button)
 
 #notif button handle
-@client.on(events.CallbackQuery())
+@client.on(events.CallbackQuery(pattern = lambda x: x in [b"noti_on", b"noti_off"]))
 async def notiff(event):
     sender = await event.get_sender()
     SENDER = sender.id
     text = ""
-    if event.data == b"off":
+    if event.data == b"noti_off":
         text = "Notificarile sunt stinse"
         db.update_user_field(format_id(SENDER), 'noti', 0)
         await event.answer('Notificarile sunt stinse')
         await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML")
         send_logs(format_id(SENDER) + " - Notif off", 'info')
-    elif event.data==b"on":
+    elif event.data==b"noti_on":
         text = "Notificarile sunt pornite"
         db.update_user_field(format_id(SENDER), 'noti', 1)
         await event.answer('Notificarile sunt pornite')
@@ -174,7 +175,7 @@ async def contactt(event):
     )
     
     button_rows = button_grid(bot_kb, 2)
-    await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows, link_preview=False)
+    await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows)
     send_logs(f"{format_id(SENDER)} - /contacts", 'info')
 
 #/notifon

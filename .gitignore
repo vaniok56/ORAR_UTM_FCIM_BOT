@@ -11,6 +11,7 @@ __pycache__/
 # Configuration & sensitive files
 config*.ini
 *.env
+*.cnf
 
 # Database files
 mysql/

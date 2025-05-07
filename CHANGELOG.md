@@ -2,6 +2,23 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.10.4] - 2025-05-07
+
+### TL;DR
+Fixed several `CallbackQuery` handlers to use specific patterns, improving reliability and preventing unintended triggers. Added MySQL config file mounting in Docker and ignored it in git. Minor improvements to start and contact messages.
+
+### Fixed
+- Corrected `CallbackQuery` patterns in [`handlers/group_handlers.py`](./handlers/group_handlers.py) for year, specialty, group, and subgroup selection to use specific checks instead of generic handlers.
+- Corrected `CallbackQuery` patterns in [`handlers/admin_handlers.py`](./handlers/admin_handlers.py) for the custom message feature (`/message`) confirmation steps.
+- Corrected notification button data in `group_callback` in [`handlers/group_handlers.py`](./handlers/group_handlers.py) to use `b"noti_on"`/`b"noti_off"`.
+- Corrected `CallbackQuery` pattern for notification preference handler (`notiff`) in [`script.py`](./script.py).
+
+### Updated
+- Added `*.cnf` to [`.gitignore`](./.gitignore) to ignore MySQL config files.
+- Mounted `my.cnf` into the MySQL container in [`docker-compose.yml`](./docker-compose.yml).
+- Improved `/start` message in [`script.py`](./script.py) to include the user's first name, disable link preview and warn users about not all schedules implemented.
+- Removed unnecessary `link_preview=False` from `/contacts` message in [`script.py`](./script.py).
+
 ## [0.10.3] - 2025-04-30
 
 ### TL;DR

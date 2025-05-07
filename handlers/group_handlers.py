@@ -52,72 +52,63 @@ def register_group_handlers(client, years, specialties, group_list):
         
         
     #year click event handle
-    @client.on(events.CallbackQuery())
+    @client.on(events.CallbackQuery(pattern=lambda x: x in years))
     async def year_callback(event):
         sender = await event.get_sender()
         SENDER = sender.id
-        if event.data in years:
-            cur_year = years.get(event.data).replace(" ", "")
-            if cur_year:
-                text = f"Alege specialitatea pentru anul {cur_year}:"
-                spec_items = specialties.get(cur_year, {})
-                spec_butt = [Button.inline(spec, data=data) for data, spec in spec_items.items()]
-                button_per_r = 4
-                button_rows = button_grid(spec_butt, button_per_r)
-                await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
-                if SENDER not in temp_selection:
-                    temp_selection[SENDER] = {}
-                temp_selection[SENDER]['year'] = cur_year
-                await event.answer('Anul a fost selectat!')
-                send_logs(format_id(SENDER) + " - /alege_grupa year - " + cur_year, "info")
+        cur_year = years.get(event.data).replace(" ", "")
+
+        if cur_year:
+            text = f"Alege specialitatea pentru anul {cur_year}:"
+            spec_items = specialties.get(cur_year, {})
+            spec_butt = [Button.inline(spec, data=data) for data, spec in spec_items.items()]
+            button_per_r = 4
+            button_rows = button_grid(spec_butt, button_per_r)
+            await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
+            if SENDER not in temp_selection:
+                temp_selection[SENDER] = {}
+            temp_selection[SENDER]['year'] = cur_year
+            await event.answer('Anul a fost selectat!')
+            send_logs(format_id(SENDER) + " - /alege_grupa year - " + cur_year, "info")
+
+    specialty_data_values = set()
+    for year_specs in specialties.values():
+        specialty_data_values.update(year_specs.keys())
 
     #speciality click event handle
-    @client.on(events.CallbackQuery())
+    @client.on(events.CallbackQuery(pattern=lambda x: x in specialty_data_values))
     async def speciality_callback(event):
-        is_specialty_event = False
-        for year_key, specs in specialties.items():
-            if event.data in specs:
-                is_specialty_event = True
-                break
-                
-        if not is_specialty_event:
-            return
         sender = await event.get_sender()
         SENDER = sender.id
         year = temp_selection.get(SENDER, {}).get('year')
         spec_items = specialties.get(str(year), {})
-        if event.data in spec_items:
-            cur_speciality = spec_items.get(event.data).replace(" ", "")
-            if cur_speciality:
-                text = f"Alege grupa pentru {cur_speciality}:"
-                group_items = group_list.get(str(year), {})
-                group_items = group_items.get(cur_speciality + str(year), {})
-                temp_selection[SENDER]['speciality'] = cur_speciality
-                spec_butt = [Button.inline(group, data=data) for data, group in group_items.items()]
-                button_per_r = 4
-                button_rows = button_grid(spec_butt, button_per_r)
-                await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
-                await event.answer('Specialitatea a fost selectata!')
-                send_logs(format_id(SENDER) + " - /alege_grupa spec - " + cur_speciality, "info")
+        cur_speciality = spec_items.get(event.data).replace(" ", "")
+        
+        if cur_speciality:
+            text = f"Alege grupa pentru {cur_speciality}:"
+            group_items = group_list.get(str(year), {})
+            group_items = group_items.get(cur_speciality + str(year), {})
+            temp_selection[SENDER]['speciality'] = cur_speciality
+            spec_butt = [Button.inline(group, data=data) for data, group in group_items.items()]
+            button_per_r = 4
+            button_rows = button_grid(spec_butt, button_per_r)
+            await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
+            await event.answer('Specialitatea a fost selectata!')
+            send_logs(format_id(SENDER) + " - /alege_grupa spec - " + cur_speciality, "info")
 
+    group_data_values = set()
+    for year_groups in group_list.values():
+        for groups in year_groups.values():
+            group_data_values.update(groups.keys())
+    
     #group click event handle
-    @client.on(events.CallbackQuery())
+    @client.on(events.CallbackQuery(pattern=lambda x: x in group_data_values))
     async def group_callback(event):
-        is_group_event = False
-        for year_key, year_groups in group_list.items():
-            for spec_key, groups in year_groups.items():
-                if event.data in groups:
-                    is_group_event = True
-                    break
-            if is_group_event:
-                break
-                
-        if not is_group_event:
-            return
         sender = await event.get_sender()
         SENDER = sender.id
-        cur_speciality = temp_selection.get(SENDER, {}).get('speciality')
-        year = temp_selection.get(SENDER, {}).get('year')
+        user_context = temp_selection.get(SENDER, {})
+        cur_speciality = user_context.get('speciality')
+        year = user_context.get('year')
         
         # Check if cur_speciality and year are valid
         if not cur_speciality or not year or cur_speciality == 'none':
@@ -128,28 +119,27 @@ def register_group_handlers(client, years, specialties, group_list):
         group_items = group_list.get(str(year), {})
         key = cur_speciality + str(year)
         group_items = group_items.get(key, {})
+        cur_group = group_items.get(event.data).replace(" ", "")
         
-        if event.data in group_items:
-            cur_group = group_items.get(event.data).replace(" ", "")
-            if cur_group:
-                #updates all fields in db
-                db.update_user_field(format_id(SENDER), 'group_n', cur_group)
-                db.update_user_field(format_id(SENDER), 'year_s', int(year))
-                db.update_user_field(format_id(SENDER), 'spec', cur_speciality)
+        if cur_group:
+            #updates all fields in db
+            db.update_user_field(format_id(SENDER), 'group_n', cur_group)
+            db.update_user_field(format_id(SENDER), 'year_s', int(year))
+            db.update_user_field(format_id(SENDER), 'spec', cur_speciality)
 
-                send_logs(format_id(SENDER) + " - /alege_grupa - " + cur_group, "info")
+            send_logs(format_id(SENDER) + " - /alege_grupa - " + cur_group, "info")
 
-                text = f"Grupa ta este: {cur_group}"
-                await event.answer('Grupa a fost selectata!')
-                await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML")
-                await alege_subgrupa(event)
-                notification_text = "Dorești să primești notificări înainte de fiecare pereche?"
-                notification_buttons = [
-                    Button.inline("✅ Da", data=b"on"),
-                    Button.inline("❌ Nu", data=b"off")
-                ]
-                await client.send_message(SENDER, notification_text, parse_mode="Markdown", buttons=notification_buttons)
-    
+            text = f"Grupa ta este: {cur_group}"
+            await event.answer('Grupa a fost selectata!')
+            await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML")
+            await alege_subgrupa(event)
+            notification_text = "Dorești să primești notificări înainte de fiecare pereche?"
+            notification_buttons = [
+                Button.inline("✅ Da", data=b"noti_on"),
+                Button.inline("❌ Nu", data=b"noti_off")
+            ]
+            await client.send_message(SENDER, notification_text, parse_mode="Markdown", buttons=notification_buttons)
+
     #/alege_subgrupa
     @client.on(events.NewMessage(pattern='/alege_subgrupa'))
     async def alege_subgrupa(event):
@@ -172,7 +162,7 @@ def register_group_handlers(client, years, specialties, group_list):
         await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
 
     #subgrupa click event handle
-    @client.on(events.CallbackQuery())
+    @client.on(events.CallbackQuery(pattern=lambda x: x in [b"sub0", b"sub1", b"sub2"]))
     async def subgrupa_callback(event):
         sender = await event.get_sender()
         SENDER = sender.id
