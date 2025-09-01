@@ -2,6 +2,31 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.11.0] - 2025-09-01
+
+### TL;DR
+Refactored schedule and group handling to be fully dynamic, generating group lists from Excel files at startup. Introduced dynamic versioning via the GitHub API. Added new admin commands for restoring backups (`/use_backup`) and advancing user academic years (`/new_year`).
+
+### Added
+- [`dynamic_group_lists.py`](./dynamic_group_lists.py) to store group information generated at runtime from schedule files.
+- `/use_backup` admin command to restore the database from a selection of recent backups in [`handlers/admin_handlers.py`](./handlers/admin_handlers.py).
+- `/new_year` admin command to increment the academic year for all users in [`handlers/admin_handlers.py`](./handlers/admin_handlers.py).
+- `requests` library to [`requirements.txt`](./requirements.txt) for making GitHub API calls.
+- `backups/` directory to [`.gitignore`](./.gitignore).
+
+### Updated
+- Refactored schedule data loading in [`functions.py`](./functions.py) to be dynamic, removing hardcoded file paths and adapting to available `orar*.xlsx` files.
+- The bot now automatically generates group selection menus from schedule Excel files on startup ([`functions.py`](./functions.py), [`script.py`](./script.py)).
+- The `/version` command now dynamically fetches the version and last update date from the latest GitHub commit ([`functions.py`](./functions.py), [`script.py`](./script.py)).
+- Database backups are now stored in the `/backups/` directory with a full timestamp and are no longer deleted after being sent ([`script.py`](./script.py), [`handlers/admin_handlers.py`](./handlers/admin_handlers.py)).
+- [`docker-compose.yml`](./docker-compose.yml) to mount the `backups` and `dynamic_group_lists.py` files.
+- [`.dockerignore`](./.dockerignore) and [`.gitignore`](./.gitignore) for better file management and to include new backup/volume paths.
+- [`README.md`](./README.md) and `/admin_help` command to include the new admin commands.
+- `/start` message in [`script.py`](./script.py) to clarify that only 1st and 2nd-year schedules are currently available.
+
+### Fixed
+- Added error handling in [`handlers/group_handlers.py`](./handlers/group_handlers.py) for the year selection callback to prevent crashes if a selected year's schedule is not available.
+
 ## [0.10.4] - 2025-05-07
 
 ### TL;DR

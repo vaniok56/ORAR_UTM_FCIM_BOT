@@ -18,6 +18,7 @@ mysql/
 *.sql
 *.csv
 init/
+backups/
 
 # Project directories
 sessions/
@@ -37,6 +38,3 @@ temp/
 .Trashes
 ehthumbs.db
 Thumbs.db
-
-# Project-specific excludes
-game_handlers.py

@@ -43,7 +43,9 @@ services:
     volumes:
       - ./sessions:/sessions
       - ./BD.csv:/BD.csv
+      - ./dynamic_group_lists.py:/dynamic_group_lists.py
       - ./orarbot.log:/orarbot.log
+      - ./backups:/backups
     environment:
       - MYSQL_HOST=mysql
       - TZ=Europe/Chisinau

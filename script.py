@@ -6,9 +6,10 @@ import datetime
 import pytz
 
 import handlers.db as db
-from functions import print_day, print_sapt, print_next_course, button_grid, send_logs, get_next_course_time, is_rate_limited, format_id
+from functions import print_day, print_sapt, print_next_course, button_grid, send_logs, get_next_course_time, is_rate_limited, format_id, get_version, write_groups_to_json
+write_groups_to_json()
 from functions import cur_group, hours, week_days, is_even
-from group_lists import years, group_list, specialties
+from dynamic_group_lists import years, group_list, specialties
 
 import handlers.admin_handlers as admin_handlers
 import handlers.group_handlers as group_handlers
@@ -16,6 +17,7 @@ import handlers.group_handlers as group_handlers
 import pandas as pd
 import numpy as np
 import asyncio
+import os
 
 #### Access credentials
 config = configparser.ConfigParser()
@@ -49,6 +51,8 @@ admins1 = db.get_admins(1)
 admins2 = db.get_admins(2)
 
 noti_send = 0
+
+latest_version, latest_date = get_version()
 
 #register_games_handlers(client, bot_kb)
 admin_handlers.register_admin_handlers(client, admins1, admins2)
@@ -146,8 +150,9 @@ async def versionn(event):
             peer=SENDER,
             action=types.SendMessageTypingAction()
         ))
-    text = "Version 0.10.3\n"
-    text += "Last update: 30-04-2025\n"
+    
+    text = f"Version: {latest_version}\n"
+    text += f"Last update: {latest_date}\n"
     text += "Github: [ORAR_UTM_FCIM_BOT](https://github.com/vaniok56/ORAR_UTM_FCIM_BOT)\n"
     button_rows = button_grid(bot_kb, 2)
     await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows, link_preview=False)
@@ -443,7 +448,7 @@ async def send_notification(sender, next_course, wait_time):
     
     try:
         await client.send_message(sender, f"\nPerechea urmatoare:{next_course}", parse_mode="HTML")
-        send_logs(f"Sent next course to {sender}", 'info')
+        #send_logs(f"Sent next course to {sender}", 'info')
         noti_send += 1
         return True
     except Exception as e:
@@ -565,8 +570,9 @@ async def backup_database():
 
         #file
         now = datetime.datetime.now(moldova_tz)
-        timestamp = now.strftime("%Y%m%d")
-        backup_filename = f"BD_backup_{timestamp}.sql"
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+        os.makedirs("/backups", exist_ok=True)
+        backup_filename = f"/backups/BD_backup_{timestamp}.sql"
         db.create_mysql_backup(backup_filename)
         db_len = db.get_user_count()
         
@@ -580,9 +586,9 @@ async def backup_database():
         send_logs(f"Database backup sent to admin", 'info')
         
         #delete
-        import os
-        if os.path.exists(backup_filename):
-            os.remove(backup_filename)
+        # import os
+        # if os.path.exists(backup_filename):
+        #     os.remove(backup_filename)
             
     except Exception as e:
         send_logs(f"Error in database backup: {str(e)}", 'error')

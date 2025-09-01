@@ -2,7 +2,7 @@ import numpy as np
 import openpyxl # excel read library
 import datetime
 import pytz
-import threading
+import requests
 import handlers.db as db
 
 import time
@@ -14,6 +14,7 @@ MAX_MESSAGES_PER_MINUTE = 5 # messages
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
 time_zone = pytz.timezone('Europe/Chisinau')
+current_year = 26
 #logs
 import logging
 class ColoredFormatter(logging.Formatter):
@@ -96,17 +97,8 @@ week_days = {
 }
 
 cur_group = "TI-241" #initialise current group
-#open the excel files
-schedule1 = openpyxl.load_workbook('orar1.xlsx', data_only=True)["Table 2"] #open the excel file 1
-schedule2 = openpyxl.load_workbook('orar2.xlsx', data_only=True)["Table 2"] #open the excel file 2
-schedule3 = openpyxl.load_workbook('orar3.xlsx', data_only=True)["Table 2"] #open the excel file 3
-schedule4 = openpyxl.load_workbook('orar4.xlsx', data_only=True)["Table 2"] #open the excel file 4
-#group lists
-groups1 = [schedule1.cell(row=1,column=i).value for i in range(3,40)] #group list 1
-groups2 = [schedule2.cell(row=1,column=i).value for i in range(3,40)] #group list 2
-groups3 = [schedule3.cell(row=1,column=i).value for i in range(3,40)] #group list 3
-groups4 = [schedule4.cell(row=1,column=i).value for i in range(3,40)] #group list 4
 
+#cache
 day_row_start_cache = {}  #cache for row start by day name and schedule
 daily_schedule_cache = {}  #cache for daily schedules
 cell_value_cache = {}  #cache for cell values
@@ -115,20 +107,45 @@ next_course_cache = {} #cache for next course
 orele_cache = {} #cache for hours
 schedule_groups_cache = {} #cache for schedule and groups
 
+def send_logs(message, type):
+    if type =='info':
+        logging.info(message)
+    elif type =='warning':
+        logging.warning(message)
+    elif type =='error':
+        logging.error(message)
+    elif type =='critical':
+        logging.critical(message)
+    else: 
+        logging.info(message)
+
+#open the excel files
+for i in range(1, 5):
+    try:
+        globals()[f"schedule{i}"] = openpyxl.load_workbook(f'orar{i}.xlsx', data_only=True)["Table 2"]
+    except Exception as e:
+        send_logs(f"Error loading orar{i}.xlsx: {e}", 'error')
+        globals()[f"schedule{i}"] = openpyxl.Workbook()
+        globals()[f"schedule{i}"].create_sheet("Table 2")
+
+#group lists
+for i in range(1, 5):
+    try:
+        globals()[f"groups{i}"] = [globals()[f"schedule{i}"].cell(row=1,column=j).value for j in range(3,40) if globals()[f"schedule{i}"].cell(row=1,column=j).value]
+        send_logs(f"Extracted {len(globals()[f"groups{i}"])} groups from schedule{i}", 'info')
+    except Exception as e:
+        send_logs(f"Error extracting groups from schedule{i}: {e}", 'error')
+        globals()[f"groups{i}"] = []
+
 def get_schedule_and_groups(cur_group):
     if cur_group in schedule_groups_cache:
         #send_logs(f"Cache hit get_schedule_and_groups for {cur_group}", 'info')
         return schedule_groups_cache[cur_group]
     
     group_number = int(cur_group[-3:-1])
-    if group_number == 24:
-        result = schedule1, groups1
-    elif group_number == 23:
-        result = schedule2, groups2
-    elif group_number == 22:
-        result = schedule3, groups3
-    elif group_number == 21:
-        result = schedule4, groups4
+    sch_nr = current_year - group_number
+    if sch_nr >= 1 and sch_nr <= 4:
+        result = globals()[f"schedule{sch_nr}"], globals()[f"groups{sch_nr}"]
     else:
         raise ValueError("Invalid group number")
     #cache
@@ -318,18 +335,6 @@ def print_sapt(is_even, cur_group, subgrupa):
     weekly_schedule_cache[cache_key] = week_sch
     return week_sch
 
-def send_logs(message, type):
-    if type =='info':
-        logging.info(message)
-    elif type =='warning':
-        logging.warning(message)
-    elif type =='error':
-        logging.error(message)
-    elif type =='critical':
-        logging.critical(message)
-    else: 
-        logging.info(message)
-
 def get_next_course_time():
     current_time = datetime.datetime.now(moldova_tz).time()
     current_time = datetime.datetime.strptime(str(current_time)[:-7], "%H:%M:%S")
@@ -380,3 +385,101 @@ def is_rate_limited(user_id):
 
 def format_id(user_id):
     return f"U{user_id}"
+
+def get_version():    
+    try:
+        response = requests.get(
+            "https://api.github.com/repos/vaniok56/ORAR_UTM_FCIM_BOT/commits",
+            headers={"Accept": "application/vnd.github.v3+json"},
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            latest_commit = response.json()[0]
+            
+            commit_date = latest_commit['commit']['author']['date']
+            date_obj = datetime.datetime.strptime(commit_date, "%Y-%m-%dT%H:%M:%SZ")
+            formatted_date = date_obj.strftime("%d-%m-%Y")
+            
+            commit_message = latest_commit['commit']['message']
+            version_match = commit_message.split("Version ")[1].split(" ")[0] if "Version " in commit_message else None
+            
+            return version_match, formatted_date
+            
+    except Exception as e:
+        send_logs(f"Error fetching version from GitHub: {e}", 'error')
+        return "0.11.0", "01-09-2025"
+
+def extract_specs(groups):
+    specs = {}
+    spec_order = []  # To preserve original order
+    for group in groups:
+        spec = group[:-4]  # Extract specialty part (e.g., "TI" from "TI-241")
+        if spec not in specs:
+            specs[spec] = []
+            spec_order.append(spec)
+        specs[spec].append(group)
+    return specs, spec_order
+
+def write_groups_to_json():
+    years = {
+        b"ye1": "  1  ",
+        b"ye2": "  2  ",
+        b"ye3": "  3  ",
+        b"ye4": "  4  "
+    }
+    
+    specialties = {}
+    for year_num in ["1", "2", "3", "4"]:
+        groups_var = globals()[f"groups{year_num}"]
+        specs, spec_order = extract_specs(groups_var)
+        
+        specialties[year_num] = {}
+        for spec in spec_order:  # Use ordered list
+            key = f"{spec.lower()}{year_num}".encode()
+            specialties[year_num][key] = f"  {spec}  "
+    
+    group_list = {}
+    for year_num in ["1", "2", "3", "4"]:
+        groups_var = globals()[f"groups{year_num}"]
+        specs, spec_order = extract_specs(groups_var)
+        
+        group_list[year_num] = {}
+        for spec in spec_order:  # Use ordered list
+            spec_key = f"{spec}{year_num}"
+            group_list[year_num][spec_key] = {}
+            
+            for group in groups_var:
+                if not group.startswith(spec):
+                    continue
+                key = group.lower().encode()
+                group_list[year_num][spec_key][key] = f"  {group}  "
+    
+    # Write to a Python file
+    with open("dynamic_group_lists.py", "w", encoding="utf-8") as f:
+        f.write("# This file was automatically generated\n\n")
+        f.write("years = {\n")
+        for k, v in years.items():
+            f.write(f"        {k}: \"{v}\",\n")
+        f.write("}\n\n")
+        
+        f.write("specialties = {\n")
+        for year_num, year_specs in specialties.items():
+            f.write(f"    \"{year_num}\":{{\n")
+            for k, v in year_specs.items():
+                f.write(f"        {k}: \"{v}\",\n")
+            f.write("    },\n\n")
+        f.write("}\n\n")
+        
+        f.write("group_list = {\n")
+        for year_num, year_groups in group_list.items():
+            f.write(f"    \"{year_num}\":{{\n\n")
+            for spec_key, spec_groups in year_groups.items():
+                f.write(f"        \"{spec_key}\": {{\n")
+                for k, v in spec_groups.items():
+                    f.write(f"            b\"{k.decode().replace('-', '')}\": \"{v}\",\n")
+                f.write("        },\n\n")
+            f.write("    },\n\n")
+        f.write("}\n")
+    send_logs("Dynamic group lists have been written to dynamic_group_lists.py", 'info')
+    return years, specialties, group_list

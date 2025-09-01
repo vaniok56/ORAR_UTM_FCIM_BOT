@@ -64,12 +64,16 @@ def register_group_handlers(client, years, specialties, group_list):
             spec_butt = [Button.inline(spec, data=data) for data, spec in spec_items.items()]
             button_per_r = 4
             button_rows = button_grid(spec_butt, button_per_r)
-            await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
-            if SENDER not in temp_selection:
-                temp_selection[SENDER] = {}
-            temp_selection[SENDER]['year'] = cur_year
-            await event.answer('Anul a fost selectat!')
-            send_logs(format_id(SENDER) + " - /alege_grupa year - " + cur_year, "info")
+            try:
+                await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
+                if SENDER not in temp_selection:
+                    temp_selection[SENDER] = {}
+                temp_selection[SENDER]['year'] = cur_year
+                await event.answer('Anul a fost selectat!')
+                send_logs(format_id(SENDER) + " - /alege_grupa year - " + cur_year, "info")
+            except Exception as e:
+                await event.answer('Anul nu este disponibil.')
+                send_logs(f"Error editing message for {SENDER} selecting year {cur_year}: {e}", "error")
 
     specialty_data_values = set()
     for year_specs in specialties.values():

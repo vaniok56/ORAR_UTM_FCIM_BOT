@@ -4,6 +4,7 @@ import numpy as np
 import datetime
 import pytz
 import os
+import glob
 
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
@@ -12,6 +13,8 @@ import handlers.db as db
 from functions import button_grid, send_logs, print_next_course, is_rate_limited, format_id
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
+
+current_year = 26  # (+1 each year)
 
 def register_admin_handlers(client, admins1, admins2):
     #/admin_help admin
@@ -25,14 +28,16 @@ def register_admin_handlers(client, admins1, admins2):
         if format_id(SENDER) not in admins1 and format_id(SENDER) not in admins2:
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
-        text = "Admin commands:\n"
-        text += "/stats - show statistics\n"
-        text += "/backup - manual database backup\n"
-        text += "/message - send a message to users\n"
-        text += "/debug_next - debug print next course\n"
-        text += "/ban - ban a user\n"
-        text += "/unban - unban a user\n"
-        text += "/list_ban - show banned users\n"
+        text = "Admin commands:\n\n"
+        text += "/stats - show statistics\n\n"
+        text += "/backup - manual database backup\n\n"
+        text += "/use_backup - restore database from backup\n\n"
+        text += "/message - send a message to users\n\n"
+        text += "/debug_next - debug print next course\n\n"
+        text += "/ban - ban a user\n\n"
+        text += "/unban - unban a user\n\n"
+        text += "/list_ban - show banned users\n\n"
+        text += "/new_year - update all users' year(+1)\n\n"
         await client.send_message(SENDER, text, parse_mode="HTML")
         send_logs(format_id(SENDER) + " - /admin_help", 'info')
     
@@ -71,7 +76,7 @@ def register_admin_handlers(client, admins1, admins2):
         
         text = "📊 Stats:\n\n"
         for year in sorted(groups_by_year.keys(), reverse=True):
-            text += (f"🎓 Year {5-(year-20)}" if 20 <= year <= 24 else f"Year {year}")
+            text += (f"🎓 Year {current_year-year}")
             sorted_groups = sorted(groups_by_year[year].items(), key=lambda x: (-x[1], x[0]))
             text += f" - {len(sorted_groups)} groups, {sum(count for group, count in sorted_groups)} users\n"
 
@@ -325,22 +330,22 @@ def register_admin_handlers(client, admins1, admins2):
         try:
             #file
             now = datetime.datetime.now(moldova_tz)
-            timestamp = now.strftime("%Y%m%d")
-            backup_filename = f"BD_backup_{timestamp}.sql"
+            timestamp = now.strftime("%Y%m%d_%H%M%S")
+            os.makedirs("/backups", exist_ok=True)
+            backup_filename = f"/backups/BD_backup_{timestamp}.sql"
             db.create_mysql_backup(backup_filename)
-            db_length = db.get_user_count()
-
+            db_len = db.get_user_count()
             #send
             await client.send_file(
                 SENDER,
                 backup_filename,
-                caption=f"📊 Database backup\n{now.strftime('%Y-%m-%d %H:%M:%S')} - {db_length} users"
+                caption=f"📊 Database backup\n{now.strftime('%Y-%m-%d %H:%M:%S')} - {db_len} users"
             )
 
             #delete
-            import os
-            if os.path.exists(backup_filename):
-                os.remove(backup_filename)
+            # import os
+            # if os.path.exists(backup_filename):
+            #     os.remove(backup_filename)
                 
             send_logs(f"Manual backup sent to {SENDER}", 'info')
         except Exception as e:
@@ -502,3 +507,166 @@ def register_admin_handlers(client, admins1, admins2):
             text += "No banned users"
         await client.send_message(SENDER, text, parse_mode="HTML")
         send_logs(format_id(SENDER) + " - /ban_list", 'info')
+    
+    #/use_backup admin
+    backup_to_restore = None
+
+    @client.on(events.NewMessage(pattern='/use_backup')) 
+    async def use_backup(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+        if format_id(SENDER) != "U500303890":
+            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+            return
+        nonlocal backup_to_restore
+        try:
+            #find all backups
+            backup_files = glob.glob("/backups/BD_backup_*.sql")
+            if not backup_files:
+                await client.send_message(SENDER, "No backup files found!", parse_mode="HTML")
+                return
+            backup_files.sort(key=os.path.getmtime, reverse=True)
+            backup_to_restore = backup_files
+            
+            #format
+            backup_list = "Available backups:\n\n"
+            buttons = []
+            #most recent 5 backups
+            for i, backup_path in enumerate(backup_files[:5]):
+                file_name = os.path.basename(backup_path)
+                mod_time = datetime.datetime.fromtimestamp(os.path.getmtime(backup_path), moldova_tz)
+                #user count
+                try:
+                    user_count = "Unknown"
+                    with open(backup_path, 'r') as f:
+                        content = f.read()
+                        if "INSERT INTO" in content:
+                            user_count = content.count("'U")
+                except Exception as e:
+                    send_logs(f"Error reading backup file {file_name}: {str(e)}", 'error')
+                    pass
+                
+                backup_list += f"{i+1}. {file_name}\n"
+                backup_list += f"   📅 {mod_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                backup_list += f"   👥 Users: {user_count}\n\n"
+                buttons.append(Button.inline(f"{i+1}. {file_name}", data=f"backup_{i}".encode()))
+            buttons.append(Button.inline("Cancel", data=b"cancel_restore"))
+
+            await client.send_message( SENDER, backup_list + "Select a backup to restore:", buttons=button_grid(buttons, 1), parse_mode="HTML")
+            send_logs(f"User {SENDER} requested database restore options", 'info')
+            
+        except Exception as e:
+            send_logs(f"Error listing backups for restore: {str(e)}", 'error')
+            await client.send_message(SENDER, f"Error: {str(e)}", parse_mode="HTML")
+    
+    @client.on(events.NewMessage(pattern='/cancel_restore'))
+    async def cancel_restore(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+        global backup_to_restore
+        backup_to_restore = None
+        await client.edit_message(SENDER, event.message_id, "Database restoration cancelled.")
+        send_logs(f"User {SENDER} cancelled database restore", 'info')
+
+    @client.on(events.CallbackQuery(pattern=lambda x: x.startswith(b"backup_")))
+    async def backup_selection_callback(event):
+        nonlocal backup_to_restore
+        sender = await event.get_sender()
+        SENDER = sender.id
+        
+        if not isinstance(backup_to_restore, list):
+            await event.answer("No backups available")
+            return
+            
+        try:
+            # Get selected backup index
+            backup_index = int(event.data.decode('utf-8').split('_')[1])
+            selected_backup = backup_to_restore[backup_index]
+            backup_to_restore = selected_backup
+            
+            # Ask for confirmation with the selected backup
+            await event.answer(f"Selected: {os.path.basename(selected_backup)}")
+            await client.edit_message(SENDER,event.message_id,
+                f"⚠️ WARNING: This will replace your current database with backup:\n{os.path.basename(selected_backup)}\n\nDo you want to continue?",
+                buttons=[
+                    [Button.inline("Yes, restore database", data=b"confirm_restore")],
+                    [Button.inline("Cancel", data=b"cancel_restore")]
+                ])
+            send_logs(f"User {SENDER} selected backup {selected_backup}", 'warning')
+            
+        except Exception as e:
+            send_logs(f"Error processing backup selection: {str(e)}", 'error')
+            await event.answer("Error selecting backup")
+            await client.edit_message(SENDER, event.message_id, f"Error selecting backup: {str(e)}")
+
+    @client.on(events.CallbackQuery(pattern=lambda x: x in [b"confirm_restore", b"cancel_restore"]))
+    async def restore_callback(event):
+        nonlocal backup_to_restore
+        sender = await event.get_sender()
+        SENDER = sender.id
+        
+        if event.data == b"cancel_restore":
+            await event.answer("Restoration cancelled")
+            await client.edit_message(SENDER, event.message_id, "Database restoration cancelled.")
+            send_logs(f"User {SENDER} cancelled database restore", 'info')
+            return
+        
+        if event.data == b"confirm_restore" and backup_to_restore:
+            await event.answer("Starting restoration...")
+            await client.edit_message(SENDER, event.message_id, "Database restoration in progress...")
+            
+            current_user_count = db.get_user_count()
+            result = db.restore_backup(backup_to_restore)
+            if result:
+                #reinitialize
+                db.initialize_mysql_connection()
+                new_user_count = db.get_user_count()
+                send_logs(f"Database restore successful from {backup_to_restore}", 'info')
+                await client.edit_message(SENDER, event.message_id, 
+                    f"✅ Database restored successfully from {os.path.basename(backup_to_restore)}\n\n" +
+                    f"Users before: {current_user_count}\n" +
+                    f"Users after: {new_user_count}")
+            else:
+                send_logs(f"Database restore failed from {backup_to_restore}", 'error')
+                await client.edit_message(SENDER, event.message_id, f"❌ Database restore failed")
+
+    #/new_year admin
+    @client.on(events.NewMessage(pattern='/new_year'))
+    async def new_year(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+        if format_id(SENDER) != "U500303890":
+            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+            return
+        #1 year passed
+        #update all users year_n field
+        await client.send_message(SENDER,
+                f"⚠️ WARNING: This will update all users' year by +1\n\nDo you want to continue?",
+                buttons=[
+                    [Button.inline("Yes, update years", data=b"confirm_update_years")],
+                    [Button.inline("Cancel", data=b"cancel_update_years")]
+                ])
+
+    @client.on(events.CallbackQuery(pattern=b"confirm_update_years"))
+    async def confirm_update_years(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+
+        await event.answer("Updating user years...")
+        await client.edit_message(SENDER, event.message_id, "Updating user years...")
+
+        if db.update_user_years():
+            await client.edit_message(SENDER, event.message_id, "All users' year has been updated successfully.")
+            send_logs("All users' year has been updated successfully.", 'info')
+        else:
+            await client.edit_message(SENDER, event.message_id, "Failed to update user years.")
+            send_logs("Failed to update user years.", 'error')
+
+    @client.on(events.CallbackQuery(pattern=b"cancel_update_years"))
+    async def cancel_update_years(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+
+        await event.answer("Update cancelled.")
+        await client.edit_message(SENDER, event.message_id, "Update cancelled.")
+        send_logs("User cancelled update user years.", 'info')

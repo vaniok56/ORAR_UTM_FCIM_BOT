@@ -17,14 +17,6 @@ __pycache__/
 *.env
 .env
 
-# Local data that shouldn't be in image
-mysql/
-BD_backup_*.sql
-*.csv
-
-# Session data (if mounted as volume)
-sessions/
-
 # Temporary and backup files
 temp/
 *.bak
@@ -48,8 +40,13 @@ docker-compose.yml
 ehthumbs.db
 Thumbs.db
 
-# Log files (if mounted as volume)
+# Mounted volumes
 *.log
+sessions/
+mysql/
+backups/
+*.csv
+*.cnf
 
 # Keep init.sql for database setup
 !init/init.sql

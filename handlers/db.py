@@ -651,8 +651,56 @@ def is_user_exists(sender_id):
         except Exception as e:
             send_logs(f"Failed to check if user exists: {str(e)}", "error")
             return False
-        
 
-#views
-#right join
-#df remove
+def restore_backup(backup_path):
+    """Use a MySQL backup file to restore the database"""
+    for attempt in range(MAX_RETRIES):
+        try:
+            host = os.environ.get('MYSQL_HOST', 'mysql')
+            user = os.environ.get('MYSQL_USER')
+            password = os.environ.get('MYSQL_PASSWORD')
+            database = os.environ.get('MYSQL_DATABASE')
+            
+            command = f"mysql -h {host} -u {user} -p'{password}' {database} < {backup_path}"
+            send_logs(f"Restoring MySQL database from backup at {backup_path}", "info")
+            os.system(command)
+            send_logs("MySQL database restored successfully", "info")
+            return True
+        except mysql.connector.Error as db_err:
+            if attempt < MAX_RETRIES - 1:
+                delay = 0.5 * (2 ** attempt)
+                send_logs(f"DB error in use_backup (attempt {attempt+1}/{MAX_RETRIES}): {db_err}. Retrying in {delay}s...", "warning")
+                time.sleep(delay)
+            else:
+                send_logs(f"Failed to restore MySQL database after {MAX_RETRIES} attempts: {str(db_err)}", "error")
+                return False
+        except Exception as e:
+            send_logs(f"Failed to restore MySQL database: {str(e)}", "error")
+            return False        
+
+def update_user_years():
+    """Increment the year of all users by 1"""
+    for attempt in range(MAX_RETRIES):
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                cursor.callproc('update_user_years')
+                conn.commit()
+                
+                # Clear the entire user cache since years have changed
+                user_data_cache.clear()
+                
+                send_logs("All users' year has been updated successfully", "info")
+                return True
+        except mysql.connector.Error as db_err:
+            if attempt < MAX_RETRIES - 1:
+                delay = 0.5 * (2 ** attempt)
+                send_logs(f"DB error in update_user_years (attempt {attempt+1}/{MAX_RETRIES}): {db_err}. Retrying in {delay}s...", "warning")
+                time.sleep(delay)
+            else:
+                send_logs(f"Failed to update user years after {MAX_RETRIES} attempts: {str(db_err)}", "error")
+                return False
+        except Exception as e:
+            send_logs(f"Failed to update user years: {str(e)}", "error")
+            return False
