@@ -21,7 +21,7 @@ import os
 
 #### Access credentials
 config = configparser.ConfigParser()
-config.read('config2.ini') # read config.ini file
+config.read('config.ini') # read config.ini file
 
 api_id = config.get('default','api_id') # get the api id
 api_hash = config.get('default','api_hash') # get the api hash
@@ -593,36 +593,6 @@ async def backup_database():
     except Exception as e:
         send_logs(f"Error in database backup: {str(e)}", 'error')
 
-#keep network alive
-async def keep_network_alive():
-    ping_interval = 30
-    ping_counter = 0
-    while True:
-        try:
-            await client.get_me()
-            #is typing
-            admin_id = int(admins1[0][1:])
-            await client(functions.messages.SetTypingRequest(
-                peer=admin_id,
-                action=types.SendMessageTypingAction()
-            ))
-            ping_counter += 1
-            if ping_counter % 120 == 0:
-                send_logs(f"Keep-alive ping successful - ping #{ping_counter}", 'debug')
-                
-        except ConnectionError as e:
-            send_logs(f"Telegram connection error: {str(e)}", 'warning')
-            try:
-                await client.connect()
-                send_logs("Reconnection successful", 'info')
-            except Exception as reconnect_error:
-                send_logs(f"Failed to reconnect: {str(reconnect_error)}", 'error')
-                
-        except Exception as e:
-            send_logs(f"Telegram keep-alive error: {str(e)}", 'warning')
-            
-        await asyncio.sleep(ping_interval)
-
 ### MAIN
 if __name__ == '__main__':
     send_logs("############################################", 'info')
@@ -630,6 +600,5 @@ if __name__ == '__main__':
     loop = client.loop
     loop.create_task(send_curr_course_users(week_day, is_even))
     loop.create_task(send_schedule_tomorrow())
-    loop.create_task(keep_network_alive())
     loop.create_task(backup_database())
     client.run_until_disconnected()

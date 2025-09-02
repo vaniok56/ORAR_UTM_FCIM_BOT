@@ -1,4 +1,3 @@
-version: '3'
 services:
 
   mysql:
@@ -6,6 +5,7 @@ services:
     env_file: mysql.env
     container_name: orar_mysql
     restart: always
+    user: "1000:1000"
     volumes:
       - ./mysql:/var/lib/mysql
       - ./init:/docker-entrypoint-initdb.d:ro
@@ -56,7 +56,7 @@ services:
   restarter:
     image: docker:cli
     container_name: restarter
-    restart: unless-stopped
+    restart: always
     volumes: [ "/var/run/docker.sock:/var/run/docker.sock" ]
     entrypoint: [ "/bin/sh", "-c" ]
     command:

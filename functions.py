@@ -214,7 +214,11 @@ def print_daily(schedule, is_even, col_gr, week_day, subgrupa):
         return daily_schedule_cache[cache_key]
     
     #subgrupa - 0/1/2
-    subgrupa = int(subgrupa)
+    try:
+        subgrupa = int(subgrupa)
+    except (ValueError, TypeError):
+        subgrupa = 0
+        
     #if is even, change the subgrupa
     if is_even and subgrupa != 0:
         subgrupa = 3 - subgrupa

@@ -1,0 +1,299 @@
+SET GLOBAL log_error_verbosity = 1;
+-- Create database if it doesn't exist
+CREATE DATABASE IF NOT EXISTS orar_bot CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE orar_bot;
+
+-- Create users table
+CREATE TABLE IF NOT EXISTS orar_bot.users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    SENDER VARCHAR(15) UNIQUE,
+    group_n VARCHAR(10) DEFAULT 'none',
+    spec VARCHAR(5) DEFAULT 'none',
+    year_s SMALLINT DEFAULT 0,
+    subgrupa SMALLINT DEFAULT 0
+    
+) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS orar_bot.settings (
+    id INT UNIQUE NOT NULL,
+    noti SMALLINT DEFAULT 0,
+    admins SMALLINT DEFAULT 0,
+    prem SMALLINT DEFAULT 0,
+    gamble INT DEFAULT 0,
+    ban SMALLINT DEFAULT 0,
+    ban_time VARCHAR(50) DEFAULT 'none',
+    last_cmd VARCHAR(50) DEFAULT 'none'
+) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+ALTER TABLE settings
+ADD FOREIGN KEY (id) REFERENCES users(id); 
+
+-- new users
+DELIMITER //
+CREATE PROCEDURE IF NOT EXISTS orar_bot.add_new_user(
+    IN SENDER VARCHAR(15)
+)
+BEGIN
+    DECLARE user_id INT;
+    
+    INSERT INTO users (SENDER)
+    VALUES (SENDER)
+    ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id);
+
+    SET user_id = LAST_INSERT_ID();
+    
+    INSERT INTO settings (id)
+    VALUES (user_id)
+    ON DUPLICATE KEY UPDATE id = id;
+    
+    SELECT user_id AS id;
+END //
+DELIMITER ;
+
+-- migrate a user
+DELIMITER //
+CREATE PROCEDURE IF NOT EXISTS orar_bot.migrate(
+    IN sender VARCHAR(15),
+    IN group_n VARCHAR(10),
+    IN spec VARCHAR(5),
+    IN year_s SMALLINT,
+    IN subgrupa SMALLINT,
+
+    IN noti VARCHAR(5),
+    IN admins SMALLINT,
+    IN prem SMALLINT,
+    IN gamble INT,
+    IN ban SMALLINT,
+    IN ban_time VARCHAR(50),
+    IN last_cmd VARCHAR(50)
+)
+BEGIN
+    DECLARE noti_value SMALLINT;
+
+    -- Set default values for empty parameters
+    SET group_n = IF(group_n = '' OR group_n IS NULL, 'none', group_n);
+    SET spec = IF(spec = '' OR spec IS NULL, 'none', spec);
+    SET year_s = IF(year_s = '' OR year_s IS NULL, 0, year_s);
+    SET subgrupa = IF(subgrupa = '' OR subgrupa IS NULL, 0, subgrupa);
+    SET noti_value = IF(noti = 'on', 1, 0);
+    SET admins = IF(admins = '' OR admins IS NULL, 0, admins);
+    SET prem = IF(prem = '' OR prem IS NULL, 0, prem);
+    SET gamble = IF(gamble = '' OR gamble IS NULL, 0, gamble);
+    SET ban = IF(ban = '' OR ban IS NULL, 0, ban);
+    SET ban_time = IF(ban_time = '' OR ban_time IS NULL, 'none', ban_time);
+    SET last_cmd = IF(last_cmd = '' OR last_cmd IS NULL, 'none', last_cmd);
+
+    -- Insert user
+    INSERT INTO users (SENDER, group_n, spec, year_s, subgrupa)
+    VALUES (sender, group_n, spec, year_s, subgrupa)
+    ON DUPLICATE KEY UPDATE 
+        group_n = VALUES(group_n),
+        spec = VALUES(spec),
+        year_s = VALUES(year_s),
+        subgrupa = VALUES(subgrupa),
+        id = LAST_INSERT_ID(id);
+
+    -- Get user_id from the insert
+    SET @user_id = LAST_INSERT_ID();
+
+    -- Insert settings for the user
+    INSERT INTO settings (id, noti, admins, prem, gamble, ban, ban_time, last_cmd)
+    VALUES (@user_id, noti_value, admins, prem, gamble, ban, ban_time, last_cmd)
+    ON DUPLICATE KEY UPDATE
+        noti = VALUES(noti),
+        admins = VALUES(admins),
+        prem = VALUES(prem),
+        gamble = VALUES(gamble),
+        ban = VALUES(ban),
+        ban_time = VALUES(ban_time),
+        last_cmd = VALUES(last_cmd);
+END //
+DELIMITER ;
+
+-- get table
+DELIMITER //
+CREATE FUNCTION IF NOT EXISTS orar_bot.get_table(field VARCHAR(50)) 
+RETURNS VARCHAR(10) DETERMINISTIC
+BEGIN
+    IF field IN ('group_n', 'spec', 'year_s', 'subgrupa', 'SENDER') THEN
+        RETURN 'users';
+    ELSE
+        RETURN 'settings';
+    END IF;
+END //
+DELIMITER ;
+
+-- update a field
+DELIMITER //
+CREATE PROCEDURE IF NOT EXISTS orar_bot.update_field(
+    IN p_sender VARCHAR(15),
+    IN field_name VARCHAR(50),
+    IN field_value VARCHAR(50)
+)
+BEGIN
+    DECLARE table_name VARCHAR(50);
+    
+    SET table_name = orar_bot.get_table(field_name);
+    SET @field_val = field_value;
+    SET @send_val = p_sender;
+    
+    IF table_name = 'users' THEN
+        SET @query = CONCAT('UPDATE users SET ', field_name, ' = ? WHERE SENDER = ?');
+        PREPARE stmt FROM @query;
+        EXECUTE stmt USING @field_val, @send_val;
+        DEALLOCATE PREPARE stmt;
+    ELSE
+        SET @query = CONCAT('UPDATE settings s JOIN users u ON s.id = u.id ',
+                           'SET s.', field_name, ' = ? WHERE u.SENDER = ?');
+        PREPARE stmt FROM @query;
+        EXECUTE stmt USING @field_val, @send_val;
+        DEALLOCATE PREPARE stmt;
+    END IF;
+END //
+DELIMITER ;
+
+-- get admins
+DELIMITER //
+CREATE PROCEDURE IF NOT EXISTS orar_bot.get_admins(
+    IN admin_rank SMALLINT
+)
+BEGIN
+    SELECT u.SENDER
+    FROM users u
+    JOIN settings s ON u.id = s.id
+    WHERE s.admins = admin_rank;
+END //
+DELIMITER ;
+
+-- get user count
+DELIMITER //
+CREATE PROCEDURE IF NOT EXISTS orar_bot.get_user_count()
+BEGIN
+    SELECT COUNT(*) AS user_count
+    FROM users;
+END //
+DELIMITER ;
+
+-- get all users
+DELIMITER //
+CREATE PROCEDURE IF NOT EXISTS orar_bot.get_all_users()
+BEGIN
+    SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa,
+           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd
+    FROM users u
+    JOIN settings s ON u.id = s.id;
+END //
+DELIMITER ;
+
+-- get user with 'field' 'value'
+DELIMITER //
+CREATE PROCEDURE IF NOT EXISTS orar_bot.get_all_users_with(
+    IN field VARCHAR(50),
+    IN field_value VARCHAR(50)
+)
+BEGIN
+    SET @field_val = field;
+    SET @value_val = field_value;
+    
+    SET @query = CONCAT('SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa, ',
+                       's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd ',
+                       'FROM users u JOIN settings s ON u.id = s.id WHERE ', @field_val, ' = ?');
+    
+    PREPARE stmt FROM @query;
+    EXECUTE stmt USING @value_val;
+    DEALLOCATE PREPARE stmt;
+END //
+DELIMITER ;
+
+-- get user without 'field' 'value'
+DELIMITER //
+CREATE PROCEDURE IF NOT EXISTS orar_bot.get_all_users_without(
+    IN field VARCHAR(50),
+    IN field_value VARCHAR(50)
+)
+BEGIN
+    SET @field_val = field;
+    SET @value_val = field_value;
+    
+    SET @query = CONCAT('SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa, ',
+                       's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd ',
+                       'FROM users u JOIN settings s ON u.id = s.id WHERE ', @field_val, ' != ?');
+    
+    PREPARE stmt FROM @query;
+    EXECUTE stmt USING @value_val;
+    DEALLOCATE PREPARE stmt;
+END //
+DELIMITER ;
+
+-- does a user exist?
+DELIMITER //
+CREATE FUNCTION IF NOT EXISTS orar_bot.is_user_exists(
+    p_sender VARCHAR(15) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+) RETURNS BOOLEAN DETERMINISTIC
+BEGIN
+    DECLARE user_count INT;
+    
+    SELECT COUNT(*) INTO user_count
+    FROM users
+    WHERE users.SENDER = p_sender;
+    
+    RETURN user_count > 0;
+END //
+DELIMITER ;
+
+-- locate a field
+DELIMITER //
+CREATE PROCEDURE IF NOT EXISTS orar_bot.locate_field(
+    IN sender VARCHAR(15),
+    IN field_name VARCHAR(50)
+)
+BEGIN
+    DECLARE table_name VARCHAR(50);
+    
+    SET table_name = orar_bot.get_table(field_name);
+    SET @field_val = field_name;
+    SET @send_val = sender;
+    
+    IF table_name = 'users' THEN
+        SET @query = CONCAT('SELECT ', field_name, ' FROM users WHERE SENDER = ?');
+        PREPARE stmt FROM @query;
+        EXECUTE stmt USING @send_val;
+        DEALLOCATE PREPARE stmt;
+    ELSE
+        SET @query = CONCAT('SELECT s.', field_name, ' FROM settings s JOIN users u ON s.id = u.id ',
+                           'WHERE u.SENDER = ?');
+        PREPARE stmt FROM @query;
+        EXECUTE stmt USING @send_val;
+        DEALLOCATE PREPARE stmt;
+    END IF;
+END //
+DELIMITER ;
+
+-- select 1 user all data
+DELIMITER //
+CREATE PROCEDURE IF NOT EXISTS orar_bot.select_all_user_data(
+    IN sender VARCHAR(15)
+)
+BEGIN
+    SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa,
+           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd
+    FROM users u
+    JOIN settings s ON u.id = s.id
+    WHERE u.SENDER = sender COLLATE utf8mb4_unicode_ci;
+END //
+DELIMITER ;
+
+-- Update all users' year by +1
+DELIMITER //
+CREATE PROCEDURE IF NOT EXISTS orar_bot.update_user_years()
+BEGIN
+    UPDATE users
+    SET year_s = year_s + 1;
+END //
+DELIMITER ;
+
+-- Create user with proper privileges 
+-- Allow connections from any host in the Docker network
+CREATE USER IF NOT EXISTS 'your_user'@'%' IDENTIFIED BY 'your_password';
+GRANT ALL PRIVILEGES ON orar_bot.* TO 'your_user'@'%';
+FLUSH PRIVILEGES;

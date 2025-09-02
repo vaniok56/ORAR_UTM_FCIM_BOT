@@ -17,7 +17,7 @@ config*.ini
 mysql/
 *.sql
 *.csv
-init/
+init/init.sql
 backups/
 
 # Project directories
@@ -38,3 +38,6 @@ temp/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Other
+*.sh

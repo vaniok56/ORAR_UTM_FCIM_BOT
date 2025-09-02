@@ -37,6 +37,7 @@ def initialize_mysql_connection():
         'user': os.environ.get('MYSQL_USER'),
         'password': os.environ.get('MYSQL_PASSWORD'),
         'database': os.environ.get('MYSQL_DATABASE'),
+        'port': 3306,  # Explicitly define port as integer
         'pool_reset_session': True,
         'autocommit': True,
         'connection_timeout': 30,
@@ -45,7 +46,7 @@ def initialize_mysql_connection():
     }
     
     # Print connection parameters for debugging
-    send_logs(f"Attempting MySQL connection to {config['host']} as {config['user']}", "info")
+    send_logs(f"Attempting MySQL connection to {config['host']}:{config['port']} as {config['user']} for database {config['database']}", "info")
     
     for attempt in range(MAX_RETRIES):
         try:
@@ -64,8 +65,8 @@ def initialize_mysql_connection():
             # refresh cache with new data if possible
             try:
                 load_user_cache()
-            except:
-                send_logs("Failed to preload user cache, will use existing cache if available", "warning")
+            except Exception as cache_err:
+                send_logs(f"Failed to preload user cache: {str(cache_err)}", "warning")
                 
             send_logs("MySQL connection established successfully", "info")
             return True
@@ -76,6 +77,7 @@ def initialize_mysql_connection():
                 time.sleep(delay)
             else:
                 send_logs(f"Failed to initialize MySQL connection after {MAX_RETRIES} attempts: {str(err)}", "error")
+                send_logs(f"MySQL connection config (password hidden): {dict(host=config['host'], port=config['port'], user=config['user'], database=config['database'])}", "error")
                 return False
         except Exception as e:
             send_logs(f"Unexpected error initializing MySQL: {str(e)}", "error")
@@ -300,9 +302,10 @@ def create_mysql_backup(backup_path):
             user = os.environ.get('MYSQL_USER')
             password = os.environ.get('MYSQL_PASSWORD')
             database = os.environ.get('MYSQL_DATABASE')
+            port = 3306  # Explicitly define port
             
             # Create mysqldump command
-            command = f"mysqldump -h {host} -u {user} -p'{password}' {database} > {backup_path}"
+            command = f"mysqldump -h {host} -P {port} -u {user} -p'{password}' {database} > {backup_path}"
             
             # Execute command
             send_logs(f"Creating MySQL backup at {backup_path}", "info")
@@ -660,8 +663,9 @@ def restore_backup(backup_path):
             user = os.environ.get('MYSQL_USER')
             password = os.environ.get('MYSQL_PASSWORD')
             database = os.environ.get('MYSQL_DATABASE')
+            port = 3306  # Explicitly define port
             
-            command = f"mysql -h {host} -u {user} -p'{password}' {database} < {backup_path}"
+            command = f"mysql -h {host} -P {port} -u {user} -p'{password}' {database} < {backup_path}"
             send_logs(f"Restoring MySQL database from backup at {backup_path}", "info")
             os.system(command)
             send_logs("MySQL database restored successfully", "info")

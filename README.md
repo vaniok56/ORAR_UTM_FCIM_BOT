@@ -13,6 +13,7 @@ ORAR_UTM_FCIM_BOT is a Telegram bot made for UTM students to simplify access to 
   - [Getting Started](#getting-started)
   - [Common Commands](#common-commands)
 - [📜 Changelog](CHANGELOG.md)
+- [💻 Run](RUN.md)
 - [📄 License](#📄-license)
 
 ## ✨ Features

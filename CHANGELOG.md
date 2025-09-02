@@ -2,6 +2,26 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.11.1] - 2025-09-03
+
+### TL;DR
+This update focuses on improving Docker setup robustness, database connection stability, and adding comprehensive setup documentation. Key changes include adding a `RUN.md` guide, a SQL initialization template, and refining the Docker configuration for better reliability.
+
+### Added
+- [`RUN.md`](./RUN.md): A new comprehensive guide on how to set up and run the bot using Docker.
+- [`init/init.sql.template`](./init/init.sql.template): A template for database initialization to simplify first-time setup.
+
+### Updated
+- [`docker-compose.yml`](./docker-compose.yml):
+    - Set a fixed `user` for the MySQL service to avoid permission issues.
+    - Set `restart: always` for the `restarter` service to ensure it always comes back online.
+- [`handlers/db.py`](./handlers/db.py): Explicitly defined the MySQL port in connection settings and backup/restore commands for more reliable connections.
+- [`.gitignore`](./.gitignore): Now ignores specific shell scripts (`*.sh`) and only the `init.sql` file instead of the whole directory.
+
+### Fixed
+- [`script.py`](./script.py): Removed an unnecessary `keep_network_alive` task.
+- [`functions.py`](./functions.py): Added a `try-except` block to handle potential errors when converting `subgrupa` to an integer, preventing crashes.
+
 ## [0.11.0] - 2025-09-01
 
 ### TL;DR
