@@ -61,7 +61,7 @@ api_hash = config.get('default','api_hash') # get the api hash
 BOT_TOKEN = config.get('default','BOT_TOKEN') # get the bot token
 
 # Create the client and the session called session_master.
-client = TelegramClient('sessions/session_master', api_id, api_hash).start(bot_token='8466948023:AAGIzBgur2GJ9i6D7djZBWHKDDcVaDujI6Y')
+client = TelegramClient('sessions/session_master', api_id, api_hash).start(bot_token=BOT_TOKEN)
 
 #keyboard buttons
 bot_kb = [
