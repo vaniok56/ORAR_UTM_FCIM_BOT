@@ -51,11 +51,46 @@ Path: ORAR_UTM_FCIM_BOT/init/init.sql
 This file contains initializes the MySQL database the first time the database container starts.
 
 Copy or rename the template the template:  
-`cp init/init.sql.template init/init.sql`
+```bash
+cp init/init.sql.template init/init.sql
+```
 
 Open init/init.sql and replace every placeholder user/password with the exact MYSQL_USER and MYSQL_PASSWORD values you set in mysql.env (do NOT use root credentials unless required).
 
-### 3. Build and Run the Bot
+### 3. Permissions
+
+Create the data directory once before first run (or delete it to reset the DB).
+
+Why: The MySQL container must be able to read/write the mounted folders.
+
+If things already work for you (especially on Docker Desktop), you can skip the chmod/chown steps unless you see permission errors.
+
+Linux / macOS:
+```bash
+# Delete database if already created
+sudo rm -rf ./mysql
+
+# Create mysql folder
+mkdir -p ./mysql
+
+# Give permisions
+sudo chmod -R 755 ./init ./mysql
+sudo chown -R 1000:1000 ./init ./mysql
+```
+
+Windows (PowerShell):
+```powershell
+# (Optional) Reset database
+if (Test-Path ".\mysql") { Remove-Item ".\mysql" -Recurse -Force }
+New-Item -ItemType Directory -Path ".\mysql" | Out-Null
+```
+
+Notes:
+- On Windows and macOS with Docker Desktop, permissions are usually handled automatically.
+- If the container logs show access denied errors, ensure the running user can read/write both init and mysql directories.
+- To fully reinitialize, remove the mysql directory before starting containers again.
+
+### 4. Build and Run the Bot
 
 Once you have created the configuration files, you can build and run the bot using the following command:
 
@@ -63,7 +98,7 @@ Once you have created the configuration files, you can build and run the bot usi
 docker build --tag orarbot . && docker compose up
 ```
 
-On some systems, you might need to use `sudo`:
+On some Linux systems or if Docker was installed without rootless mode, you might need to use `sudo`:
 
 ```bash
 sudo docker build --tag orarbot . && sudo docker compose up
