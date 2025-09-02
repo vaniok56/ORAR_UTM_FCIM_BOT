@@ -10,6 +10,39 @@ from functions import print_day, print_sapt, print_next_course, button_grid, sen
 write_groups_to_json()
 from functions import cur_group, hours, week_days, is_even
 from dynamic_group_lists import years, group_list, specialties
+from localization import get_texts, RU_TEXTS, EN_TEXTS
+# /language
+@client.on(events.NewMessage(pattern='/language'))
+async def language_menu(event):
+    sender = await event.get_sender()
+    SENDER = sender.id
+    # Получаем текущий язык пользователя (по умолчанию ru)
+    user_lang = db.locate_field(format_id(SENDER), 'lang') if hasattr(db, 'locate_field') else 'ru'
+    texts = get_texts(user_lang)
+    buttons = [
+        Button.inline(texts["lang_russian"], data=b"set_lang_ru"),
+        Button.inline(texts["lang_romanian"], data=b"set_lang_ro"),
+        Button.inline(texts["lang_english"], data=b"set_lang_en")
+    ]
+    await client.send_message(SENDER, texts["select_language"], buttons=buttons)
+
+# Обработка выбора языка
+@client.on(events.CallbackQuery(pattern = lambda x: x in [b"set_lang_ru", b"set_lang_ro", b"set_lang_en"]))
+async def set_language(event):
+    sender = await event.get_sender()
+    SENDER = sender.id
+    if event.data == b"set_lang_ru":
+        lang = 'ru'
+    elif event.data == b"set_lang_ro":
+        lang = 'ro'
+    else:
+        lang = 'en'
+    # Сохраняем язык пользователя в БД
+    if hasattr(db, 'update_user_field'):
+        db.update_user_field(format_id(SENDER), 'lang', lang)
+    texts = get_texts(lang)
+    await event.answer(f"Язык установлен: {texts['select_language']}")
+    await client.edit_message(SENDER, event.message_id, f"{texts['select_language']}")
 
 import handlers.admin_handlers as admin_handlers
 import handlers.group_handlers as group_handlers
@@ -28,7 +61,7 @@ api_hash = config.get('default','api_hash') # get the api hash
 BOT_TOKEN = config.get('default','BOT_TOKEN') # get the bot token
 
 # Create the client and the session called session_master.
-client = TelegramClient('sessions/session_master', api_id, api_hash).start(bot_token=BOT_TOKEN)
+client = TelegramClient('sessions/session_master', api_id, api_hash).start(bot_token='8466948023:AAGIzBgur2GJ9i6D7djZBWHKDDcVaDujI6Y')
 
 #keyboard buttons
 bot_kb = [
@@ -67,14 +100,14 @@ async def startt(event):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
     first_name = sender.first_name
-    text = f"Salut {first_name}👋\nÎti prezint botul pentru orarul UTM FCIM!\n\n"
-    text += "⚠️ NOTĂ: Momentan sunt disponibile doar orarele pentru anul 1 și 2!\n\n"
-    text += "Pentru a începe:\n"
-    text += "1️⃣ Selectează grupa ta\n"
-    text += "2️⃣ Opțional, alege subgrupa\n\n"
-    text += "📋 Vezi toate comenzile disponibile cu /help\n"
-    text += "📞 Pentru suport folosește /contacts\n\n"
-    text += "⚠️ ATENȚIE! __**Orarul poate să nu fie actualizat**__, nu răspund pentru absențe."
+    text = f"{RU_TEXTS['welcome']} {first_name}!\n"
+    text += "⚠️ Внимание: Пока доступны только расписания для 1 и 2 курса!\n\n"
+    text += "Чтобы начать:\n"
+    text += "1️⃣ Выберите свою группу\n"
+    text += "2️⃣ При необходимости выберите подгруппу\n\n"
+    text += "📋 Все команды: /help\n"
+    text += "📞 Для поддержки используйте /contacts\n\n"
+    text += "⚠️ ВНИМАНИЕ! __**Расписание может быть неактуальным**__, за пропуски не отвечаю."
     
     buttons_in_row = 2
     button_rows = button_grid(bot_kb, buttons_in_row)
@@ -86,8 +119,8 @@ async def startt(event):
             send_logs("New user! - " + format_id(SENDER), 'info')
     await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows, link_preview=False)
     
-    select_group_button = [Button.inline("Selectează grupa", data=b"select_group")]
-    await client.send_message(SENDER, "Pentru a continua, selectează grupa:", buttons=select_group_button)
+    select_group_button = [Button.inline(RU_TEXTS["choose_group"], data=b"select_group")]
+    await client.send_message(SENDER, RU_TEXTS["choose_group"], buttons=select_group_button)
 
 #notif button handle
 @client.on(events.CallbackQuery(pattern = lambda x: x in [b"noti_on", b"noti_off"]))
@@ -120,20 +153,20 @@ async def helpp(event):
             peer=SENDER,
             action=types.SendMessageTypingAction()
         ))
-    text = "/contacts - contacte\n"
-    text += "/azi - orarul de azi\n"
-    text += "/maine - orarul de maine\n"
-    text += "/ore - orarul orelor(perechi + pauze)\n"
-    text += "/alege_grupa - alegerea grupei\n"
-    text += "/alege_subgrupa - alegerea subgrupei\n"
-    text += "/sapt_curenta - orar pe saptamana curenta\n"
-    text += "/sapt_viitoare - orar pe saptamana viitoare\n"
-    text += "/notifon - notificari on\n"
-    text += "/notifoff - notificari off\n"
-    text += "/games - jocuri\n"
-    text += "/donatii - donatii\n"
-    text += "/version - versiunea\n"
-    text += "/admin_help - admin commands\n"
+    text = f"/contacts - контакты\n"
+    text += "/azi - расписание на сегодня\n"
+    text += "/maine - расписание на завтра\n"
+    text += "/ore - расписание пар и перерывов\n"
+    text += "/alege_grupa - выбор группы\n"
+    text += "/alege_subgrupa - выбор подгруппы\n"
+    text += "/sapt_curenta - расписание на текущую неделю\n"
+    text += "/sapt_viitoare - расписание на следующую неделю\n"
+    text += "/notifon - включить уведомления\n"
+    text += "/notifoff - выключить уведомления\n"
+    text += "/games - игры\n"
+    text += "/donatii - донаты\n"
+    text += "/version - версия\n"
+    text += "/admin_help - команды администратора\n"
     button_rows = button_grid(bot_kb, 2)
     await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
     send_logs(format_id(SENDER) + " - /help", 'info')
