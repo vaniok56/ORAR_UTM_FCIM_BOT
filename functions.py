@@ -49,7 +49,7 @@ class ColoredFormatter(logging.Formatter):
 # Create formatters - one with color for console, one without for file
 file_formatter = logging.Formatter(
     '%(asctime)s.%(msecs)03d | [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt='%H:%M:%S'
 )
 console_formatter = ColoredFormatter(
     '%(asctime)s.%(msecs)03d | [%(levelname)s] %(message)s',
@@ -57,8 +57,18 @@ console_formatter = ColoredFormatter(
 )
 
 # Create handlers
-file_handler = logging.FileHandler("orarbot.log")
-file_handler.setFormatter(file_formatter)
+date = datetime.datetime.now(time_zone).strftime("%d_%m_%y")
+log_dir = "logs"
+import os
+# Ensure logs directory exists
+os.makedirs(log_dir, exist_ok=True)
+try:
+    file_handler = logging.FileHandler(f"{log_dir}/orarbot_{date}.log")
+    file_handler.setFormatter(file_formatter)
+except Exception as e:
+    print(f"Error creating log file: {e}")
+    # Fallback to a null handler if file can't be created
+    file_handler = logging.NullHandler()
 
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(console_formatter)
@@ -96,6 +106,9 @@ week_days = {
     6 : "Duminica"
 }
 
+all_groups_range = range(3, 40)
+schedule_column_start = 3
+
 cur_group = "TI-241" #initialise current group
 
 #cache
@@ -131,7 +144,7 @@ for i in range(1, 5):
 #group lists
 for i in range(1, 5):
     try:
-        globals()[f"groups{i}"] = [globals()[f"schedule{i}"].cell(row=1,column=j).value for j in range(3,40) if globals()[f"schedule{i}"].cell(row=1,column=j).value]
+        globals()[f"groups{i}"] = [globals()[f"schedule{i}"].cell(row=1,column=j).value for j in all_groups_range if globals()[f"schedule{i}"].cell(row=1,column=j).value]
         send_logs(f"Extracted {len(globals()[f"groups{i}"])} groups from schedule{i}", 'info')
     except Exception as e:
         send_logs(f"Error extracting groups from schedule{i}: {e}", 'error')
@@ -141,9 +154,9 @@ def get_schedule_and_groups(cur_group):
     if cur_group in schedule_groups_cache:
         #send_logs(f"Cache hit get_schedule_and_groups for {cur_group}", 'info')
         return schedule_groups_cache[cur_group]
-    
-    group_number = int(cur_group[-3:-1])
-    sch_nr = current_year - group_number
+
+    group_year = int(cur_group[-3:-1])
+    sch_nr = current_year - group_year
     if sch_nr >= 1 and sch_nr <= 4:
         result = globals()[f"schedule{sch_nr}"], globals()[f"groups{sch_nr}"]
     else:
@@ -200,7 +213,7 @@ def button_grid(buttons, butoane_rand):
 #get daily schedule
 def print_day(week_day, cur_group, is_even, subgrupa):
     schedule, groups = get_schedule_and_groups(cur_group)[0:2]
-    col_gr = groups.index(cur_group) + 3  # column with the selected group
+    col_gr = groups.index(cur_group) + schedule_column_start  # column with the selected group
     return print_daily(schedule, is_even, col_gr, week_day, subgrupa)
      
 #extract daily schedule

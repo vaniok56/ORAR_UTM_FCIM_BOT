@@ -2,6 +2,33 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.11.2] - 2025-09-04
+
+### TL;DR
+This update enhances logging, refines the Docker environment, and improves the user experience for group selection. Key changes include moving to date-stamped log files in a dedicated `logs` directory, adding a MySQL configuration file for timezone and performance, and streamlining the initial bot interaction flow.
+
+### Added
+- [`my.cnf`](./my.cnf): New MySQL configuration file to set the timezone, optimize performance, and disable binary logging.
+- [`sessions/.gitkeep`](./sessions/.gitkeep): Added to ensure the `sessions` directory is tracked by Git.
+
+### Updated
+- Logging ([`functions.py`](./functions.py)):
+    - Logs are now stored in the [`logs/`](./logs/) directory with date-stamped filenames (e.g., `orarbot_04_09_25.log`).
+    - The application ensures the `logs` directory exists at startup.
+- Docker ([`docker-compose.yml`](./docker-compose.yml)):
+    - Set the timezone for the MySQL container to `Europe/Chisinau`.
+    - Mounted the new [`logs/`](./logs/) directory into the `orarbot` container instead of a single log file.
+    - Added `PYTHONUNBUFFERED=1` to the bot's environment for better log output.
+- Group Selection Flow ([`handlers/group_handlers.py`](./handlers/group_handlers.py), [`script.py`](./script.py)):
+    - The `/start` command now presents a cleaner initial interface, prompting users to select their group immediately.
+    - The group selection process (`/alege_grupa`) now feels smoother, clearing old buttons and showing the main keyboard upon completion.
+- Code Refinements ([`functions.py`](./functions.py)):
+    - Minor improvements to schedule and group constant definitions for better readability.
+
+### Fixed
+- Group Selection ([`handlers/group_handlers.py`](./handlers/group_handlers.py)): Fixed a bug where the wrong button variable was used when displaying the group selection menu.
+- [`.gitignore`](./.gitignore): Adjusted to correctly handle session files and no longer ignore `.cnf` files.
+
 ## [0.11.1] - 2025-09-03
 
 ### TL;DR

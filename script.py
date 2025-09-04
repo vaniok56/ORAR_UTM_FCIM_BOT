@@ -39,6 +39,10 @@ bot_kb = [
         types.KeyboardButtonSimpleWebView("SIMU📚", "https://simu.utm.md/students/"),
     ]
 
+start_kb = [
+    Button.text('Alege grupa 🎓', resize=True),
+]
+
 if not db.initialize_mysql_connection():
     send_logs("Failed to establish MySQL connection", 'critical')
     exit(1)
@@ -77,8 +81,8 @@ async def startt(event):
     text += "⚠️ ATENȚIE! __**Orarul poate să nu fie actualizat**__, nu răspund pentru absențe."
     
     buttons_in_row = 2
-    button_rows = button_grid(bot_kb, buttons_in_row)
-    
+    button_rows = button_grid(start_kb, buttons_in_row)
+
     #add the user to users
     if not db.is_user_exists(format_id(SENDER)):
         result = db.add_new_user(format_id(SENDER))
@@ -86,8 +90,8 @@ async def startt(event):
             send_logs("New user! - " + format_id(SENDER), 'info')
     await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows, link_preview=False)
     
-    select_group_button = [Button.inline("Selectează grupa", data=b"select_group")]
-    await client.send_message(SENDER, "Pentru a continua, selectează grupa:", buttons=select_group_button)
+    #select_group_button = [Button.inline("Selectează grupa", data=b"select_group")]
+    #await client.send_message(SENDER, "Pentru a continua, selectează grupa:", buttons=select_group_button)
 
 #notif button handle
 @client.on(events.CallbackQuery(pattern = lambda x: x in [b"noti_on", b"noti_off"]))
@@ -584,11 +588,6 @@ async def backup_database():
         )
         
         send_logs(f"Database backup sent to admin", 'info')
-        
-        #delete
-        # import os
-        # if os.path.exists(backup_filename):
-        #     os.remove(backup_filename)
             
     except Exception as e:
         send_logs(f"Error in database backup: {str(e)}", 'error')

@@ -22,13 +22,17 @@ def register_group_handlers(client, years, specialties, group_list):
         await alege_grupaa(event)
 
     #/alege_grupa
-    @client.on(events.NewMessage(pattern='/alege_grupa')) 
+    @client.on(events.NewMessage(pattern='/alege_grupa|Alege grupa 🎓')) 
     async def alege_grupaa(event):
         sender = await event.get_sender()
         SENDER = sender.id
         if is_rate_limited(SENDER):
             send_logs(f"Rate limited user: {SENDER}", 'warning')
             return
+
+        # Remove keyboard buttons
+        await client.send_message(SENDER, "Selectarea grupei...", buttons=Button.clear())
+
         await client(functions.messages.SetTypingRequest(
             peer=SENDER,
             action=types.SendMessageTypingAction()
@@ -93,9 +97,9 @@ def register_group_handlers(client, years, specialties, group_list):
             group_items = group_list.get(str(year), {})
             group_items = group_items.get(cur_speciality + str(year), {})
             temp_selection[SENDER]['speciality'] = cur_speciality
-            spec_butt = [Button.inline(group, data=data) for data, group in group_items.items()]
+            group_butt = [Button.inline(group, data=data) for data, group in group_items.items()]
             button_per_r = 4
-            button_rows = button_grid(spec_butt, button_per_r)
+            button_rows = button_grid(group_butt, button_per_r)
             await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
             await event.answer('Specialitatea a fost selectata!')
             send_logs(format_id(SENDER) + " - /alege_grupa spec - " + cur_speciality, "info")
@@ -135,7 +139,19 @@ def register_group_handlers(client, years, specialties, group_list):
 
             text = f"Grupa ta este: {cur_group}"
             await event.answer('Grupa a fost selectata!')
+
+            bot_kb = [
+                Button.text('Orarul de azi 📅', resize=True),
+                Button.text('Orarul de maine 📅', resize=True),
+                Button.text('Săptămâna curentă 🗓️', resize=True),
+                Button.text('Săptămâna viitoare 🗓️', resize=True),
+                types.KeyboardButtonSimpleWebView("SIMU📚", "https://simu.utm.md/students/"),
+            ]
+            buttons_kb = button_grid(bot_kb, 2)
+
             await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML")
+            await client.send_message(SENDER, "Selectarea subgrupei...", parse_mode="HTML", buttons=buttons_kb)
+
             await alege_subgrupa(event)
             notification_text = "Dorești să primești notificări înainte de fiecare pereche?"
             notification_buttons = [

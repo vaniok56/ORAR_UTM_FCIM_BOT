@@ -13,7 +13,7 @@ services:
     ports:
       - "3306:3306"
     command: >
-      --default-authentication-plugin=caching_sha2_password --log-error-verbosity=1 --console=1
+      --default-authentication-plugin=caching_sha2_password --log-error-verbosity=1 --console=1 --default-time-zone='Europe/Chisinau' --log-timestamps=system
     healthcheck:
       test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
       interval: 10s
@@ -21,12 +21,13 @@ services:
       retries: 5
     networks:
       - orar_network
+    environment:
+      - TZ=Europe/Chisinau
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-        # More aggressive filtering
         tag: "mysql"
 
   orarbot:
@@ -44,7 +45,7 @@ services:
       - ./sessions:/sessions
       - ./BD.csv:/BD.csv
       - ./dynamic_group_lists.py:/dynamic_group_lists.py
-      - ./orarbot.log:/orarbot.log
+      - ./logs:/logs
       - ./backups:/backups
     environment:
       - MYSQL_HOST=mysql
