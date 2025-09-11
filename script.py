@@ -6,7 +6,7 @@ import datetime
 import pytz
 
 import handlers.db as db
-from functions import print_day, print_sapt, print_next_course, button_grid, send_logs, get_next_course_time, is_rate_limited, format_id, get_version, write_groups_to_json
+from functions import print_day, print_sapt, print_next_course, button_grid, send_logs, get_next_course_time, is_rate_limited, format_id, get_version, write_groups_to_json, get_online_schedule_versions, get_local_schedule_versions
 write_groups_to_json()
 from functions import cur_group, hours, week_days, is_even
 from dynamic_group_lists import years, group_list, specialties
@@ -154,8 +154,16 @@ async def versionn(event):
             peer=SENDER,
             action=types.SendMessageTypingAction()
         ))
-    
-    text = f"Version: {latest_version}\n"
+    local_schedule_versions = get_local_schedule_versions()
+    online_schedule_versions = get_online_schedule_versions()
+    text = "Schedule Info (Local / Website):\n"
+    for year in local_schedule_versions.keys():
+        local_ver = local_schedule_versions.get(year, 0)
+        online_ver = online_schedule_versions.get(year, 0)
+        text += f"Year {year}: v{local_ver} / v{online_ver}" + (" ✅" if local_ver == online_ver and local_ver != 0 else " ❌") + "\n"
+    text += "\n"
+    text += "Bot Info:\n"
+    text += f"Version: {latest_version}\n"
     text += f"Last update: {latest_date}\n"
     text += "Github: [ORAR_UTM_FCIM_BOT](https://github.com/vaniok56/ORAR_UTM_FCIM_BOT)\n"
     button_rows = button_grid(bot_kb, 2)

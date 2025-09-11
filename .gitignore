@@ -16,7 +16,6 @@ config*.ini
 mysql/
 *.sql
 *.csv
-init/init.sql
 backups/
 
 # Project directories
@@ -28,7 +27,7 @@ temp/
 *.bak
 
 # Log files
-*.log
+/logs
 
 # OS generated files
 .DS_Store
@@ -41,3 +40,5 @@ Thumbs.db
 
 # Other
 *.sh
+orar1.xlsx
+orar2.xlsx

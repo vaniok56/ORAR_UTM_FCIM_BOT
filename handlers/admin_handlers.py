@@ -10,15 +10,16 @@ from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
 
 import handlers.db as db
-from functions import button_grid, send_logs, print_next_course, is_rate_limited, format_id
+from functions import button_grid, send_logs, print_next_course, is_rate_limited, format_id, process_schedule_file
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
 
 current_year = 26  # (+1 each year)
+main_admin = "U500303890"  # Your user ID here as string
 
 def register_admin_handlers(client, admins1, admins2):
     #/admin_help admin
-    @client.on(events.NewMessage(pattern='/admin_help'))
+    @client.on(events.NewMessage(pattern=r'^/admin_help$'))
     async def admin_help(event):
         sender = await event.get_sender()
         SENDER = sender.id
@@ -34,15 +35,21 @@ def register_admin_handlers(client, admins1, admins2):
         text += "/use_backup - restore database from backup\n\n"
         text += "/message - send a message to users\n\n"
         text += "/debug_next - debug print next course\n\n"
-        text += "/ban - ban a user\n\n"
-        text += "/unban - unban a user\n\n"
+        #text += "/new_year - update all users' year(+1)\n\n"
+        text += "Change user status:\n"
+        text += "/ban - ban a user\n"
+        text += "/unban - unban a user\n"
         text += "/list_ban - show banned users\n\n"
-        text += "/new_year - update all users' year(+1)\n\n"
+        text += "/admin - add a user as admin\n"
+        text += "/unadmin - remove admin privileges\n"
+        text += "/list_admin - show admin users\n\n"
+        text += "/update_schedule - update schedule from file\n\n"
         await client.send_message(SENDER, text, parse_mode="HTML")
         send_logs(format_id(SENDER) + " - /admin_help", 'info')
+        return
     
     #/stats admin
-    @client.on(events.NewMessage(pattern='/stats')) 
+    @client.on(events.NewMessage(pattern=r'^/stats$'))
     async def statsss(event):
         sender = await event.get_sender()
         SENDER = sender.id
@@ -107,7 +114,7 @@ def register_admin_handlers(client, admins1, admins2):
         send_logs(format_id(SENDER) + " - /stats", "info")
 
     #/message admin
-    @client.on(events.NewMessage(pattern='/message'))
+    @client.on(events.NewMessage(pattern=r'^/message$'))
     async def message_command(event):
         sender = await event.get_sender()
         SENDER = sender.id
@@ -123,7 +130,12 @@ def register_admin_handlers(client, admins1, admins2):
             Button.inline("TI-241", data=b"to2"),
             Button.inline("Notifon users", data=b"to3"),
             Button.inline("A user", data=b"to4"),
+            Button.inline("Year 1", data=b"to6"),
+            Button.inline("Year 2", data=b"to7"),
+            Button.inline("Year 3", data=b"to8"),
+            Button.inline("Year 4", data=b"to9"),
             Button.inline("All users", data=b"to5")
+            
         ]
         buttons = button_grid(buttons, 2)
         await client.send_message(SENDER, text, buttons=buttons)
@@ -147,7 +159,11 @@ def register_admin_handlers(client, admins1, admins2):
             2: "TI-241",
             3: "Notifon users",
             4: "A user",
-            5: "All users"
+            5: "All users",
+            6: "Year 1",
+            7: "Year 2",
+            8: "Year 3",
+            9: "Year 4"
         }
         await event.answer()
         await client.edit_message(SENDER, event.message_id, "Selected: " + recipient_dict.get(to_who))
@@ -177,7 +193,10 @@ def register_admin_handlers(client, admins1, admins2):
                 if has_media:
                     try:
                         # Download the media
-                        media_path = await event.download_media("temp/")
+                        timestamp = datetime.datetime.now(moldova_tz).strftime("%Y%m%d_%H%M%S")
+                        sender_id = str(SENDER)[-6:]  # Last 6 digits of sender ID
+                        filename = f"message_{timestamp}_{sender_id}"
+                        media_path = await event.download_media(f"temp/{filename}")
                         text = event.text  # Caption becomes the text
                     except Exception as e:
                         send_logs(f"Error downloading media: {e}", 'error')
@@ -241,7 +260,7 @@ def register_admin_handlers(client, admins1, admins2):
         
         try:
             if to_who == 1:
-                all_users = db.get_all_users_with('SENDER', 'U500303890')
+                all_users = db.get_all_users_with('SENDER', main_admin)
             elif to_who == 2:
                 all_users = db.get_all_users_with('group_n', 'TI-241')
                 send_logs("Sending to TI-241", 'info')
@@ -254,6 +273,9 @@ def register_admin_handlers(client, admins1, admins2):
             elif to_who == 5:
                 all_users = db.get_all_users()
                 send_logs("Sending to everyone", 'info')
+            elif to_who in [6, 7, 8, 9]:
+                all_users = db.get_all_users_with('year_s', str(to_who - 5))
+                send_logs(f"Sending to Year {to_who - 5}", 'info')
             else:
                 send_logs("No users to send a message", 'info')
                 return
@@ -294,7 +316,7 @@ def register_admin_handlers(client, admins1, admins2):
             send_logs(f"Removed temp file: {media_path}", 'info')
 
     #/debug_next admin
-    @client.on(events.NewMessage(pattern='/debug_next'))
+    @client.on(events.NewMessage(pattern=r'^/debug_next$'))
     async def debugg(event):
         sender = await event.get_sender()
         SENDER = sender.id
@@ -316,14 +338,14 @@ def register_admin_handlers(client, admins1, admins2):
         send_logs(format_id(SENDER) + " - /debug_next", 'info')
     
     #/backup admin
-    @client.on(events.NewMessage(pattern='/backup')) 
+    @client.on(events.NewMessage(pattern=r'^/backup$'))
     async def manual_backup(event):
         sender = await event.get_sender()
         SENDER = sender.id
         if is_rate_limited(SENDER):
             send_logs(f"Rate limited user: {SENDER}", 'warning')
             return
-        if format_id(SENDER) != "U500303890":
+        if format_id(SENDER) != main_admin:
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
         
@@ -353,7 +375,7 @@ def register_admin_handlers(client, admins1, admins2):
             await client.send_message(SENDER, f"Error sending backup: {str(e)}", parse_mode="HTML")
     
     #/logs admin
-    @client.on(events.NewMessage(pattern='/logs'))
+    @client.on(events.NewMessage(pattern=r'^/logs$'))
     async def logs(event):
         sender = await event.get_sender()
         SENDER = sender.id
@@ -389,133 +411,132 @@ def register_admin_handlers(client, admins1, admins2):
             send_logs(f"Error sending manual backup: {str(e)}", 'error')
             await client.send_message(SENDER, f"Error sending backup: {str(e)}", parse_mode="HTML")
 
-    # Dictionary to track users in ban process
-    ban_users_waiting = {}
+    # Dictionary to track users waiting for actions
+    user_action_waiting = {}
     
-    #/ban a user(ban=1) and set ban_time 1 day
-    @client.on(events.NewMessage(pattern='/ban'))
-    async def ban_user_command(event):
+    # Helper function for user status management (ban/unban/admin)
+    async def user_status_management(client, event, action_type):
         sender = await event.get_sender()
         SENDER = sender.id
         if is_rate_limited(SENDER):
             send_logs(f"Rate limited user: {SENDER}", 'warning')
             return
-        if format_id(SENDER) not in admins1:
+        
+        user_str = "U" + str(SENDER)
+
+        if user_str not in admins1:
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
+
+        # Handle listing
+        if action_type.startswith('list_'):
+            system = action_type.split('_')[1]  # 'ban' or 'admin'
+            if system == 'ban':
+                text = "Banned users:\n"
+                users = db.get_all_users_with('ban', 1)
+                field_to_show_name = 'Time'
+                field_to_show = 'ban_time'
+                empty_message = "No banned users"
+            elif system == 'admin':
+                text = "Admin users:\n"
+                users = pd.concat([
+                    db.get_all_users_with('admins', 1),
+                    db.get_all_users_with('admins', 2)
+                ], ignore_index=True)
+                field_to_show_name = 'Level'
+                field_to_show = 'admins'
+                empty_message = "No admin users"
+            
+            # Format and display the list
+            if not users.empty:
+                for _, row in users.iterrows():
+                    user_id = row['SENDER']
+                    field_value = row[field_to_show]
+                    text += f"{user_id} - {field_to_show_name}: {field_value}\n"
+            else:
+                text += empty_message
+            
+            await client.send_message(SENDER, text, parse_mode="HTML")
+            send_logs(f"{format_id(SENDER)} - /{action_type}", 'info')
+            return
+            
+        # For actions that require user input (ban, unban, admin, unadmin)
         text = "Please enter the user ID(as int):"
         await client.send_message(SENDER, text)
-        # Mark this user as waiting for a user ID to ban
-        ban_users_waiting[SENDER] = True
-        send_logs(format_id(SENDER) + " - initiated /ban command", 'info')
+        
+        # Mark this user as waiting for input with the specific action
+        user_action_waiting[SENDER] = action_type
+        send_logs(f"{format_id(SENDER)} - initiated /{action_type} command", 'info')
+        return
     
-    # Handle user input for ban command
+    # Handler for user input after ban/unban/admin commands
     @client.on(events.NewMessage())
-    async def ban_user_input_handler(event):
-        if event.text.startswith('/'):
+    async def user_action_input_handler(event):
+        # Skip command messages
+        if event.text and event.text.startswith('/'):
             return
+        
         sender = await event.get_sender()
         SENDER = sender.id
         
-        # Check if this user is waiting to provide a user ID to ban
-        if SENDER in ban_users_waiting and ban_users_waiting[SENDER]:
-            useridd = event.text
-            try:
-                useridd = int(useridd)
-                #dd-mm-yyyy/hh:mm:ss
+        # Check if this user is waiting
+        if SENDER not in user_action_waiting:
+            return
+        
+        action_type = user_action_waiting[SENDER]
+        useridd = event.text
+        try:
+            useridd = int(useridd)
+            user_str = "U" + str(useridd)
+            
+            # Handle different action types
+            if action_type == 'ban':
                 ban_time = datetime.datetime.now(moldova_tz) + datetime.timedelta(days=1)
                 ban_time = ban_time.strftime("%d-%m-%y %H:%M:%S")
-                db.update_user_field("U"+str(useridd), "ban", 1)
-                db.update_user_field("U"+str(useridd), "ban_time", str(ban_time))
-                await client.send_message(SENDER, f"User U{useridd} banned", parse_mode="HTML")
-                send_logs(format_id(SENDER) + " - /ban - U"+str(useridd), 'info')
-            except ValueError:
-                await client.send_message(SENDER, "Invalid user ID!", parse_mode="HTML")
-            except Exception as e:
-                send_logs(f"Error banning user {useridd}: {str(e)}", 'error')
-            finally:
-                # Remove user from waiting list
-                del ban_users_waiting[SENDER]
-                # Return True to prevent other handlers from processing this message
-                return True
+                db.update_user_field(user_str, "ban", 1)
+                db.update_user_field(user_str, "ban_time", str(ban_time))
+                await client.send_message(SENDER, f"User {user_str} banned", parse_mode="HTML")
+            
+            elif action_type == 'unban':
+                db.update_user_field(user_str, "ban", 0)
+                db.update_user_field(user_str, "ban_time", '')
+                await client.send_message(SENDER, f"User {user_str} unbanned", parse_mode="HTML")
+            
+            elif action_type == 'admin':
+                if user_str in admins1 or user_str in admins2:
+                    await client.send_message(SENDER, f"User {user_str} is already an admin.", parse_mode="HTML")
+                else:
+                    admins2.append(user_str)
+                    db.update_user_field(user_str, "admins", 2)
+                    await client.send_message(SENDER, f"User {user_str} added as admin.", parse_mode="HTML")
 
-    # Dictionary to track users in unban process
-    unban_users_waiting = {}
-    
-    #/unban user
-    @client.on(events.NewMessage(pattern='/unban'))
-    async def unban_user_command(event):
-        sender = await event.get_sender()
-        SENDER = sender.id
-        if is_rate_limited(SENDER):
-            send_logs(f"Rate limited user: {SENDER}", 'warning')
-            return
-        if format_id(SENDER) not in admins1:
-            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
-            return
-        text = "Please enter the user ID(as int):"
-        await client.send_message(SENDER, text)
-        # Mark this user as waiting for a user ID to unban
-        unban_users_waiting[SENDER] = True
-        send_logs(format_id(SENDER) + " - initiated /unban command", 'info')
-    
-    # Handle user input for unban command
-    @client.on(events.NewMessage())
-    async def unban_user_input_handler(event):
-        if event.text.startswith('/'):
-            return
-        sender = await event.get_sender()
-        SENDER = sender.id
+            elif action_type == 'unadmin':
+                if user_str in admins2:
+                    admins2.remove(user_str)
+                    db.update_user_field(user_str, "admins", 0)
+                    await client.send_message(SENDER, f"User {user_str} removed from admins.", parse_mode="HTML")
+                else:
+                    await client.send_message(SENDER, f"User {user_str} is not an admin.", parse_mode="HTML")
+            
+            send_logs(f"{format_id(SENDER)} - /{action_type} - {user_str}", 'info')
         
-        # Check if this user is waiting to provide a user ID to unban
-        if SENDER in unban_users_waiting and unban_users_waiting[SENDER]:
-            useridd = event.text
-            try:
-                useridd = int(useridd)
-                db.update_user_field("U"+str(useridd), "ban", 0)
-                db.update_user_field("U"+str(useridd), "ban_time", '')
-                await client.send_message(SENDER, f"User U{useridd} unbanned", parse_mode="HTML")
-                send_logs(format_id(SENDER) + " - /unban - U"+str(useridd), 'info')
-            except ValueError:
-                await client.send_message(SENDER, "Invalid user ID!", parse_mode="HTML")
-            except Exception as e:
-                send_logs(f"Error unbanning user {useridd}: {str(e)}", 'error')
-            finally:
-                # Remove user from waiting list
-                del unban_users_waiting[SENDER]
-                # Return True to prevent other handlers from processing this message
-                return True
-    #/ban_list admin
-    @client.on(events.NewMessage(pattern='/list_ban'))
-    async def ban_list(event):
-        sender = await event.get_sender()
-        SENDER = sender.id
-        if is_rate_limited(SENDER):
-            send_logs(f"Rate limited user: {SENDER}", 'warning')
+        except ValueError:
+            await client.send_message(SENDER, "Invalid user ID!", parse_mode="HTML")
+        except Exception as e:
+            send_logs(f"Error in {action_type} for user {useridd}: {str(e)}", 'error')
+        finally:
+            # Remove user from waiting list
+            del user_action_waiting[SENDER]
             return
-        if format_id(SENDER) not in admins1:
-            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
-            return
-        text = "Banned users:\n"
-        banned_users = db.get_all_users_with('ban', 1)
-        if not banned_users.empty:
-            for _, row in banned_users.iterrows():
-                user_id = row['SENDER']
-                ban_time = row['ban_time']
-                text += f"{user_id} - {ban_time}\n"
-        else:
-            text += "No banned users"
-        await client.send_message(SENDER, text, parse_mode="HTML")
-        send_logs(format_id(SENDER) + " - /ban_list", 'info')
     
     #/use_backup admin
     backup_to_restore = None
 
-    @client.on(events.NewMessage(pattern='/use_backup')) 
+    @client.on(events.NewMessage(pattern=r'^/use_backup$'))
     async def use_backup(event):
         sender = await event.get_sender()
         SENDER = sender.id
-        if format_id(SENDER) != "U500303890":
+        if format_id(SENDER) != main_admin:
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
         nonlocal backup_to_restore
@@ -559,7 +580,7 @@ def register_admin_handlers(client, admins1, admins2):
             send_logs(f"Error listing backups for restore: {str(e)}", 'error')
             await client.send_message(SENDER, f"Error: {str(e)}", parse_mode="HTML")
     
-    @client.on(events.NewMessage(pattern='/cancel_restore'))
+    @client.on(events.NewMessage(pattern=r'^/cancel_restore$'))
     async def cancel_restore(event):
         sender = await event.get_sender()
         SENDER = sender.id
@@ -631,11 +652,11 @@ def register_admin_handlers(client, admins1, admins2):
                 await client.edit_message(SENDER, event.message_id, f"❌ Database restore failed")
 
     #/new_year admin
-    @client.on(events.NewMessage(pattern='/new_year'))
+    @client.on(events.NewMessage(pattern=r'^/new_year$'))
     async def new_year(event):
         sender = await event.get_sender()
         SENDER = sender.id
-        if format_id(SENDER) != "U500303890":
+        if format_id(SENDER) != main_admin:
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
         #1 year passed
@@ -670,3 +691,135 @@ def register_admin_handlers(client, admins1, admins2):
         await event.answer("Update cancelled.")
         await client.edit_message(SENDER, event.message_id, "Update cancelled.")
         send_logs("User cancelled update user years.", 'info')
+
+    #/admin/unadmin/list_admin/add_admin commands
+    @client.on(events.NewMessage(pattern=r'^/admin$'))
+    async def add_admin_command(event):
+        await user_status_management(client, event, 'admin')
+        return
+    @client.on(events.NewMessage(pattern=r'^/unadmin$'))
+    async def remove_admin_command(event):
+        await user_status_management(client, event, 'unadmin')
+        return
+    @client.on(events.NewMessage(pattern=r'^/list_admin$'))
+    async def admin_list_command(event):
+        await user_status_management(client, event, 'list_admin')
+        return
+    
+    #/ban/unban/list_ban commands
+    @client.on(events.NewMessage(pattern=r'^/ban$'))
+    async def ban_user_command(event):
+        await user_status_management(client, event, 'ban')
+        return
+    @client.on(events.NewMessage(pattern=r'^/unban$'))
+    async def unban_user_command(event):
+        await user_status_management(client, event, 'unban')
+        return
+    @client.on(events.NewMessage(pattern=r'^/list_ban$'))
+    async def ban_list(event):
+        await user_status_management(client, event, 'list_ban')
+        return
+
+    #/update_schedule admin
+    active_file_handlers = {}
+
+    @client.on(events.NewMessage(pattern=r'^/update_schedule$'))
+    async def update_schedule(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+        if format_id(SENDER) != main_admin:
+            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+            return
+        #select year
+        text = "Select the year to update schedule:"
+        buttons = [
+            Button.inline("Year 1", data=b"year_1"),
+            Button.inline("Year 2", data=b"year_2"),
+            Button.inline("Year 3", data=b"year_3"),
+            Button.inline("Year 4", data=b"year_4"),
+            Button.inline("Cancel", data=b"cancel_update_schedule")
+        ]
+        buttons = button_grid(buttons, 2)
+        await client.send_message(SENDER, text, buttons=buttons)
+        send_logs(f"User {SENDER} initiated schedule update", 'info')
+        return
+    
+    #cancel update schedule
+    @client.on(events.CallbackQuery(pattern=b"cancel_update_schedule"))
+    async def cancel_update_schedule(event):
+        nonlocal active_file_handlers
+        sender = await event.get_sender()
+        SENDER = sender.id
+        await event.answer("Update cancelled.")
+        await client.edit_message(SENDER, event.message_id, "Schedule update cancelled.")
+        
+        if SENDER in active_file_handlers:
+            handler_func = active_file_handlers[SENDER]
+            client.remove_event_handler(handler_func)
+            del active_file_handlers[SENDER]
+        
+        send_logs(f"User {SENDER} cancelled schedule update", 'info')
+        return
+    
+    #year selection callback
+    @client.on(events.CallbackQuery(pattern=lambda x: x.startswith(b"year_")))
+    async def year_selection_callback(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+        if format_id(SENDER) != main_admin:
+            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+            return
+        
+        year_selected = int(event.data.decode('utf-8').split('_')[1])
+        await event.answer(f"Selected - Year {year_selected}")
+        
+        await client.edit_message(SENDER, event.message_id,
+            f"Selected - Year {year_selected}\n\nPlease send the new schedule file in .xlsx format:",
+            buttons=[
+                Button.inline(f"Cancel", data=b"cancel_update_schedule")
+            ]
+        )
+
+        #file upload handler
+        @client.on(events.NewMessage(from_users=SENDER))
+        async def handle_schedule_file(file_event):
+            # Remove the handler after first message and from tracking
+            nonlocal active_file_handlers
+            client.remove_event_handler(handle_schedule_file, events.NewMessage(from_users=SENDER))
+            
+            if SENDER in active_file_handlers:
+                del active_file_handlers[SENDER]
+            
+            if file_event.media and hasattr(file_event.media, 'document') and file_event.file.name.endswith('.xlsx'):
+                await file_event.reply(f"File received for Year {year_selected}. Processing...")
+                # Download the file
+                file_path = await file_event.download_media(f"temp/schedule_year_{year_selected}.xlsx")
+                send_logs(f"User {SENDER} uploaded schedule for Year {year_selected}", 'info')
+                
+                # Process the schedule file
+                try:
+                    if process_schedule_file(f"temp/schedule_year_{year_selected}.xlsx", year_selected):
+                        await client.send_message(SENDER, f"✅ Schedule for Year {year_selected} updated successfully.")
+                        send_logs(f"Schedule for Year {year_selected} updated successfully.", 'info')
+                    else:
+                        await client.send_message(SENDER, f"❌ Failed to update schedule for Year {year_selected}. Check the file format.")
+                        send_logs(f"Failed to update schedule for Year {year_selected}.", 'error')
+                except Exception as e:
+                    send_logs(f"Error processing schedule for Year {year_selected}: {str(e)}", 'error')
+                    await client.send_message(SENDER, f"Error processing schedule: {str(e)}")
+                
+                # Replace the old schedule file
+                try:
+                    import shutil
+                    shutil.copy2(f"temp/schedule_year_{year_selected}.xlsx", f"schedules/orar{year_selected}.xlsx")
+                    os.remove(f"temp/schedule_year_{year_selected}.xlsx")  # Clean up temp file after copying
+                    send_logs(f"Replaced old schedule file for Year {year_selected}", 'info')
+                    await client.send_message(SENDER, f"Old schedule file for Year {year_selected} replaced successfully.")
+                except Exception as e:
+                    send_logs(f"Error replacing schedule file for Year {year_selected}: {str(e)}", 'error')
+                    await client.send_message(SENDER, f"Error replacing schedule file: {str(e)}")
+            else:
+                await file_event.reply("Please send a valid .xlsx file or type /update_schedule to start over.")
+        
+    
+            

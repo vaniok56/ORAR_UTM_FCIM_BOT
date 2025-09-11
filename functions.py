@@ -4,6 +4,8 @@ import datetime
 import pytz
 import requests
 import handlers.db as db
+import re
+
 
 import time
 from collections import defaultdict
@@ -135,7 +137,7 @@ def send_logs(message, type):
 #open the excel files
 for i in range(1, 5):
     try:
-        globals()[f"schedule{i}"] = openpyxl.load_workbook(f'orar{i}.xlsx', data_only=True)["Table 2"]
+        globals()[f"schedule{i}"] = openpyxl.load_workbook(f'schedules/orar{i}.xlsx', data_only=True)["Table 2"]
     except Exception as e:
         send_logs(f"Error loading orar{i}.xlsx: {e}", 'error')
         globals()[f"schedule{i}"] = openpyxl.Workbook()
@@ -149,6 +151,45 @@ for i in range(1, 5):
     except Exception as e:
         send_logs(f"Error extracting groups from schedule{i}: {e}", 'error')
         globals()[f"groups{i}"] = []
+
+def get_local_schedule_versions():
+    versions = {}
+    for i in range(1, 5):
+        try:
+            version_cell = globals()[f"schedule{i}"].cell(row=1, column=1).value
+            version = int(version_cell) if version_cell else 0
+            versions[i] = version
+            send_logs(f"Local schedule{i} version: {version}", 'info')
+        except Exception as e:
+            send_logs(f"Error reading version from schedule{i}: {e}", 'error')
+            versions[i] = 0
+    return versions
+
+def get_online_schedule_versions():
+    """Fetch current schedule versions from FCIM website"""
+    try:
+        response = requests.get("https://fcim.utm.md/procesul-de-studii/orar/", timeout=10)
+        if response.status_code != 200:
+            send_logs(f"Failed to fetch schedule page: {response.status_code}", 'error')
+            return {}
+        
+        pdf_pattern = r'Anul_([IVX]+)(?:_[0-9]{4})?_Semestrul_[IVX]+-([0-9]+)\.pdf'
+        matches = re.findall(pdf_pattern, response.text)
+        
+        roman_to_num = {'I': 1, 'II': 2, 'III': 3, 'IV': 4}
+        versions = {}
+        
+        for roman_year, version in matches:
+            year_num = roman_to_num.get(roman_year)
+            if year_num:
+                versions[year_num] = int(version)
+        
+        send_logs(f"Fetched online versions: {versions}", 'info')
+        return versions
+        
+    except Exception as e:
+        send_logs(f"Error fetching online schedule versions: {e}", 'error')
+        return {}
 
 def get_schedule_and_groups(cur_group):
     if cur_group in schedule_groups_cache:
@@ -500,3 +541,28 @@ def write_groups_to_json():
         f.write("}\n")
     send_logs("Dynamic group lists have been written to dynamic_group_lists.py", 'info')
     return years, specialties, group_list
+
+def process_schedule_file(file_path, schedule_number):
+    try:
+        schedule = openpyxl.load_workbook(file_path, data_only=True)["Table 2"]
+        globals()[f"schedule{schedule_number}"] = schedule
+        globals()[f"groups{schedule_number}"] = [schedule.cell(row=1,column=j).value for j in all_groups_range if schedule.cell(row=1,column=j).value]
+        send_logs(f"Processed and loaded {file_path} as schedule{schedule_number}", 'info')
+        
+        # Clear relevant caches
+        keys_to_clear = [key for key in schedule_groups_cache if key.startswith(f"U{schedule_number}")]
+        for key in keys_to_clear:
+            del schedule_groups_cache[key]
+        
+        day_row_start_cache.clear()
+        daily_schedule_cache.clear()
+        cell_value_cache.clear()
+        weekly_schedule_cache.clear()
+        next_course_cache.clear()
+        orele_cache.clear()
+        schedule_groups_cache.clear()
+        
+        return True
+    except Exception as e:
+        send_logs(f"Error processing schedule file {file_path}: {e}", 'error')
+        return False

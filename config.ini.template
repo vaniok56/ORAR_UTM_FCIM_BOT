@@ -1,0 +1,8 @@
+[default]
+; Don't touch [default], DO NOT MODIFY IT
+; APP_ID and API_HASH for telethon: https://my.telegram.org/auth
+; BOT_TOKEN: Write on telegram to @BotFather and follow the instruction
+
+BOT_TOKEN = YOUR_BOT_TOKEN
+api_id = YOUR_API_ID
+api_hash = YOUR_API_HASH

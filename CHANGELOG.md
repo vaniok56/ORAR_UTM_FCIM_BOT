@@ -2,6 +2,39 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.12.0] - 2025-09-11
+
+### TL;DR
+This release introduces a major feature: automatic schedule update checking. The bot now monitors the official FCIM website for new schedule versions and notifies admins if local files are outdated. The `/version` command has been enhanced to show a side-by-side comparison of local and online schedule versions. Additionally, the project structure has been cleaned up by moving schedule files into a dedicated `schedules` directory.
+
+### Added
+- **Schedule Update Checker** ([`functions.py`](./functions.py), [`script.py`](./script.py)):
+    - The bot now fetches schedule version numbers from the FCIM website by running the command `/version`. 
+    - It compares online versions with the versions of the local `orar*.xlsx` files.
+- **Dynamic Schedule Loading & Updating** ([`functions.py`](./functions.py), [`handlers/admin_handlers.py`](./handlers/admin_handlers.py)):
+    - Added a function to process and reload schedule files dynamically.
+    - Introduced a new `/update_schedule` command for admins to upload new schedule files directly to the bot.
+    - Caches are now cleared automatically when a new schedule file is processed.
+
+### Updated
+- **`/version` Command** ([`script.py`](./script.py)):
+    - The command output now includes a detailed comparison of local versus online schedule versions for each academic year, making it easy to see what's current.
+- **File Structure**:
+    - All schedule Excel files (`orar*.xlsx`) have been moved from the root directory to the [`schedules/`](./schedules/) directory for better organization.
+    - Code in [`functions.py`](./functions.py) has been updated to reflect the new file paths.
+- **Documentation** ([`RUN.md`](./RUN.md)): Completely rewritten to provide a comprehensive, step-by-step guide for setup, configuration, and management.
+- **Docker & Git** ([`.dockerignore`](./.dockerignore), [`.gitignore`](./.gitignore)): Updated to align with the new file structure and improve build context.
+
+### Removed
+- **Obsolete Files**:
+    - Removed the old, unused `migrate.py` script.
+    - Deleted `orar1.xlsx` and `orar2.xlsx` from the root directory, as they are now managed in the `schedules/` directory. Now only the example schedule is keeped in repository.
+
+### Fixed
+- **Admin Commands** ([`handlers/admin_handlers.py`](./handlers/admin_handlers.py)):
+    - Refactored user management commands (`/ban`, `/unban`, `/admin`) for improved reliability and code structure.
+    - Replaced hardcoded main admin ID with a dedicated constant.
+
 ## [0.11.2] - 2025-09-04
 
 ### TL;DR

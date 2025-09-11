@@ -1,24 +1,110 @@
-## Docker
+# 🤖 ORAR UTM FCIM BOT
 
-To run this bot using Docker, follow these steps:
+Welcome! This document provides a comprehensive guide to setting up, running, and managing the ORAR UTM FCIM Telegram Bot using Docker.
 
-### 1. Prerequisites
+## 📋 Table of Contents
+- [Introduction](#introduction)
+- [Prerequisites](#prerequisites)
+- [Setup and First Run](#-setup-and-first-run)
+- [Configuration Details](#-configuration-details)
+- [Schedule File Format](#-schedule-file-format)
+- [Managing the Bot](#-managing-the-bot)
+- [Troubleshooting](#-troubleshooting)
 
-Make sure you have Docker and Docker Compose installed on your system.
+## ✨ Introduction
 
-CLI: https://docs.docker.com/engine/install/
+This Telegram bot provides students of the UTM FCIM faculty with easy access to their academic schedules. It supports fetching schedules by day or week and sends notifications for upcoming classes.
 
-Desktop: https://docs.docker.com/desktop/release-notes/
+The recommended setup uses Docker to ensure a consistent and reliable environment.
 
-### 2. Configuration
+## 🛠️ Prerequisites
 
-You need to create two configuration files and a database init file: `config.ini`, `mysql.env` and `init.sql`. These files are ignored by Git for security reasons.
+Before you begin, ensure you have the following installed:
 
-#### `config.ini`
+-   [**Docker**](https://docs.docker.com/engine/install/)
+-   [**Docker Compose**](https://docs.docker.com/compose/install/)
+-   [**Git**](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git)
 
-Path: ORAR_UTM_FCIM_BOT/config.ini
+## 🚀 Setup and First Run
 
-This file contains your Telegram API credentials. Create a file named `config.ini` in the root of the project with the following content:
+Follow these steps to get the bot running.
+
+### 1. Clone the Repository
+
+First, clone the project to your local machine and navigate into the directory.
+
+```bash
+git clone https://github.com/vaniok56/ORAR_UTM_FCIM_BOT.git
+cd ORAR_UTM_FCIM_BOT
+```
+
+### 2. Create Configuration Files
+
+You need to create two essential configuration files: `config.ini` and `mysql.env`. Templates are provided, so you can copy them.
+
+```bash
+cp config.ini.template config.ini
+cp mysql.env.template mysql.env
+```
+
+Next, **edit these new files** with your specific credentials as described in the [Configuration Details](#-configuration-details) section below.
+
+### 3. Prepare the Database
+
+This step automatically configures the database initialization script.
+
+```bash
+# 1. Copy the database script template
+cp init/init.sql.template init/init.sql
+
+# 2. Automatically replace credentials in init.sql
+# This command reads your credentials from mysql.env and safely updates the SQL script.
+export $(grep -v '^#' mysql.env | xargs) && \
+sed -i.bak "s/'your_user'/'$MYSQL_USER'/g; s/'your_password'/'$MYSQL_PASSWORD'/g" init/init.sql
+```
+> **Note:** The `sed` command creates a backup `init.sql.bak`. You can safely delete it after confirming `init.sql` was modified correctly.
+
+### 4. Handle Permissions (Linux/macOS)
+
+The MySQL container runs as user `1000:1000` and needs permission to write to the `./mysql` data directory.
+
+```bash
+# Delete the mysql directory if it exists to ensure a clean start
+sudo rm -rf ./mysql
+
+# Create the directory for MySQL data
+mkdir -p ./mysql
+
+# Set the correct ownership and permissions
+sudo chown -R 1000:1000 ./mysql
+sudo chmod -R 755 ./init
+```
+> **Note for Docker Desktop users (Windows/macOS):** You can often skip this step, as Docker Desktop handles volume permissions automatically. If you encounter permission errors in the database logs, run these commands.
+
+### 5. Build and Run the Bot
+
+Now, you can build the Docker image and launch the services.
+
+```bash
+docker build --tag orarbot . && docker compose up
+```
+
+-   To run the bot in the background (detached mode), add the `-d` flag:
+    ```bash
+    docker build --tag orarbot . && docker compose up -d
+    ```
+-   If you are not using Docker in rootless mode, you may need `sudo`:
+    ```bash
+    sudo docker build --tag orarbot . && sudo docker compose up
+    ```
+
+Your bot is now running! 🎉
+
+## ⚙️ Configuration Details
+
+### `config.ini`
+
+This file holds your Telegram API credentials.
 
 ```ini
 [default]
@@ -27,13 +113,12 @@ api_hash = YOUR_API_HASH
 BOT_TOKEN = YOUR_BOT_TOKEN
 ```
 
-Replace `YOUR_API_ID`, `YOUR_API_HASH`, and `YOUR_BOT_TOKEN` with your actual credentials from [my.telegram.org](https://my.telegram.org).
+-   `api_id` and `api_hash`: Obtain these from [my.telegram.org](https://my.telegram.org).
+-   `BOT_TOKEN`: Get this from [@BotFather](https://t.me/BotFather) on Telegram by creating a new bot.
 
-#### `mysql.env`
+### `mysql.env`
 
-Path: ORAR_UTM_FCIM_BOT/mysql.env
-
-This file contains the database credentials. Create a file named `mysql.env` in the root of the project with the following content:
+This file configures the database credentials.
 
 ```env
 MYSQL_DATABASE=orar_bot
@@ -42,66 +127,79 @@ MYSQL_PASSWORD=your_password
 MYSQL_ROOT_PASSWORD=root_password
 ```
 
-You can change the `your_user`, `your_password`, and `root_password` to your desired values.
+> **Security:** Choose a strong, unique password for `MYSQL_USER`, `MYSQL_PASSWORD`, and `MYSQL_ROOT_PASSWORD`. These files are ignored by Git to prevent accidentally exposing secrets.
 
-#### `init.sql`
+## 🗓️ Schedule File Format
 
-Path: ORAR_UTM_FCIM_BOT/init/init.sql
+The bot reads schedules from Excel files placed in the `schedules/`.
 
-This file contains initializes the MySQL database the first time the database container starts.
+-   **Naming Convention**: `orar<year>.xlsx`, where `<year>` is the academic year (1-4).
+    -   Example: `orar1.xlsx`, `orar2.xlsx`, etc.
+-   **File Structure**:
+    -   The data must be in a sheet named **"Table 2"**.
+    -   **Row 1, Column A**: Contains the version of the schedule.
+    -   **Row 1**: Contains group names (e.g., "TI-241") starting from **Column C**.
+    -   **Column A**: Contains the day of the week (e.g., "Luni", "Marţi").
+    -   **Column B**: Contains the class time intervals (e.g., "8.00-9.30").
+    -   The intersection of a group's column and a time slot's row contains the class details (subject, teacher, room).
 
-Copy or rename the template the template:  
+An example file, `orar_example.xlsx`, is provided for reference.
+
+## 🕹️ Managing the Bot
+
+### Stopping the Bot
+
+To stop the bot and shut down all services:
+
 ```bash
-cp init/init.sql.template init/init.sql
+docker compose down
 ```
 
-Open init/init.sql and replace every placeholder user/password with the exact MYSQL_USER and MYSQL_PASSWORD values you set in mysql.env (do NOT use root credentials unless required).
+### Updating the Bot
 
-### 3. Permissions
+To update the bot with the latest changes from the Git repository:
 
-Create the data directory once before first run (or delete it to reset the DB).
-
-Why: The MySQL container must be able to read/write the mounted folders.
-
-If things already work for you (especially on Docker Desktop), you can skip the chmod/chown steps unless you see permission errors.
-
-Linux / macOS:
 ```bash
-# Delete database if already created
+# 1. Stop the running services
+docker compose down
+
+# 2. Pull the latest code
+git pull
+
+# 3. Rebuild the image and restart the services
+docker build --tag orarbot . && docker compose up -d
+```
+
+### Resetting the Database
+
+To completely wipe the database and start fresh:
+
+```bash
+# 1. Stop the services
+docker compose down
+
+# 2. Remove the MySQL data volume
 sudo rm -rf ./mysql
 
-# Create mysql folder
-mkdir -p ./mysql
-
-# Give permisions
-sudo chmod -R 755 ./init ./mysql
-sudo chown -R 1000:1000 ./init ./mysql
+# 3. Restart the services. Docker will re-create the database using init.sql.
+docker compose up -d
 ```
 
-Windows (PowerShell):
-```powershell
-# (Optional) Reset database
-if (Test-Path ".\mysql") { Remove-Item ".\mysql" -Recurse -Force }
-New-Item -ItemType Directory -Path ".\mysql" | Out-Null
-```
+## 🔍 Troubleshooting
 
-Notes:
-- On Windows and macOS with Docker Desktop, permissions are usually handled automatically.
-- If the container logs show access denied errors, ensure the running user can read/write both init and mysql directories.
-- To fully reinitialize, remove the mysql directory before starting containers again.
+If you encounter issues, check the following:
 
-### 4. Build and Run the Bot
+-   **Permission Denied Errors**:
+    -   This is common on Linux/macOS if the `./mysql` directory permissions are incorrect.
+    -   **Solution**: Stop the bot (`docker compose down`), run the `chown` and `chmod` commands from [Step 4](#4-handle-permissions-linuxmacos), and restart.
 
-Once you have created the configuration files, you can build and run the bot using the following command:
+-   **Database Connection Issues**:
+    -   Check the database logs for errors: `docker logs orar_mysql`.
+    -   **Solution**: Ensure the credentials in `mysql.env` are correct and that you have run the `sed` command in [Step 3](#3-prepare-the-database) to update `init.sql` correctly.
 
-```bash
-docker build --tag orarbot . && docker compose up
-```
+-   **Bot Is Unresponsive**:
+    -   Check the bot's logs: `docker logs orar_bot`.
+    -   **Solution**: This is often caused by incorrect Telegram credentials. Verify that `api_id`, `api_hash`, and `BOT_TOKEN` in `config.ini` are correct.
 
-On some Linux systems or if Docker was installed without rootless mode, you might need to use `sudo`:
-
-```bash
-sudo docker build --tag orarbot . && sudo docker compose up
-```
-
-The bot should now be running in a Docker container.
+-   **Incorrect Schedule Displayed**:
+    -   **Solution**: Verify that your `orar<year>.xlsx` files are correctly named, located in the root directory, and follow the format specified in the [Schedule File Format](#-schedule-file-format) section.

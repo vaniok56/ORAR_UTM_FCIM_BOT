@@ -12,6 +12,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
+ORAR_UTM_FCIM_BOT.code-workspace
 
 # Configuration & sensitive files
 *.env
@@ -26,6 +27,9 @@ temp/
 *.md
 LICENSE
 imgs/
+README.md
+RUN.md
+*.template
 
 # Docker files
 docker-compose.yml
@@ -50,3 +54,6 @@ backups/
 
 # Keep init.sql for database setup
 !init/init.sql
+
+# shell script files
+*.sh
