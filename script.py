@@ -4,6 +4,7 @@ from telethon.tl.custom import Button
 import configparser # read
 import datetime
 import pytz
+import os
 
 import handlers.db as db
 from functions import print_day, print_sapt, print_next_course, button_grid, send_logs, get_next_course_time, is_rate_limited, format_id, get_version, write_groups_to_json, get_online_schedule_versions, get_local_schedule_versions
@@ -17,11 +18,10 @@ import handlers.group_handlers as group_handlers
 import pandas as pd
 import numpy as np
 import asyncio
-import os
 
 #### Access credentials
 config = configparser.ConfigParser()
-config.read('config.ini') # read config.ini file
+config.read('configs/config.ini') # read config.ini file
 
 api_id = config.get('default','api_id') # get the api id
 api_hash = config.get('default','api_hash') # get the api hash

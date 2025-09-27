@@ -2,6 +2,24 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.12.1] - 2025-09-27
+
+### TL;DR
+Patch release with configurations path fixes, small robustness improvements to schedule parsing and database handling, and documentation updates.
+
+### Added
+- Added repository templates and configuration under `configs/` (`config.ini.template`, `mysql.env.template`, `my.cnf`) to centralize configuration files.
+
+### Updated
+- Packages versions in `requirements.txt`. Tested for stability.
+- Docker & compose (`Dockerfile`, `docker-compose.yml`): simplified docker-cli base image, fixed mounted config paths to `configs/`, and improved healthcheck timing.
+- Script & config paths (`script.py`, `RUN.md`): updated to read `configs/config.ini` and reference `configs/mysql.env` for consistent file locations.
+- Database connection handling (`handlers/db.py`): improved connection-pool initialization, explicit port usage, unique pool naming, and more robust stored-procedure result processing when preloading users.
+
+### Fixed
+- Corrected stored-procedure result processing to avoid unread-result errors when preloading user cache (`handlers/db.py`).
+- Minor parsing and type-conversion fixes to prevent crashes when Excel cells contain NaN or unexpected types (`functions.py`).
+
 ## [0.12.0] - 2025-09-11
 
 ### TL;DR

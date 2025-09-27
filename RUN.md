@@ -40,11 +40,11 @@ cd ORAR_UTM_FCIM_BOT
 
 ### 2. Create Configuration Files
 
-You need to create two essential configuration files: `config.ini` and `mysql.env`. Templates are provided, so you can copy them.
+You need to create two essential configuration files: `config.ini` and `mysql.env` in the `configs/` directory. Templates are provided, so you can copy them.
 
 ```bash
-cp config.ini.template config.ini
-cp mysql.env.template mysql.env
+cp configs/config.ini.template configs/config.ini
+cp configs/mysql.env.template configs/mysql.env
 ```
 
 Next, **edit these new files** with your specific credentials as described in the [Configuration Details](#-configuration-details) section below.
@@ -58,8 +58,8 @@ This step automatically configures the database initialization script.
 cp init/init.sql.template init/init.sql
 
 # 2. Automatically replace credentials in init.sql
-# This command reads your credentials from mysql.env and safely updates the SQL script.
-export $(grep -v '^#' mysql.env | xargs) && \
+# This command reads your credentials from configs/mysql.env and safely updates the SQL script.
+export $(grep -v '^#' configs/mysql.env | xargs) && \
 sed -i.bak "s/'your_user'/'$MYSQL_USER'/g; s/'your_password'/'$MYSQL_PASSWORD'/g" init/init.sql
 ```
 > **Note:** The `sed` command creates a backup `init.sql.bak`. You can safely delete it after confirming `init.sql` was modified correctly.
@@ -102,7 +102,7 @@ Your bot is now running! 🎉
 
 ## ⚙️ Configuration Details
 
-### `config.ini`
+### `configs/config.ini`
 
 This file holds your Telegram API credentials.
 
@@ -116,7 +116,7 @@ BOT_TOKEN = YOUR_BOT_TOKEN
 -   `api_id` and `api_hash`: Obtain these from [my.telegram.org](https://my.telegram.org).
 -   `BOT_TOKEN`: Get this from [@BotFather](https://t.me/BotFather) on Telegram by creating a new bot.
 
-### `mysql.env`
+### `configs/mysql.env`
 
 This file configures the database credentials.
 
@@ -195,11 +195,11 @@ If you encounter issues, check the following:
 
 -   **Database Connection Issues**:
     -   Check the database logs for errors: `docker logs orar_mysql`.
-    -   **Solution**: Ensure the credentials in `mysql.env` are correct and that you have run the `sed` command in [Step 3](#3-prepare-the-database) to update `init.sql` correctly.
+    -   **Solution**: Ensure the credentials in `configs/mysql.env` are correct and that you have run the `sed` command in [Step 3](#3-prepare-the-database) to update `init.sql` correctly.
 
 -   **Bot Is Unresponsive**:
     -   Check the bot's logs: `docker logs orar_bot`.
-    -   **Solution**: This is often caused by incorrect Telegram credentials. Verify that `api_id`, `api_hash`, and `BOT_TOKEN` in `config.ini` are correct.
+    -   **Solution**: This is often caused by incorrect Telegram credentials. Verify that `api_id`, `api_hash`, and `BOT_TOKEN` in `configs/config.ini` are correct.
 
 -   **Incorrect Schedule Displayed**:
     -   **Solution**: Verify that your `orar<year>.xlsx` files are correctly named, located in the root directory, and follow the format specified in the [Schedule File Format](#-schedule-file-format) section.

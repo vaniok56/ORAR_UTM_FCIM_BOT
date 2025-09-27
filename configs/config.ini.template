@@ -6,3 +6,8 @@
 BOT_TOKEN = YOUR_BOT_TOKEN
 api_id = YOUR_API_ID
 api_hash = YOUR_API_HASH
+
+; Groq AI Configuration
+; Get your API key from: https://console.groq.com/keys
+GROQ_API_KEY = YOUR_GROQ_API_KEY_HERE
+GROQ_MODEL = openai/gpt-oss-120b

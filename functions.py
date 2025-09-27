@@ -326,6 +326,14 @@ def print_daily(schedule, is_even, col_gr, week_day, subgrupa):
             continue
 
         if subgrupa != 0:
+            try:
+                if isinstance(course, float) and (np.isnan(course)):
+                    course = ""
+                else:
+                    course = str(course)
+            except Exception:
+                course = str(course)
+
             count_05 = course.count("0.5") + course.count("0,5")
             if count_05 == 2:
                 if subgrupa == 1:

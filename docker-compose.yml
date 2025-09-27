@@ -2,21 +2,20 @@ services:
 
   mysql:
     image: mysql:8.0
-    env_file: mysql.env
     container_name: orar_mysql
     restart: always
     user: "1000:1000"
     volumes:
       - ./mysql:/var/lib/mysql
       - ./init:/docker-entrypoint-initdb.d:ro
-      - ./my.cnf:/etc/mysql/conf.d/my.cnf
+      - ./configs/my.cnf:/etc/mysql/conf.d/my.cnf
     ports:
       - "3306:3306"
     command: >
       --default-authentication-plugin=caching_sha2_password --log-error-verbosity=1 --console=1 --default-time-zone='Europe/Chisinau' --log-timestamps=system
     healthcheck:
       test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
-      interval: 10s
+      interval: 1s
       timeout: 5s
       retries: 5
     networks:
@@ -37,10 +36,7 @@ services:
     image: orarbot:latest
     container_name: orar_bot
     restart: always
-    env_file: mysql.env
-    depends_on:
-      mysql:
-        condition: service_healthy
+    env_file: configs/mysql.env
     volumes:
       - ./sessions:/sessions
       - ./dynamic_group_lists.py:/dynamic_group_lists.py
@@ -55,7 +51,7 @@ services:
     networks:
       - orar_network
   restarter:
-    image: docker:cli
+    image: docker:rc-cli
     container_name: restarter
     restart: always
     volumes: [ "/var/run/docker.sock:/var/run/docker.sock" ]

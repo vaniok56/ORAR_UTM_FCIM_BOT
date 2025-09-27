@@ -89,21 +89,18 @@ def load_user_cache():
     
     with get_db_connection() as conn:
         cursor = conn.cursor(dictionary=True, buffered=True)
-        results_iter = cursor.execute('CALL get_all_users()', multi=True)
+        cursor.callproc('get_all_users')
         
-        for result_set in results_iter:
-            if result_set.with_rows:
-                result = result_set.fetchall()
-                if result:
-                    df = pd.DataFrame(result)
-                    _cached_all_users_df = df
-                    for row in result:
-                        user_data_cache[row['SENDER']] = row
-                    send_logs(f"Preloaded {len(df)} users into cache", "info")
-                break
-        
-        while cursor.nextset():
-            pass
+        # Process each result set from stored procedure
+        for result_set in cursor.stored_results():
+            result = result_set.fetchall()
+            if result:
+                df = pd.DataFrame(result)
+                _cached_all_users_df = df
+                for row in result:
+                    user_data_cache[row['SENDER']] = row
+                send_logs(f"Preloaded {len(df)} users into cache", "info")
+            break
 
 @contextmanager
 def get_db_connection():
