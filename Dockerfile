@@ -10,4 +10,4 @@ RUN apt-get update && apt-get install -y \
 COPY . .
 
 ENV PYTHONUNBUFFERED=1
-CMD ["python", "-u", "script.py"]
+CMD ["python", "-u", "src/script.py"]

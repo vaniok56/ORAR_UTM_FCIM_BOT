@@ -39,7 +39,7 @@ services:
     env_file: configs/mysql.env
     volumes:
       - ./sessions:/sessions
-      - ./dynamic_group_lists.py:/dynamic_group_lists.py
+      - ./src/dynamic_group_lists.py:/src/dynamic_group_lists.py
       - ./logs:/logs
       - ./backups:/backups
       - ./schedules:/schedules

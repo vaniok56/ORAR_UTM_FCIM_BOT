@@ -354,7 +354,7 @@ def register_admin_handlers(client, admins1, admins2):
             now = datetime.datetime.now(moldova_tz)
             timestamp = now.strftime("%Y%m%d_%H%M%S")
             os.makedirs("/backups", exist_ok=True)
-            backup_filename = f"/backups/BD_backup_{timestamp}.sql"
+            backup_filename = f"../backups/BD_backup_{timestamp}.sql"
             db.create_mysql_backup(backup_filename)
             db_len = db.get_user_count()
             #send
@@ -542,7 +542,7 @@ def register_admin_handlers(client, admins1, admins2):
         nonlocal backup_to_restore
         try:
             #find all backups
-            backup_files = glob.glob("/backups/BD_backup_*.sql")
+            backup_files = glob.glob("../backups/BD_backup_*.sql")
             if not backup_files:
                 await client.send_message(SENDER, "No backup files found!", parse_mode="HTML")
                 return
@@ -811,8 +811,8 @@ def register_admin_handlers(client, admins1, admins2):
                 # Replace the old schedule file
                 try:
                     import shutil
-                    shutil.copy2(f"temp/schedule_year_{year_selected}.xlsx", f"schedules/orar{year_selected}.xlsx")
-                    os.remove(f"temp/schedule_year_{year_selected}.xlsx")  # Clean up temp file after copying
+                    shutil.copy2(f"../temp/schedule_year_{year_selected}.xlsx", f"../schedules/orar{year_selected}.xlsx")
+                    os.remove(f"../temp/schedule_year_{year_selected}.xlsx")  # Clean up temp file after copying
                     send_logs(f"Replaced old schedule file for Year {year_selected}", 'info')
                     await client.send_message(SENDER, f"Old schedule file for Year {year_selected} replaced successfully.")
                 except Exception as e:
