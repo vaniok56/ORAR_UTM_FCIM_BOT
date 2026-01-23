@@ -49,7 +49,6 @@ Thumbs.db
 sessions/
 mysql/
 backups/
-*.csv
 *.cnf
 
 # Keep init.sql for database setup

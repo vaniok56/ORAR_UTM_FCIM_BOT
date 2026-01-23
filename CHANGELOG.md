@@ -2,6 +2,30 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.12.2] - 2026-01-23
+
+### TL;DR
+This release enhances the schedule versioning system to support "final" versions, introduces a contributors role for managing schedules without full admin access, and updates the bot's startup sequence.
+
+### Added
+- **Contributors System** ([`handlers/admin_handlers.py`](./handlers/admin_handlers.py)):
+    - New `/contrib` command to list authorized contributors.
+    - New `/edit_contrib` command (Main Admin only) to add/remove contributors and assign them permissions for specific academic years.
+    - Contributors can now use `/update_schedule` for their assigned years.
+    - Mounted `contributors.csv` in `docker-compose.yml` to persist contributor data.
+
+### Updated
+- **Schedule Versioning** ([`functions.py`](./functions.py), [`script.py`](./script.py)):
+    - Optimized `/version` command to correctly display and compare "final" schedule versions (filenames without numbers) alongside numbered versions (e.g., "v12").
+    - Improved parsing logic in `get_online_schedule_versions` and `get_local_schedule_versions` to handle various data types (floats, strings) and filenames.
+- **Bot Startup** ([`script.py`](./script.py)):
+    - Refactored entry point to use `asyncio.run(main())` because python 3.11+ deprecates `get_event_loop()`.
+- **Admin Rate Limiting** ([`handlers/admin_handlers.py`](./handlers/admin_handlers.py)):
+    - Removed rate limit checks for admin commands to ensure smoother administration.
+
+### Fixed
+- **Docker**: Removed `*.csv` from `.dockerignore` and added volume mapping for `contributors.csv`.
+
 ## [0.12.1] - 2025-09-27
 
 ### TL;DR

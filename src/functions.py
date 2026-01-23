@@ -157,7 +157,12 @@ def get_local_schedule_versions():
     for i in range(1, 5):
         try:
             version_cell = globals()[f"schedule{i}"].cell(row=1, column=1).value
-            version = int(version_cell) if version_cell else 0
+            if isinstance(version_cell, float):
+                version = int(version_cell)
+            elif version_cell:
+                version = str(version_cell).strip()
+            else:
+                version = 0
             versions[i] = version
             send_logs(f"Local schedule{i} version: {version}", 'info')
         except Exception as e:
@@ -173,16 +178,28 @@ def get_online_schedule_versions():
             send_logs(f"Failed to fetch schedule page: {response.status_code}", 'error')
             return {}
         
-        pdf_pattern = r'Anul_([IVX]+)(?:_[0-9]{4})?_Semestrul_[IVX]+-([0-9]+)\.pdf'
+        # Match filenames like:
+        #  - Anul_II_Semestrul_III-12.pdf   (has numeric version)
+        #  - Anul_II_Semestrul_III.pdf       (no numeric version -> final)
+        pdf_pattern = r'Anul_([IVX]+)(?:_[0-9]{4})?_Semestrul_[IVX]+(?:-([0-9]+))?\.pdf'
+        pdf_pattern = re.compile(pdf_pattern, re.IGNORECASE)
         matches = re.findall(pdf_pattern, response.text)
-        
+
         roman_to_num = {'I': 1, 'II': 2, 'III': 3, 'IV': 4}
         versions = {}
-        
+
         for roman_year, version in matches:
             year_num = roman_to_num.get(roman_year)
-            if year_num:
-                versions[year_num] = int(version)
+            if not year_num:
+                continue
+            # If the second capture group (version) is empty, the file is final
+            if version is None or version == "":
+                versions[year_num] = 'final'
+            else:
+                try:
+                    versions[year_num] = int(version)
+                except ValueError:
+                    versions[year_num] = 'final'
         
         send_logs(f"Fetched online versions: {versions}", 'info')
         return versions

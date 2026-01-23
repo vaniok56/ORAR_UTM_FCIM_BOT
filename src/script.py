@@ -21,14 +21,14 @@ import asyncio
 
 #### Access credentials
 config = configparser.ConfigParser()
-config.read('configs/config.ini') # read config.ini file
+config.read('configs/config2.ini') # read config.ini file
 
 api_id = config.get('default','api_id') # get the api id
 api_hash = config.get('default','api_hash') # get the api hash
 BOT_TOKEN = config.get('default','BOT_TOKEN') # get the bot token
 
 # Create the client and the session called session_master.
-client = TelegramClient('sessions/session_master', api_id, api_hash).start(bot_token=BOT_TOKEN)
+client = TelegramClient('sessions/session_master', api_id, api_hash)
 
 #keyboard buttons
 bot_kb = [
@@ -160,7 +160,18 @@ async def versionn(event):
     for year in local_schedule_versions.keys():
         local_ver = local_schedule_versions.get(year, 0)
         online_ver = online_schedule_versions.get(year, 0)
-        text += f"Year {year}: v{local_ver} / v{online_ver}" + (" ✅" if local_ver == online_ver and local_ver != 0 else " ❌") + "\n"
+
+        # Prepare display for online version (handle 'final')
+        online_display = f"v{online_ver}" if isinstance(online_ver, int) else (str(online_ver) if online_ver else "v0")
+        local_display = f"v{local_ver}" if isinstance(local_ver, int) else (str(local_ver) if local_ver else "v0")
+
+        # Determine match: only mark as equal if both are integers and equal and non-zero,
+        # or if online is 'final' and local equals that final marker (not applicable numerically).
+        match = False
+        if local_ver != 0 and local_ver == online_ver:
+            match = True
+
+        text += f"Year {year}: {local_display} / {online_display}" + (" ✅" if match else " ❌") + "\n"
     text += "\n"
     text += "Bot Info:\n"
     text += f"Version: {latest_version}\n"
@@ -604,8 +615,13 @@ async def backup_database():
 if __name__ == '__main__':
     send_logs("############################################", 'info')
     send_logs("Bot Started!", 'info')
-    loop = client.loop
-    loop.create_task(send_curr_course_users(week_day, is_even))
-    loop.create_task(send_schedule_tomorrow())
-    loop.create_task(backup_database())
-    client.run_until_disconnected()
+    
+    async def main():
+        await client.start(bot_token=BOT_TOKEN)
+        loop = client.loop
+        loop.create_task(send_curr_course_users(week_day, is_even))
+        loop.create_task(send_schedule_tomorrow())
+        loop.create_task(backup_database())
+        await client.run_until_disconnected()
+    
+    asyncio.run(main())

@@ -16,6 +16,7 @@ moldova_tz = pytz.timezone('Europe/Chisinau')
 
 current_year = 26  # (+1 each year)
 main_admin = "U500303890"  # Your user ID here as string
+contributors_df = pd.read_csv('contributors.csv')
 
 def register_admin_handlers(client, admins1, admins2):
     #/admin_help admin
@@ -23,9 +24,6 @@ def register_admin_handlers(client, admins1, admins2):
     async def admin_help(event):
         sender = await event.get_sender()
         SENDER = sender.id
-        if is_rate_limited(SENDER):
-            send_logs(f"Rate limited user: {SENDER}", 'warning')
-            return
         if format_id(SENDER) not in admins1 and format_id(SENDER) not in admins2:
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
@@ -43,6 +41,8 @@ def register_admin_handlers(client, admins1, admins2):
         text += "/admin - add a user as admin\n"
         text += "/unadmin - remove admin privileges\n"
         text += "/list_admin - show admin users\n\n"
+        text += "/contrib - show contributors\n\n"
+        text += "/edit_contrib - edit contributors\n\n"
         text += "/update_schedule - update schedule from file\n\n"
         await client.send_message(SENDER, text, parse_mode="HTML")
         send_logs(format_id(SENDER) + " - /admin_help", 'info')
@@ -53,9 +53,6 @@ def register_admin_handlers(client, admins1, admins2):
     async def statsss(event):
         sender = await event.get_sender()
         SENDER = sender.id
-        if is_rate_limited(SENDER):
-            send_logs(f"Rate limited user: {SENDER}", 'warning')
-            return
         if format_id(SENDER) not in admins1 and format_id(SENDER) not in admins2:
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             send_logs(format_id(SENDER) + " - /stats - no acces", "info")
@@ -118,9 +115,6 @@ def register_admin_handlers(client, admins1, admins2):
     async def message_command(event):
         sender = await event.get_sender()
         SENDER = sender.id
-        if is_rate_limited(SENDER):
-            send_logs(f"Rate limited user: {SENDER}", 'warning')
-            return
         if "U" + str(SENDER) not in admins1:
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
@@ -320,9 +314,6 @@ def register_admin_handlers(client, admins1, admins2):
     async def debugg(event):
         sender = await event.get_sender()
         SENDER = sender.id
-        if is_rate_limited(SENDER):
-            send_logs(f"Rate limited user: {SENDER}", 'warning')
-            return
         subgrupa = db.locate_field("U"+str(event.sender_id), 'subgrupa')
         if "U"+str(event.sender_id) not in admins1:
             await client.send_message(event.sender_id, "Nu ai acces!", parse_mode="HTML")
@@ -342,9 +333,6 @@ def register_admin_handlers(client, admins1, admins2):
     async def manual_backup(event):
         sender = await event.get_sender()
         SENDER = sender.id
-        if is_rate_limited(SENDER):
-            send_logs(f"Rate limited user: {SENDER}", 'warning')
-            return
         if format_id(SENDER) != main_admin:
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
@@ -379,9 +367,6 @@ def register_admin_handlers(client, admins1, admins2):
     async def logs(event):
         sender = await event.get_sender()
         SENDER = sender.id
-        if is_rate_limited(SENDER):
-            send_logs(f"Rate limited user: {SENDER}", 'warning')
-            return
         if format_id(SENDER) not in admins1:
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
@@ -418,10 +403,6 @@ def register_admin_handlers(client, admins1, admins2):
     async def user_status_management(client, event, action_type):
         sender = await event.get_sender()
         SENDER = sender.id
-        if is_rate_limited(SENDER):
-            send_logs(f"Rate limited user: {SENDER}", 'warning')
-            return
-        
         user_str = "U" + str(SENDER)
 
         if user_str not in admins1:
@@ -727,7 +708,7 @@ def register_admin_handlers(client, admins1, admins2):
     async def update_schedule(event):
         sender = await event.get_sender()
         SENDER = sender.id
-        if format_id(SENDER) != main_admin:
+        if format_id(SENDER) != main_admin and f"U{SENDER}" not in contributors_df['user_id'].astype(str).tolist():
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
         #select year
@@ -766,12 +747,25 @@ def register_admin_handlers(client, admins1, admins2):
     async def year_selection_callback(event):
         sender = await event.get_sender()
         SENDER = sender.id
-        if format_id(SENDER) != main_admin:
+        if format_id(SENDER) != main_admin and f"U{SENDER}" not in contributors_df['user_id'].astype(str).tolist():
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
         
         year_selected = int(event.data.decode('utf-8').split('_')[1])
         await event.answer(f"Selected - Year {year_selected}")
+
+        #if contributor, check if has permission for that year(multiple years possible)
+        user_years = contributors_df[contributors_df['user_id'] == f"U{SENDER}"]['orar'].values
+        send_logs(f"{year_selected}.  {user_years}", 'info')
+        if user_years.size == 0 or year_selected not in user_years:
+            await client.edit_message(SENDER, event.message_id,
+                f"❌ You do not have permission to update schedule for Year {year_selected}.",
+                buttons=[
+                    Button.inline(f"Cancel", data=b"cancel_update_schedule")
+                ]
+            )
+            send_logs(f"User {SENDER} tried to update schedule for Year {year_selected} without permission", 'warning')
+            return
         
         await client.edit_message(SENDER, event.message_id,
             f"Selected - Year {year_selected}\n\nPlease send the new schedule file in .xlsx format:",
@@ -786,10 +780,14 @@ def register_admin_handlers(client, admins1, admins2):
             # Remove the handler after first message and from tracking
             nonlocal active_file_handlers
             client.remove_event_handler(handle_schedule_file, events.NewMessage(from_users=SENDER))
-            
+
             if SENDER in active_file_handlers:
                 del active_file_handlers[SENDER]
             
+            #if file_event is a command, ignore
+            if file_event.text and file_event.text.startswith('/'):
+                return
+
             if file_event.media and hasattr(file_event.media, 'document') and file_event.file.name.endswith('.xlsx'):
                 await file_event.reply(f"File received for Year {year_selected}. Processing...")
                 # Download the file
@@ -820,6 +818,124 @@ def register_admin_handlers(client, admins1, admins2):
                     await client.send_message(SENDER, f"Error replacing schedule file: {str(e)}")
             else:
                 await file_event.reply("Please send a valid .xlsx file or type /update_schedule to start over.")
-        
     
+    #/contrib admin
+    @client.on(events.NewMessage(pattern=r'^/contrib$'))
+    async def show_contributors(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+
+        if format_id(SENDER) not in admins1:
+            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+            return
+        
+        try:
+            if contributors_df.empty:
+                await client.send_message(SENDER, "No contributors found.", parse_mode="HTML")
+                return
             
+            text = "Contributors:\n\n"
+            for _, row in contributors_df.iterrows():
+                user_id = str(row['user_id'])[1:]
+                orar = row['orar']
+                text += f"<a href='tg://user?id={user_id}'>{user_id}</a> - Orar: {orar}\n"
+            
+            await client.send_message(SENDER, text, parse_mode="HTML")
+            send_logs(f"{format_id(SENDER)} - /contrib", 'info')
+        except Exception as e:
+            send_logs(f"Error showing contributors: {str(e)}", 'error')
+            await client.send_message(SENDER, f"Erroare la afisare contribuitori", parse_mode="HTML")
+
+    #/edit_contrib admin
+    @client.on(events.NewMessage(pattern=r'^/edit_contrib$'))
+    async def edit_contributors(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+
+        if format_id(SENDER) != main_admin:
+            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+            return
+        
+        text = "Write the user ID(as int)"
+        await client.send_message(SENDER, text)
+        send_logs(f"{format_id(SENDER)} - /edit_contrib", 'info')
+
+        @client.on(events.NewMessage(from_users=SENDER))
+        async def handle_input(event):
+            user_input = event.text
+            # Skip if it's a command
+            if user_input.startswith('/'):
+                return
+            try:
+                remove_contrib = False
+                user_id = int(user_input)
+                user_str = "U" + str(user_id)
+                
+                contributors_df = pd.read_csv('contributors.csv')
+                buttons_contrib = [
+                    Button.inline("Add Contributor", data=f"add_contrib".encode()),
+                    Button.inline("Remove Contributor", data=f"remove_contrib".encode()),
+                    Button.inline("Cancel", data=b"cancel_contrib")
+                ]
+
+                buttons_year = [
+                    Button.inline("Year 1", data=f"set_year_1".encode()),
+                    Button.inline("Year 2", data=f"set_year_2".encode()),
+                    Button.inline("Year 3", data=f"set_year_3".encode()),
+                    Button.inline("Year 4", data=f"set_year_4".encode()),
+                    Button.inline("Cancel", data=b"cancel_year")
+                ]
+                buttons_year = button_grid(buttons_year, 2)
+                buttons_contrib = button_grid(buttons_contrib, 2)
+                await client.send_message(SENDER, f"Select action for user U{user_id}:", buttons=buttons_contrib)
+                client.remove_event_handler(handle_input, events.NewMessage(from_users=SENDER))
+
+                @client.on(events.CallbackQuery(pattern=lambda x: x in [b"add_contrib", b"remove_contrib", b"cancel_contrib"]))
+                async def contrib_action_callback(event):
+                    sender = await event.get_sender()
+                    SENDER = sender.id
+                    nonlocal remove_contrib
+                    remove_contrib = False
+                    if event.data == b"add_contrib":
+                        remove_contrib = False
+                        await event.answer("Select year to set contributor:")
+                        await client.edit_message(SENDER, event.message_id, f"Select year to set contributor U{user_id}:", buttons=buttons_year)
+                    elif event.data == b"remove_contrib":
+                        remove_contrib = True
+                        await event.answer("Select year to remove contributor:")
+                        await client.edit_message(SENDER, event.message_id, f"Select year to remove contributor U{user_id}:", buttons=buttons_year)
+                    elif event.data == b"cancel_contrib":
+                        await event.answer("Action cancelled.")
+                        await client.edit_message(SENDER, event.message_id, "Action cancelled.")
+                    
+                    client.remove_event_handler(contrib_action_callback, events.CallbackQuery())
+
+                @client.on(events.CallbackQuery(pattern=lambda x: x.startswith(b"set_year_")))
+                async def set_year_callback(event):
+                    nonlocal remove_contrib
+                    global contributors_df
+                    sender = await event.get_sender()
+                    SENDER = sender.id
+                    year_selected = int(event.data.decode('utf-8').split('_')[2])
+                    
+                    if remove_contrib:
+                        #remove contributor
+                        contributors_df = contributors_df[~((contributors_df['user_id'] == user_str) & (contributors_df['orar'] == year_selected))]
+                        contributors_df.to_csv('contributors.csv', index=False)
+                        await client.edit_message(SENDER, event.message_id, f"Contributor U{user_id} removed for Year {year_selected} successfully.")
+                        send_logs(f"Contributor U{user_id} removed for Year {year_selected} by {SENDER}", 'info')
+                    else:
+                        #add contributor
+                        if not ((contributors_df['user_id'] == user_str) & (contributors_df['orar'] == year_selected)).any():
+                            new_row = pd.DataFrame({'user_id': [user_str], 'orar': [year_selected]})
+                            contributors_df = pd.concat([contributors_df, new_row], ignore_index=True)
+                            contributors_df.to_csv('contributors.csv', index=False)
+                            await client.edit_message(SENDER, event.message_id, f"Contributor U{user_id} added for Year {year_selected} successfully.")
+                            send_logs(f"Contributor U{user_id} added for Year {year_selected} by {SENDER}", 'info')
+                        else:
+                            await client.edit_message(SENDER, event.message_id, f"Contributor U{user_id} already exists for Year {year_selected}.")
+                    client.remove_event_handler(set_year_callback, events.CallbackQuery())    
+            except ValueError:
+                await client.send_message(SENDER, "Invalid user ID! Please enter a valid integer.")
+            finally:
+                client.remove_event_handler(handle_input, events.NewMessage(from_users=SENDER))

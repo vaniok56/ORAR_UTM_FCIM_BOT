@@ -43,6 +43,7 @@ services:
       - ./logs:/logs
       - ./backups:/backups
       - ./schedules:/schedules
+      - ./contributors.csv:/contributors.csv
     environment:
       - MYSQL_HOST=mysql
       - TZ=Europe/Chisinau
