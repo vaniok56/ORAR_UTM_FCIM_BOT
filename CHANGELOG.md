@@ -2,6 +2,30 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.12.3] - 2026-01-27
+
+### TL;DR
+This release improves logging robustness, optimizes broadcast messaging by uploading media only once, enhances schedule version parsing from the website, and cleans up error reporting for notifications.
+
+### Updated
+- **Logging & Paths** ([`src/functions.py`](./src/functions.py)):
+    - Improved log directory resolution to correctly locate the project root relative to the source file.
+    - Added fallbacks for log directory creation and file handling to prevent crashes on permission errors.
+    - Updated `write_groups_to_json` to correctly resolve the path for `dynamic_group_lists.py` and skip writing if no groups are loaded.
+- **Schedule Parsing** ([`src/functions.py`](./src/functions.py)):
+    - Enhanced `get_online_schedule_versions` to more robustly locate the correct table row on the FCIM website (`Orar Semestrul de`).
+    - Updated filename regex to handle more variations in schedule filenames (e.g., lowercase roman numerals, extra dates).
+- **Admin Tools** ([`src/handlers/admin_handlers.py`](./src/handlers/admin_handlers.py)):
+    - Optimized `/message` broadcast: media is now uploaded once and reused for all recipients, significantly speeding up large broadcasts.
+    - Added progress logging and summary statistics (sent/errors) for broadcasts.
+    - Added error handling to `/debug_next` to prevent crashes.
+- **Notifications** ([`src/script.py`](./src/script.py)):
+    - Reduced log noise in `prepare_next_courses` by aggregating error counts instead of logging each failure individually.
+
+### Fixed
+- **Admin Handlers** ([`src/handlers/admin_handlers.py`](./src/handlers/admin_handlers.py)):
+    - Fixed an issue in `user_status_management` where cleaning up the waiting state could raise a KeyError.
+
 ## [0.12.2] - 2026-01-23
 
 ### TL;DR

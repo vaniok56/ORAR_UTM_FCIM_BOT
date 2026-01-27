@@ -284,13 +284,34 @@ def register_admin_handlers(client, admins1, admins2):
         if when != "Now":
             send_logs("waiting to send a message - " + str(scheduled - current_time), 'info')
             await asyncio.sleep((scheduled - current_time).total_seconds())
-            
-        for _, row in all_users.iterrows():
-            user = row['SENDER']
-            sender = int(user[1:])
+        
+        # upload to telegram once
+        uploaded_media = None
+        if media_path and os.path.exists(media_path):
             try:
-                if media_path and os.path.exists(media_path):
-                    # Send with media
+                uploaded_media = await client.upload_file(media_path)
+            except Exception as e:
+                send_logs(f"Error uploading media initially: {e}", 'error')
+
+        sent_count = 0
+        error_count = 0
+        total_users = len(all_users)
+        send_logs(f"Starting broadcast to {total_users} users...", 'info')
+
+        for i, (_, row) in enumerate(all_users.iterrows()):
+            user = row['SENDER']
+            try:
+                sender = int(user[1:])
+                if uploaded_media:
+                    # pre-uploaded media
+                    await client.send_file(
+                        sender,
+                        uploaded_media,
+                        caption=text,
+                        parse_mode="Markdown"
+                    )
+                elif media_path and os.path.exists(media_path):
+                    # fallback to local path
                     await client.send_file(
                         sender,
                         media_path,
@@ -300,13 +321,22 @@ def register_admin_handlers(client, admins1, admins2):
                 else:
                     # Send text only
                     await client.send_message(sender, text, parse_mode="Markdown")
-                send_logs("Send successful to " + user, 'info')
+                
+                sent_count += 1
             except Exception as e:
-                send_logs(f"Error sending message to {str(sender)}: {e}", 'error')
+                error_count += 1
+                send_logs(f"Error sending message to {user}: {e}", 'error')
+            
+            await asyncio.sleep(0.05) # max 20 messages per second
+            if (i + 1) % (total_users//10) == 0:
+                send_logs(f"Broadcast progress: {i + 1}/{total_users}", 'info')
+
+        send_logs(f"Broadcast finished. Sent to {sent_count}/{total_users} users (Errors: {error_count}).", 'info')
         
         # Clean up after sending
         if media_path and os.path.exists(media_path):
             os.remove(media_path)
+            text = ""
             send_logs(f"Removed temp file: {media_path}", 'info')
 
     #/debug_next admin
@@ -321,12 +351,15 @@ def register_admin_handlers(client, admins1, admins2):
         
         week_day = int((datetime.datetime.now(moldova_tz)).weekday())
         is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
-        for i in range(1, 8):
-            text = "Perechea urmatore: #" + str(i)
-            text += print_next_course(week_day, 'TI-241', is_even, i, subgrupa)
-            if text:
-                await client.send_message(SENDER, text, parse_mode="HTML")
-        send_logs(format_id(SENDER) + " - /debug_next", 'info')
+        try:
+            for i in range(1, 8):
+                text = "Perechea urmatore: #" + str(i)
+                text += print_next_course(week_day, 'TI-241', is_even, i, subgrupa)
+                if text:
+                    await client.send_message(SENDER, text, parse_mode="HTML")
+                send_logs(format_id(SENDER) + " - /debug_next", 'info')
+        except Exception as e:
+            send_logs(f"Error in /debug_next: {e}", 'error')
     
     #/backup admin
     @client.on(events.NewMessage(pattern=r'^/backup$'))
@@ -507,7 +540,8 @@ def register_admin_handlers(client, admins1, admins2):
             send_logs(f"Error in {action_type} for user {useridd}: {str(e)}", 'error')
         finally:
             # Remove user from waiting list
-            del user_action_waiting[SENDER]
+            if SENDER in user_action_waiting:
+                del user_action_waiting[SENDER]
             return
     
     #/use_backup admin

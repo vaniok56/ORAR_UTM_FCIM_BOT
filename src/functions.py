@@ -60,15 +60,27 @@ console_formatter = ColoredFormatter(
 
 # Create handlers
 date = datetime.datetime.now(time_zone).strftime("%d_%m_%y")
-log_dir = "logs"
+
 import os
+# Determine log directory (relative to this file, assuming src/functions.py -> root/logs)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+log_dir = os.path.join(project_root, "logs")
+
 # Ensure logs directory exists
-os.makedirs(log_dir, exist_ok=True)
+try:
+    os.makedirs(log_dir, exist_ok=True)
+except Exception as e:
+    print(f"Warning: Could not create/access absolute log path {log_dir}: {e}")
+    # Fallback to local logs dir
+    log_dir = "logs"
+    os.makedirs(log_dir, exist_ok=True)
+
 try:
     file_handler = logging.FileHandler(f"{log_dir}/orarbot_{date}.log")
     file_handler.setFormatter(file_formatter)
 except Exception as e:
-    print(f"Error creating log file: {e}")
+    print(f"Error creating log file in {log_dir}: {e}")
     # Fallback to a null handler if file can't be created
     file_handler = logging.NullHandler()
 
@@ -178,18 +190,39 @@ def get_online_schedule_versions():
             send_logs(f"Failed to fetch schedule page: {response.status_code}", 'error')
             return {}
         
-        # Match filenames like:
-        #  - Anul_II_Semestrul_III-12.pdf   (has numeric version)
-        #  - Anul_II_Semestrul_III.pdf       (no numeric version -> final)
-        pdf_pattern = r'Anul_([IVX]+)(?:_[0-9]{4})?_Semestrul_[IVX]+(?:-([0-9]+))?\.pdf'
-        pdf_pattern = re.compile(pdf_pattern, re.IGNORECASE)
-        matches = re.findall(pdf_pattern, response.text)
+        content = response.text
+        
+        # Find the row containing "Orar Semestrul de" (case insensitive)
+        # matches the first occurring row, which is usually the current semester
+        target_phrase = "Orar Semestrul de"
+        idx = content.lower().find(target_phrase.lower())
+        
+        matches = []
+        if idx != -1:
+             # Isolate the row content: search backwards for <tr and forwards for </tr>
+            start_tr = content.rfind("<tr", 0, idx)
+            end_tr = content.find("</tr>", idx)
+            
+            if start_tr != -1 and end_tr != -1:
+                row_content = content[start_tr:end_tr]
+                
+                # Match filenames like:
+                #  - Anul_II_Semestrul_III-12.pdf   (has numeric version)
+                #  - Anul_II_Semestrul_III.pdf       (no numeric version -> final)
+                #  - anul_iii_2025_semestrul_vi-2-9.pdf (weird versioning - take last number)
+                pdf_pattern = r'Anul_([IVX]+).*?_Semestrul_[IVX]+.*?(?:-([0-9]+))?\.pdf'
+                pdf_pattern = re.compile(pdf_pattern, re.IGNORECASE)
+                matches = re.findall(pdf_pattern, row_content)
+            else:
+                 send_logs("Found 'Orar Semestrul de' but could not isolate table row", 'warning')
+        else:
+             send_logs("Could not find 'Orar Semestrul de' in page content", 'warning')
 
         roman_to_num = {'I': 1, 'II': 2, 'III': 3, 'IV': 4}
         versions = {}
 
         for roman_year, version in matches:
-            year_num = roman_to_num.get(roman_year)
+            year_num = roman_to_num.get(roman_year.upper())
             if not year_num:
                 continue
             # If the second capture group (version) is empty, the file is final
@@ -213,10 +246,10 @@ def get_schedule_and_groups(cur_group):
         #send_logs(f"Cache hit get_schedule_and_groups for {cur_group}", 'info')
         return schedule_groups_cache[cur_group]
 
-    group_year = int(cur_group[-3:-1])
-    sch_nr = current_year - group_year
+    group_year = int(cur_group[-3:-1]) # from TI-241 to 24
+    sch_nr = current_year - group_year # from 24 to 2
     if sch_nr >= 1 and sch_nr <= 4:
-        result = globals()[f"schedule{sch_nr}"], globals()[f"groups{sch_nr}"]
+        result = globals()[f"schedule{sch_nr}"], globals()[f"groups{sch_nr}"] # schedule{year} and groups{year}
     else:
         raise ValueError("Invalid group number")
     #cache
@@ -341,7 +374,8 @@ def print_daily(schedule, is_even, col_gr, week_day, subgrupa):
     for i, course in enumerate(day_sch):
         if course is None or course == "":
             continue
-
+        
+        #subgrupe handling
         if subgrupa != 0:
             try:
                 if isinstance(course, float) and (np.isnan(course)):
@@ -502,9 +536,19 @@ def extract_specs(groups):
             specs[spec] = []
             spec_order.append(spec)
         specs[spec].append(group)
-    return specs, spec_order
+    return specs, spec_order # specs["TI"] = [TI-241, TI-242,...], spec_order = [TI, SI, FI,...]
 
 def write_groups_to_json():
+    # Check if we have groups loaded
+    total_groups = 0
+    for i in ["1", "2", "3", "4"]:
+        if f"groups{i}" in globals():
+            total_groups += len(globals()[f"groups{i}"])
+            
+    if total_groups == 0:
+        send_logs("No groups loaded. Skipping overwrite of dynamic_group_lists.py to preserve existing data.", 'warning')
+        return None, None, None
+
     years = {
         b"ye1": "  1  ",
         b"ye2": "  2  ",
@@ -539,37 +583,48 @@ def write_groups_to_json():
                 group_list[year_num][spec_key][key] = f"  {group}  "
     
     # Write to a Python file
-    with open("dynamic_group_lists.py", "w", encoding="utf-8") as f:
-        f.write("# This file was automatically generated\n\n")
-        f.write("years = {\n")
-        for k, v in years.items():
-            f.write(f"        {k}: \"{v}\",\n")
-        f.write("}\n\n")
-        
-        f.write("specialties = {\n")
-        for year_num, year_specs in specialties.items():
-            f.write(f"    \"{year_num}\":{{\n")
-            for k, v in year_specs.items():
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(current_dir, "dynamic_group_lists.py")
+    
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write("# This file was automatically generated\n\n")
+            
+            f.write("years = {\n")
+            for k, v in years.items():
                 f.write(f"        {k}: \"{v}\",\n")
-            f.write("    },\n\n")
-        f.write("}\n\n")
+            f.write("}\n\n")
+            
+            f.write("specialties = {\n")
+            for year_num, year_specs in specialties.items():
+                f.write(f"    \"{year_num}\":{{\n")
+                for k, v in year_specs.items():
+                    f.write(f"        {k}: \"{v}\",\n")
+                f.write("    },\n\n")
+            f.write("}\n\n")
+            
+            f.write("group_list = {\n")
+            for year_num, year_groups in group_list.items():
+                f.write(f"    \"{year_num}\":{{\n\n")
+                for spec_key, spec_groups in year_groups.items():
+                    f.write(f"        \"{spec_key}\": {{\n")
+                    for k, v in spec_groups.items():
+                        f.write(f"            b\"{k.decode().replace('-', '')}\": \"{v}\",\n")
+                    f.write("        },\n\n")
+                f.write("    },\n\n")
+            f.write("}\n")
+        send_logs(f"Dynamic group lists have been written to {file_path}", 'info')
+    except Exception as e:
+        send_logs(f"Error writing dynamic_group_lists.py: {e}", 'error')
         
-        f.write("group_list = {\n")
-        for year_num, year_groups in group_list.items():
-            f.write(f"    \"{year_num}\":{{\n\n")
-            for spec_key, spec_groups in year_groups.items():
-                f.write(f"        \"{spec_key}\": {{\n")
-                for k, v in spec_groups.items():
-                    f.write(f"            b\"{k.decode().replace('-', '')}\": \"{v}\",\n")
-                f.write("        },\n\n")
-            f.write("    },\n\n")
-        f.write("}\n")
-    send_logs("Dynamic group lists have been written to dynamic_group_lists.py", 'info')
     return years, specialties, group_list
 
 def process_schedule_file(file_path, schedule_number):
     try:
-        schedule = openpyxl.load_workbook(file_path, data_only=True)["Table 2"]
+        wb = openpyxl.load_workbook(file_path, data_only=True)
+        if not wb.sheetnames:
+            raise ValueError(f"No sheets found in workbook {file_path}")
+        schedule = wb[wb.sheetnames[0]]
         globals()[f"schedule{schedule_number}"] = schedule
         globals()[f"groups{schedule_number}"] = [schedule.cell(row=1,column=j).value for j in all_groups_range if schedule.cell(row=1,column=j).value]
         send_logs(f"Processed and loaded {file_path} as schedule{schedule_number}", 'info')

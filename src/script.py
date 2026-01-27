@@ -432,7 +432,7 @@ def prepare_next_courses(week_day, is_even, course_index):
                 (all_users['ban'] != 1) &
                 (all_users['noti'] == 1)
             ]
-        
+        error_count = 0
         for index, row in filtered_users.iterrows():
             try:
                 # Extract sender ID from the SENDER field
@@ -453,7 +453,10 @@ def prepare_next_courses(week_day, is_even, course_index):
                 if next_course:
                     next_courses[sender] = next_course
             except Exception as e:
-                send_logs(f"Error preparing next course to {sender}: {e}", 'error')
+                #send_logs(f"Error preparing next course to {sender}: {e}", 'error')
+                error_count += 1
+        if error_count > 0:
+            send_logs(f"Total errors preparing next courses: {error_count}", 'error')
         send_logs(f"Prepared next course to {len(next_courses)} users", "info")
     except Exception as e:
         send_logs(f"Error preparing next courses: {e}", 'error')
