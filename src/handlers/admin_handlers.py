@@ -100,13 +100,21 @@ def register_admin_handlers(client, admins1, admins2):
         users_with_groups_count = len(users_with_groups)
         users_with_notifications = len(db.get_all_users_with('noti', 'on'))
         users_with_subgroups = len(db.get_all_users_without('subgrupa', 0))
+
+        lang_ro = len(db.get_all_users_with('lang', 'ro'))
+        lang_ru = len(db.get_all_users_with('lang', 'ru'))
+        lang_en = len(db.get_all_users_with('lang', 'en'))
         
         text += f"📈 Summary:\n"
         text += f"  • Total users: {total_users}\n"
         text += f"  • Total users with groups: {users_with_groups_count}\n"
         text += f"  • Users with notifications: {users_with_notifications}\n"
         text += f"  • Users with selected sub-group: {users_with_subgroups}\n"
-            
+        text += f"🌐 Languages distribution:\n"
+        text += f"  • Romanian: {lang_ro}\n"
+        text += f"  • Russian: {lang_ru}\n"
+        text += f"  • English: {lang_en}\n"
+
         await client.send_message(SENDER, text, parse_mode="HTML")
         send_logs(format_id(SENDER) + " - /stats", "info")
 
