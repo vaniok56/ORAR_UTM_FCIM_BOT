@@ -550,7 +550,6 @@ def get_all_users_with(field, value):
                     df = pd.DataFrame(result)
                     return df
                 else:
-                    send_logs("No users found", "info")
                     return pd.DataFrame(columns=[
                         'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                         'admins', 'prem', 'subgrupa', 'gamble', 
@@ -596,7 +595,6 @@ def get_all_users_without(field, value):
                     df = pd.DataFrame(result)
                     return df
                 else:
-                    send_logs("No users found", "info")
                     return pd.DataFrame(columns=[
                         'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                         'admins', 'prem', 'subgrupa', 'gamble', 

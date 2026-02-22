@@ -2,6 +2,28 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.13.1] - 2026-02-22
+
+### TL;DR
+This release focuses on improving the Docker setup and documentation, fixing database backup automation, and cleaning up database logging.
+
+### Updated
+- **Docker Configuration** ([`docker-compose.yml`](./docker-compose.yml)):
+    - Removed the hardcoded `user: "1000:1000"` from the MySQL service to prevent permission issues on different host systems.
+    - Added `env_file: configs/mysql.env` to the MySQL service to properly load environment variables.
+    - Renamed the bot service and image from `orarbot` to `orar_bot` for consistency.
+    - Mounted the entire `./src` directory instead of just `./src/dynamic_group_lists.py`.
+- **Documentation** ([`RUN.md`](./RUN.md)):
+    - Completely overhauled the setup instructions.
+- **File Tracking** ([`.gitignore`](./.gitignore)):
+    - Updated the ignore rule for `dynamic_group_lists.py` to `/src/dynamic_group_lists.py`.
+
+### Fixed
+- **Database Backup Automation** ([`src/script.py`](./src/script.py)):
+    - Added a check in `backup_database()` if admins exist before attempting to send backup files.
+- **Database Logging** ([`src/handlers/db.py`](./src/handlers/db.py)):
+    - Removed unnecessary "No users found" info logs from `get_all_users_with` and `get_all_users_without`.
+
 ## [0.13.0] - 2026-02-22
 
 ### TL;DR

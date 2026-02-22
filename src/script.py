@@ -617,6 +617,10 @@ async def send_schedule_tomorrow():
 #backup BD automation
 async def backup_database():
     try:
+        if not admins1:
+            send_logs("No admins found for database backup", 'warning')
+            return
+            
         admin_id = int(admins1[0][1:])
 
         #wait

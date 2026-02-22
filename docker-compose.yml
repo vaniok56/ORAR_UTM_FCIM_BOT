@@ -4,7 +4,6 @@ services:
     image: mysql:8.0
     container_name: orar_mysql
     restart: always
-    user: "1000:1000"
     volumes:
       - ./mysql:/var/lib/mysql
       - ./init:/docker-entrypoint-initdb.d:ro
@@ -20,6 +19,7 @@ services:
       retries: 5
     networks:
       - orar_network
+    env_file: configs/mysql.env
     environment:
       - TZ=Europe/Chisinau
     logging:
@@ -29,17 +29,17 @@ services:
         max-file: "3"
         tag: "mysql"
 
-  orarbot:
+  orar_bot:
     build:
       context: .
       dockerfile: Dockerfile
-    image: orarbot:latest
+    image: orar_bot:latest
     container_name: orar_bot
     restart: always
     env_file: configs/mysql.env
     volumes:
       - ./sessions:/sessions
-      - ./src/dynamic_group_lists.py:/src/dynamic_group_lists.py
+      - ./src:/src
       - ./logs:/logs
       - ./backups:/backups
       - ./schedules:/schedules
