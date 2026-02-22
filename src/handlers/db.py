@@ -232,6 +232,9 @@ def update_user_field(sender_id, field, value):
                 if sender_id in user_data_cache:
                     del user_data_cache[sender_id]
                 
+                # Refresh cache
+                locate_field(sender_id, "SENDER")
+                
                 return True
         except mysql.connector.Error as db_err:
             if attempt < MAX_RETRIES - 1:
@@ -371,7 +374,7 @@ def locate_field(sender_id, field):
                     
                     # Return the specific field requested
                     field_value = all_user_data.get(field)
-                    send_logs(f"locate_field({sender_id}, {field}) returned: {field_value}", "debug")
+                    # send_logs(f"locate_field({sender_id}, {field}) returned: {field_value}", "debug")
                     return field_value
                 else:
                     send_logs(f"No data found for user {sender_id}", "warning")
