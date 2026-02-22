@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS orar_bot.settings (
     gamble INT DEFAULT 0,
     ban SMALLINT DEFAULT 0,
     ban_time VARCHAR(50) DEFAULT 'none',
-    last_cmd VARCHAR(50) DEFAULT 'none'
+    last_cmd VARCHAR(50) DEFAULT 'none',
+    lang VARCHAR(5) DEFAULT 'none'
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 ALTER TABLE settings
@@ -42,8 +43,8 @@ BEGIN
 
     SET user_id = LAST_INSERT_ID();
     
-    INSERT INTO settings (id)
-    VALUES (user_id)
+    INSERT INTO settings (id, lang)
+    VALUES (user_id, 'none')
     ON DUPLICATE KEY UPDATE id = id;
     
     SELECT user_id AS id;
@@ -65,7 +66,8 @@ CREATE PROCEDURE IF NOT EXISTS orar_bot.migrate(
     IN gamble INT,
     IN ban SMALLINT,
     IN ban_time VARCHAR(50),
-    IN last_cmd VARCHAR(50)
+    IN last_cmd VARCHAR(50),
+    IN lang VARCHAR(5)
 )
 BEGIN
     DECLARE noti_value SMALLINT;
@@ -82,6 +84,7 @@ BEGIN
     SET ban = IF(ban = '' OR ban IS NULL, 0, ban);
     SET ban_time = IF(ban_time = '' OR ban_time IS NULL, 'none', ban_time);
     SET last_cmd = IF(last_cmd = '' OR last_cmd IS NULL, 'none', last_cmd);
+    SET lang = IF(lang = '' OR lang IS NULL, 'none', lang);
 
     -- Insert user
     INSERT INTO users (SENDER, group_n, spec, year_s, subgrupa)
@@ -97,8 +100,8 @@ BEGIN
     SET @user_id = LAST_INSERT_ID();
 
     -- Insert settings for the user
-    INSERT INTO settings (id, noti, admins, prem, gamble, ban, ban_time, last_cmd)
-    VALUES (@user_id, noti_value, admins, prem, gamble, ban, ban_time, last_cmd)
+    INSERT INTO settings (id, noti, admins, prem, gamble, ban, ban_time, last_cmd, lang)
+    VALUES (@user_id, noti_value, admins, prem, gamble, ban, ban_time, last_cmd, lang)
     ON DUPLICATE KEY UPDATE
         noti = VALUES(noti),
         admins = VALUES(admins),
@@ -106,7 +109,8 @@ BEGIN
         gamble = VALUES(gamble),
         ban = VALUES(ban),
         ban_time = VALUES(ban_time),
-        last_cmd = VALUES(last_cmd);
+        last_cmd = VALUES(last_cmd),
+        lang = VALUES(lang);
 END //
 DELIMITER ;
 
@@ -179,7 +183,7 @@ DELIMITER //
 CREATE PROCEDURE IF NOT EXISTS orar_bot.get_all_users()
 BEGIN
     SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa,
-           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd
+           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd, s.lang
     FROM users u
     JOIN settings s ON u.id = s.id;
 END //
@@ -196,7 +200,7 @@ BEGIN
     SET @value_val = field_value;
     
     SET @query = CONCAT('SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa, ',
-                       's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd ',
+                       's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd, s.lang ',
                        'FROM users u JOIN settings s ON u.id = s.id WHERE ', @field_val, ' = ?');
     
     PREPARE stmt FROM @query;
@@ -216,7 +220,7 @@ BEGIN
     SET @value_val = field_value;
     
     SET @query = CONCAT('SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa, ',
-                       's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd ',
+                       's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd, s.lang ',
                        'FROM users u JOIN settings s ON u.id = s.id WHERE ', @field_val, ' != ?');
     
     PREPARE stmt FROM @query;
@@ -276,7 +280,7 @@ CREATE PROCEDURE IF NOT EXISTS orar_bot.select_all_user_data(
 )
 BEGIN
     SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa,
-           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd
+           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd, s.lang
     FROM users u
     JOIN settings s ON u.id = s.id
     WHERE u.SENDER = sender COLLATE utf8mb4_unicode_ci;

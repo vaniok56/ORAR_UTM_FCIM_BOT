@@ -146,6 +146,9 @@ def send_logs(message, type):
     else: 
         logging.info(message)
 
+# Moved down because of circular import with localization.py
+from localization import get_text, get_week_days, DEFAULT_LANG
+
 #open the excel files
 for i in range(1, 5):
     try:
@@ -302,15 +305,15 @@ def button_grid(buttons, butoane_rand):
     return grid
 
 #get daily schedule
-def print_day(week_day, cur_group, is_even, subgrupa):
+def print_day(week_day, cur_group, is_even, subgrupa, lang=DEFAULT_LANG):
     schedule, groups = get_schedule_and_groups(cur_group)[0:2]
     col_gr = groups.index(cur_group) + schedule_column_start  # column with the selected group
-    return print_daily(schedule, is_even, col_gr, week_day, subgrupa)
+    return print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang)
      
 #extract daily schedule
-def print_daily(schedule, is_even, col_gr, week_day, subgrupa):
-    #cache key
-    cache_key = (id(schedule), is_even, col_gr, week_day, subgrupa)
+def print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang=DEFAULT_LANG):
+    #cache key — includes lang for per-language output
+    cache_key = (id(schedule), is_even, col_gr, week_day, subgrupa, lang)
     
     #find daily schedule in cache
     if cache_key in daily_schedule_cache:
@@ -329,7 +332,9 @@ def print_daily(schedule, is_even, col_gr, week_day, subgrupa):
 
     day_sch = []
     seen = set() 
-    day_name = week_days[week_day]
+    # Use Romanian weekday names for sheet lookup (sheets are always in Romanian)
+    ro_week_days = get_week_days("ro")
+    day_name = ro_week_days[week_day]
     
     #find row start in cache
     schedule_day_key = (id(schedule), day_name, is_even)
@@ -399,34 +404,38 @@ def print_daily(schedule, is_even, col_gr, week_day, subgrupa):
                     course = ""
         
         if course:
-            processed_courses.append(f"\nPerechea: #{i + 1}\n<b>{course}</b>\nOra : {hours[i][0].replace('.', ':')}\n")
+            try :
+                processed_courses.append(get_text(lang, "pair_format", index=i + 1, course=course, time=hours[i][0].replace('.', ':')))
+            except Exception:
+                pass
             
     # Join the properly formatted strings
     result = "".join(processed_courses)
     daily_schedule_cache[cache_key] = result
     return result
 
-def print_next_course(week_day, cur_group, is_even, course_index, subgrupa):
-    cache_key = (week_day, cur_group, is_even, course_index, subgrupa)
+def print_next_course(week_day, cur_group, is_even, course_index, subgrupa, lang=DEFAULT_LANG):
+    cache_key = (week_day, cur_group, is_even, course_index, subgrupa, lang)
     if cache_key in next_course_cache:
         #send_logs(f"Cache hit next_course for {cache_key}", 'info')
         return next_course_cache[cache_key]
     
     #get daily schedule
-    daily = print_day(week_day, cur_group, is_even, subgrupa)
+    daily = print_day(week_day, cur_group, is_even, subgrupa, lang)
     if not daily:
         next_course_cache[cache_key] = ""
         return ""
     
-    courses = daily.split("Perechea: #")
+    courses = daily.split(get_text(lang, "pair_label", index="").rstrip())
     for i in range(1, len(courses)):
         if int(courses[i][0]) != course_index:
             continue
         course = courses[i]
-        parts = course.split("Ora : ")
+        parts = course.split(get_text(lang, "hour_label", time="").rstrip())
         course_name = parts[0][1:]  # Skip the index digit
         course_time = parts[1]
-        result = f"<b>{course_name}</b>Ora: {course_time}"
+        hour_word = get_text(lang, "hour_label", time="").rstrip()
+        result = f"<b>{course_name}</b>{hour_word}{course_time}"
         next_course_cache[cache_key] = result
         return result
     
@@ -434,21 +443,22 @@ def print_next_course(week_day, cur_group, is_even, course_index, subgrupa):
     return ""
 
 #get weekly schedule
-def print_sapt(is_even, cur_group, subgrupa):
-    cache_key = (cur_group, is_even, subgrupa)
+def print_sapt(is_even, cur_group, subgrupa, lang=DEFAULT_LANG):
+    cache_key = (cur_group, is_even, subgrupa, lang)
     if cache_key in weekly_schedule_cache:
         #send_logs(f"Cache hit print_sapt for {cache_key}", 'info')
         return weekly_schedule_cache[cache_key]
     schedule, groups = get_schedule_and_groups(cur_group)[0:2]
     col_gr = groups.index(cur_group) + 3 #column with the selected group
 
+    lang_week_days = get_week_days(lang)
     week_sch = ""
     for j in range(1, 7):
-        daily = print_daily(schedule, is_even, col_gr, j-1, subgrupa)
+        daily = print_daily(schedule, is_even, col_gr, j-1, subgrupa, lang)
         #do not print an empty weekday
         if str(daily) == "":
             continue
-        week_sch += "\n\n&emsp;&emsp;&emsp;&emsp;<b>" + week_days[j-1] + ":</b>" + "\n" + daily
+        week_sch += "\n\n&emsp;&emsp;&emsp;&emsp;<b>" + lang_week_days[j-1] + ":</b>" + "\n" + daily
     weekly_schedule_cache[cache_key] = week_sch
     return week_sch
 

@@ -15,6 +15,9 @@ from dynamic_group_lists import years, group_list, specialties
 import handlers.admin_handlers as admin_handlers
 import handlers.group_handlers as group_handlers
 
+from localization import load_locales, get_text, get_user_lang, get_week_days, SUPPORTED_LANGS, DEFAULT_LANG
+load_locales()
+
 import pandas as pd
 import numpy as np
 import asyncio
@@ -30,18 +33,20 @@ BOT_TOKEN = config.get('default','BOT_TOKEN') # get the bot token
 # Create the client and the session called session_master.
 client = TelegramClient('sessions/session_master', api_id, api_hash)
 
-#keyboard buttons
-bot_kb = [
-        Button.text('Orarul de azi 📅', resize=True),
-        Button.text('Orarul de maine 📅', resize=True),
-        Button.text('Săptămâna curentă 🗓️', resize=True),
-        Button.text('Săptămâna viitoare 🗓️', resize=True),
+#keyboard button factories (per-language)
+def build_bot_kb(lang):
+    return [
+        Button.text(get_text(lang, 'btn_today'), resize=True),
+        Button.text(get_text(lang, 'btn_tomorrow'), resize=True),
+        Button.text(get_text(lang, 'btn_current_week'), resize=True),
+        Button.text(get_text(lang, 'btn_next_week'), resize=True),
         types.KeyboardButtonSimpleWebView("SIMU📚", "https://simu.utm.md/students/"),
     ]
 
-start_kb = [
-    Button.text('Alege grupa 🎓', resize=True),
-]
+def build_start_kb(lang):
+    return [
+        Button.text(get_text(lang, 'btn_choose_group'), resize=True),
+    ]
 
 if not db.initialize_mysql_connection():
     send_logs("Failed to establish MySQL connection", 'critical')
@@ -58,9 +63,50 @@ noti_send = 0
 
 latest_version, latest_date = get_version()
 
-#register_games_handlers(client, bot_kb)
 admin_handlers.register_admin_handlers(client, admins1, admins2)
 group_handlers.register_group_handlers(client, years, specialties, group_list)
+
+# Helper to get user lang
+def _get_lang(SENDER):
+    return get_user_lang(format_id(SENDER))
+
+# Helper to get user id and lang
+async def _get_sender_id_and_lang(event):
+    sender = await event.get_sender()
+    SENDER = sender.id
+    lang = _get_lang(SENDER)
+    return SENDER, lang
+
+#/language
+@client.on(events.NewMessage(pattern='/language'))
+async def languagee(event):
+    SENDER, lang = await _get_sender_id_and_lang(event)
+    if is_rate_limited(SENDER):
+        send_logs(f"Rate limited user: {SENDER}", 'warning')
+        return
+    
+    text = "🌐 Choose language / Alege limba / Выберите язык:"
+    lang_buttons = [
+        Button.inline(label, data=f"lang_{code}".encode())
+        for code, label in SUPPORTED_LANGS.items()
+    ]
+    button_rows = button_grid(lang_buttons, 3)
+    await client.send_message(SENDER, text, buttons=button_rows)
+    send_logs(format_id(SENDER) + " - /language", 'info')
+
+#language selection callback
+@client.on(events.CallbackQuery(pattern=lambda x: x.startswith(b"lang_")))
+async def lang_callback(event):
+    SENDER, lang = await _get_sender_id_and_lang(event)
+    chosen_lang = event.data.decode().replace("lang_", "")
+    if chosen_lang not in SUPPORTED_LANGS:
+        return
+    db.update_user_field(format_id(SENDER), 'lang', chosen_lang)
+
+    text = get_text(chosen_lang, "lang_changed")
+    await event.answer(text)
+    await client.edit_message(SENDER, event.message_id, text)
+    send_logs(format_id(SENDER) + f" - lang set to {chosen_lang}", 'info')
 
 #/start
 @client.on(events.NewMessage(pattern="/start")) 
@@ -71,52 +117,57 @@ async def startt(event):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
     first_name = sender.first_name
-    text = f"Salut {first_name}👋\nÎti prezint botul pentru orarul UTM FCIM!\n\n"
-    text += "⚠️ NOTĂ: Momentan sunt disponibile doar orarele pentru anul 1 și 2!\n\n"
-    text += "Pentru a începe:\n"
-    text += "1️⃣ Selectează grupa ta\n"
-    text += "2️⃣ Opțional, alege subgrupa\n\n"
-    text += "📋 Vezi toate comenzile disponibile cu /help\n"
-    text += "📞 Pentru suport folosește /contacts\n\n"
-    text += "⚠️ ATENȚIE! __**Orarul poate să nu fie actualizat**__, nu răspund pentru absențe."
-    
-    buttons_in_row = 2
-    button_rows = button_grid(start_kb, buttons_in_row)
 
     #add the user to users
     if not db.is_user_exists(format_id(SENDER)):
         result = db.add_new_user(format_id(SENDER))
         if result:
             send_logs("New user! - " + format_id(SENDER), 'info')
-    await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows, link_preview=False)
-    
-    #select_group_button = [Button.inline("Selectează grupa", data=b"select_group")]
-    #await client.send_message(SENDER, "Pentru a continua, selectează grupa:", buttons=select_group_button)
+
+    text = "🌐 Choose language / Alege limba / Выберите язык:"
+    lang_buttons = [
+        Button.inline(label, data=f"lang_{code}".encode())
+        for code, label in SUPPORTED_LANGS.items()
+    ]
+    button_rows = button_grid(lang_buttons, 3)
+    await client.send_message(SENDER, text, buttons=button_rows)
+
+    @client.on(events.CallbackQuery(pattern=lambda x: x.startswith(b"lang_")))
+    async def start_lang_callback(event):
+        lang = event.data.decode().replace("lang_", "")
+        text = get_text(lang, "start_message", first_name=first_name)
+        
+        buttons_in_row = 2
+        button_rows = button_grid(build_start_kb(lang), buttons_in_row)
+
+        await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows, link_preview=False)
+
+        # Kill this handler so no repeated start messages
+        event.client.remove_event_handler(start_lang_callback)
+        return
 
 #notif button handle
 @client.on(events.CallbackQuery(pattern = lambda x: x in [b"noti_on", b"noti_off"]))
 async def notiff(event):
-    sender = await event.get_sender()
-    SENDER = sender.id
+    SENDER, lang = await _get_sender_id_and_lang(event)
     text = ""
     if event.data == b"noti_off":
-        text = "Notificarile sunt stinse"
+        text = get_text(lang, "notif_off")
         db.update_user_field(format_id(SENDER), 'noti', 0)
-        await event.answer('Notificarile sunt stinse')
+        await event.answer(get_text(lang, "notif_off"))
         await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML")
         send_logs(format_id(SENDER) + " - Notif off", 'info')
     elif event.data==b"noti_on":
-        text = "Notificarile sunt pornite"
+        text = get_text(lang, "notif_on")
         db.update_user_field(format_id(SENDER), 'noti', 1)
-        await event.answer('Notificarile sunt pornite')
+        await event.answer(get_text(lang, "notif_on"))
         await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML")
         send_logs(format_id(SENDER) + " - Notif on", 'info')
 
 #/help
 @client.on(events.NewMessage(pattern='/help')) 
 async def helpp(event):
-    sender = await event.get_sender()
-    SENDER = sender.id
+    SENDER, lang = await _get_sender_id_and_lang(event)
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
@@ -124,29 +175,28 @@ async def helpp(event):
             peer=SENDER,
             action=types.SendMessageTypingAction()
         ))
-    text = "/contacts - contacte\n"
-    text += "/azi - orarul de azi\n"
-    text += "/maine - orarul de maine\n"
-    text += "/ore - orarul orelor(perechi + pauze)\n"
-    text += "/alege_grupa - alegerea grupei\n"
-    text += "/alege_subgrupa - alegerea subgrupei\n"
-    text += "/sapt_curenta - orar pe saptamana curenta\n"
-    text += "/sapt_viitoare - orar pe saptamana viitoare\n"
-    text += "/notifon - notificari on\n"
-    text += "/notifoff - notificari off\n"
-    text += "/games - jocuri\n"
-    text += "/donatii - donatii\n"
-    text += "/version - versiunea\n"
-    text += "/admin_help - admin commands\n"
-    button_rows = button_grid(bot_kb, 2)
+    text = get_text(lang, "help_contacts") + "\n"
+    text += get_text(lang, "help_today") + "\n"
+    text += get_text(lang, "help_tomorrow") + "\n"
+    text += get_text(lang, "help_hours") + "\n"
+    text += get_text(lang, "help_choose_group") + "\n"
+    text += get_text(lang, "help_choose_subgroup") + "\n"
+    text += get_text(lang, "help_current_week") + "\n"
+    text += get_text(lang, "help_next_week") + "\n"
+    text += get_text(lang, "help_notif_on") + "\n"
+    text += get_text(lang, "help_notif_off") + "\n"
+    text += get_text(lang, "help_donations") + "\n"
+    text += get_text(lang, "help_version") + "\n"
+    text += get_text(lang, "help_admin") + "\n"
+    text += get_text(lang, "help_language") + "\n"
+    button_rows = button_grid(build_bot_kb(lang), 2)
     await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
     send_logs(format_id(SENDER) + " - /help", 'info')
 
 #/version
 @client.on(events.NewMessage(pattern='/version'))
 async def versionn(event):
-    sender = await event.get_sender()
-    SENDER = sender.id
+    SENDER, lang = await _get_sender_id_and_lang(event)
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
@@ -156,7 +206,7 @@ async def versionn(event):
         ))
     local_schedule_versions = get_local_schedule_versions()
     online_schedule_versions = get_online_schedule_versions()
-    text = "Schedule Info (Local / Website):\n"
+    text = get_text(lang, "version_schedule_info")
     for year in local_schedule_versions.keys():
         local_ver = local_schedule_versions.get(year, 0)
         online_ver = online_schedule_versions.get(year, 0)
@@ -171,21 +221,18 @@ async def versionn(event):
         if local_ver != 0 and local_ver == online_ver:
             match = True
 
-        text += f"Year {year}: {local_display} / {online_display}" + (" ✅" if match else " ❌") + "\n"
-    text += "\n"
-    text += "Bot Info:\n"
-    text += f"Version: {latest_version}\n"
-    text += f"Last update: {latest_date}\n"
-    text += "Github: [ORAR_UTM_FCIM_BOT](https://github.com/vaniok56/ORAR_UTM_FCIM_BOT)\n"
-    button_rows = button_grid(bot_kb, 2)
-    await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows, link_preview=False)
+        text += get_text(lang, "version_year", year=year, local=local_display, online=online_display) + (" ✅" if match else " ❌") + "\n"
+    text += get_text(lang, "version_bot_info")
+    text += get_text(lang, "version_label", version=latest_version)
+    text += get_text(lang, "version_date", date=latest_date)
+    text += get_text(lang, "version_github")
+    await client.send_message(SENDER, text, parse_mode="Markdown", link_preview=False)
     send_logs(format_id(SENDER) + " - /version", 'info')
 
 #/contacts
 @client.on(events.NewMessage(pattern='/contacts')) 
 async def contactt(event):
-    sender = await event.get_sender()
-    SENDER = sender.id
+    SENDER, lang = await _get_sender_id_and_lang(event)
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
@@ -193,24 +240,14 @@ async def contactt(event):
             peer=SENDER,
             action=types.SendMessageTypingAction()
         ))
-    text = (
-        "Salut! Acest bot a fost creat pentru a simplifica accesul la orarul UTM FCIM. "
-        "Botul este în continuă dezvoltare și îmbunătățire.\n\n"
-        "⚠️ __**Orarul poate să nu fie actualizat**__, nu răspund pentru absențe.\n\n"
-        "Pentru întrebări și sugestii:\n"
-        "👤 Telegram: [@vaniok56](https://t.me/vaniok56)\n"
-        "💻 Github: [ORAR_UTM_FCIM_BOT](https://github.com/vaniok56/ORAR_UTM_FCIM_BOT)\n"
-    )
-    
-    button_rows = button_grid(bot_kb, 2)
-    await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows)
+    text = get_text(lang, "contacts_text")
+    await client.send_message(SENDER, text, parse_mode="Markdown")
     send_logs(f"{format_id(SENDER)} - /contacts", 'info')
 
 #/notifon
 @client.on(events.NewMessage(pattern='/notifon'))
 async def notifonn(event):
-    sender = await event.get_sender()
-    SENDER = sender.id
+    SENDER, lang = await _get_sender_id_and_lang(event)
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
@@ -218,18 +255,15 @@ async def notifonn(event):
             peer=SENDER,
             action=types.SendMessageTypingAction()
         ))
-    text = "Notificarile sunt pornite!\n"
-    button_rows = button_grid(bot_kb, 2)
-    await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows)
-    #noti is on
+    text = get_text(lang, "notif_on")
+    await client.send_message(SENDER, text, parse_mode="Markdown")
     db.update_user_field(format_id(SENDER), 'noti', 1)
     send_logs(format_id(SENDER) + " - /notifon", 'info')
 
 #/notifoff
 @client.on(events.NewMessage(pattern='/notifoff'))
 async def notifofff(event):
-    sender = await event.get_sender()
-    SENDER = sender.id
+    SENDER, lang = await _get_sender_id_and_lang(event)
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
@@ -237,18 +271,15 @@ async def notifofff(event):
             peer=SENDER,
             action=types.SendMessageTypingAction()
         ))
-    text = "Notificarile sunt stinse!\n"
-    button_rows = button_grid(bot_kb, 2)
-    await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows)
-    #noti is on
+    text = get_text(lang, "notif_off")
+    await client.send_message(SENDER, text, parse_mode="Markdown")
     db.update_user_field(format_id(SENDER), 'noti', 0)
     send_logs(format_id(SENDER) + " - /notifoff", 'info')
 
 #/ore
 @client.on(events.NewMessage(pattern='/ore|Orele ⏰')) 
 async def oree(event):
-    sender = await event.get_sender()
-    SENDER = sender.id
+    SENDER, lang = await _get_sender_id_and_lang(event)
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
@@ -256,24 +287,22 @@ async def oree(event):
             peer=SENDER,
             action=types.SendMessageTypingAction()
         ))
-    text = "Graficul de ore:\n"
-    for i in range(0, 7):
-        text += "\nPerechea: #" + str(i+1) + "\nOra : " + ''.join(hours[i]) + "\n"
+    text = get_text(lang, "hours_title")
+    for i in range(len(hours)):
+        text += "\n" + get_text(lang, "pair_label", index=i+1) + "\n" + get_text(lang, "hour_label", time=''.join(hours[i])) + "\n"
         if i == 2 :
-            text += "Pauza : " + "30 min\n"
+            text += get_text(lang, "break_label", duration=get_text(lang, "break_30")) + "\n"
         else:
-            text += "Pauza : " + "15 min\n"
-    button_rows = button_grid(bot_kb, 2)
-    await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
+            text += get_text(lang, "break_label", duration=get_text(lang, "break_15")) + "\n"
+    await client.send_message(SENDER, text, parse_mode="HTML")
     send_logs(format_id(SENDER) + " - /hours", 'info')
 
 #/maine
-@client.on(events.NewMessage(pattern='/maine|Orarul de maine 📅')) 
+@client.on(events.NewMessage(pattern='/maine|Orarul de maine 📅|Tomorrow\'s schedule 📅|Расписание на завтра 📅')) 
 async def mainee(event):
     global cur_group
     week_day = int((datetime.datetime.now(moldova_tz) + datetime.timedelta(days=1)).weekday()) #weekday tomorrow(0-6)
-    sender = await event.get_sender()
-    SENDER = sender.id
+    SENDER, lang = await _get_sender_id_and_lang(event)
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
@@ -281,6 +310,7 @@ async def mainee(event):
             peer=SENDER,
             action=types.SendMessageTypingAction()
         ))
+    lang_week_days = get_week_days(lang)
     subgrupa = db.locate_field(format_id(SENDER), 'subgrupa')
     try:
         #get the user's selected group
@@ -291,24 +321,22 @@ async def mainee(event):
         else: 
             temp_is_even = (datetime.datetime.now(moldova_tz) + datetime.timedelta(days=1)).isocalendar().week % 2
             #send the schedule
-            day_sch = print_day(week_day, cur_group, temp_is_even, subgrupa)
+            day_sch = print_day(week_day, cur_group, temp_is_even, subgrupa, lang)
             if day_sch != "":
-                text = "\n\nGrupa - " + cur_group + "\nOrarul de maine(" + week_days[week_day] +"):\n" + day_sch
+                text = "\n\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_tomorrow", day=lang_week_days[week_day]) + day_sch
             else: 
-                text = "\nGrupa - " + cur_group + "\nNu ai perechi maine(" + week_days[week_day] +")"
-            button_rows = button_grid(bot_kb, 2)
-            await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
+                text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_no_pairs_tomorrow", day=lang_week_days[week_day])
+            await client.send_message(SENDER, text, parse_mode="HTML")
             send_logs(format_id(SENDER) + " - /maine", 'info')
     except Exception as e:
         send_logs(f"Error sending sch tomorr to {str(SENDER)}: {e}", 'error')
-        await client.send_message(SENDER, "A intervenit o eroare, posibil nu ai ales grupa /alege_grupa", parse_mode="HTML")
+        await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML")
     
 #/azi
-@client.on(events.NewMessage(pattern='/azi|Orarul de azi 📅')) 
+@client.on(events.NewMessage(pattern='/azi|Orarul de azi 📅|Today\'s schedule 📅|Расписание на сегодня 📅')) 
 async def azii(event):
     global cur_group
-    sender = await event.get_sender()
-    SENDER = sender.id
+    SENDER, lang = await _get_sender_id_and_lang(event)
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
@@ -316,33 +344,32 @@ async def azii(event):
             peer=SENDER,
             action=types.SendMessageTypingAction()
         ))
+    lang_week_days = get_week_days(lang)
     subgrupa = db.locate_field(format_id(SENDER), 'subgrupa')
     try:
         csv_gr = db.locate_field(format_id(SENDER), 'group_n')
         cur_group = csv_gr
         if cur_group == "":
-            raise ValueError(str(sender) + 'no gr')
+            raise ValueError(str(SENDER) + 'no gr')
         else: 
             week_day = int((datetime.datetime.now(moldova_tz)).weekday()) #weekday today(0-6)
             is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
-            day_sch = print_day(week_day, cur_group, is_even, subgrupa)
+            day_sch = print_day(week_day, cur_group, is_even, subgrupa, lang)
             if day_sch != "":
-                text = "\n\nGrupa - " + cur_group + "\nOrarul de azi(" + week_days[week_day] +"):\n" + day_sch
+                text = "\n\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_today", day=lang_week_days[week_day]) + day_sch
             else: 
-                text = "\nGrupa - " + cur_group + "\nNu ai perechi azi(" + week_days[week_day] +")"
-            button_rows = button_grid(bot_kb, 2)
-            await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
+                text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_no_pairs_today", day=lang_week_days[week_day])
+            await client.send_message(SENDER, text, parse_mode="HTML")
             send_logs(format_id(SENDER) + " - /azi", 'info')
     except Exception as e:
         send_logs(f"Error sending sch today to {str(SENDER)}: {e}", 'error')
-        await client.send_message(SENDER, "A intervenit o eroare, posibil nu ai ales grupa /alege_grupa", parse_mode="HTML")
+        await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML")
 
 #/sapt_cur
-@client.on(events.NewMessage(pattern='/sapt_curenta|Săptămâna curentă 🗓️')) 
+@client.on(events.NewMessage(pattern='/sapt_curenta|Săptămâna curentă 🗓️|Current week 🗓️|Текущая неделя 🗓️')) 
 async def sapt_curr(event):
     global cur_group, is_even
-    sender = await event.get_sender()
-    SENDER = sender.id
+    SENDER, lang = await _get_sender_id_and_lang(event)
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
@@ -355,23 +382,21 @@ async def sapt_curr(event):
         csv_gr = db.locate_field(format_id(SENDER), 'group_n')
         cur_group = csv_gr
         if cur_group == "":
-            raise ValueError(str(sender) + 'no gr')
+            raise ValueError(str(SENDER) + 'no gr')
         else: 
             is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
-            text = "\nGrupa - " + cur_group + "\nOrarul pe saptamana aceasta:" + print_sapt(is_even, cur_group, subgrupa)
-            button_rows = button_grid(bot_kb, 2)
-            await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
+            text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_current_week") + print_sapt(is_even, cur_group, subgrupa, lang)
+            await client.send_message(SENDER, text, parse_mode="HTML")
             send_logs(format_id(SENDER) + " - /sapt_curenta", 'info')
     except Exception as e:
         send_logs(f"Error sending curr week to {str(SENDER)}: {e}", 'error')
-        await client.send_message(SENDER, "A intervenit o eroare, posibil nu ai ales grupa /alege_grupa", parse_mode="HTML")
+        await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML")
 
 #/sapt_viit
-@client.on(events.NewMessage(pattern='/sapt_viitoare|Săptămâna viitoare 🗓️')) 
+@client.on(events.NewMessage(pattern='/sapt_viitoare|Săptămâna viitoare 🗓️|Next week 🗓️|Следующая неделя 🗓️')) 
 async def sapt_viit(event):
     global cur_group, is_even
-    sender = await event.get_sender()
-    SENDER = sender.id
+    SENDER, lang = await _get_sender_id_and_lang(event)
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
@@ -384,23 +409,21 @@ async def sapt_viit(event):
         csv_gr = db.locate_field(format_id(SENDER), 'group_n')
         cur_group = csv_gr
         if cur_group == "":
-            raise ValueError(str(sender) + 'no gr')
+            raise ValueError(str(SENDER) + 'no gr')
         else: 
             is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
             is_even = not is_even
-            text = "\nGrupa - " + cur_group + "\nOrarul pe saptamana viitoare:" + print_sapt(is_even, cur_group, subgrupa)
-            button_rows = button_grid(bot_kb, 2)
-            await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
+            text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_next_week") + print_sapt(is_even, cur_group, subgrupa, lang)
+            await client.send_message(SENDER, text, parse_mode="HTML")
             send_logs(format_id(SENDER) + " - /sapt_viitoare", 'info')
     except Exception as e:
         send_logs(f"Error sending next week to {str(SENDER)}: {e}", 'error')
-        await client.send_message(SENDER, "A intervenit o eroare, posibil nu ai ales grupa /alege_grupa", parse_mode="HTML")
+        await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML")
 
 #/donatii
 @client.on(events.NewMessage(pattern='/donatii')) 
 async def donatiii(event):
-    sender = await event.get_sender()
-    SENDER = sender.id
+    SENDER, lang = await _get_sender_id_and_lang(event)
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
@@ -408,17 +431,19 @@ async def donatiii(event):
             peer=SENDER,
             action=types.SendMessageTypingAction()
         ))
-    text = "Buy me a coffee ☕️\n\n"
-    text += "      Destinatorul:\n"
-    text += "`Ivan Proscurchin`\n\n"
-    text += "       **MIA**\n"
-    text += "`79273147`\n\n"
-    text += "       **MICB**\n"
-    text += "`5574 8402 5994 1411`\n\n"
-    text += "       **MAIB**\n"
-    text += "`5397 0200 3403 5186`\n"
+    text = get_text(lang, "donation_title")
+    text += get_text(lang, "donation_name")
+    text += get_text(lang, "donation_mia")
+    text += get_text(lang, "donation_micb")
+    text += get_text(lang, "donation_maib")
 
     await client.send_message(SENDER, text, parse_mode="Markdown")
+
+    buttons = [
+        [Button.url("☕️ Buy me a coffee", "https://www.buymeacoffee.com/orar_utm")]
+    ]
+    await client.send_message(SENDER, get_text(lang, "donation_online"), buttons=buttons)
+
     send_logs(format_id(SENDER) + " - /donatii", 'info')
 
 def prepare_next_courses(week_day, is_even, course_index):
@@ -442,16 +467,19 @@ def prepare_next_courses(week_day, is_even, course_index):
                 else:
                     sender = int(sender_id)
                 
-                # Get group and subgroup
+                # Get group, subgroup and language
                 csv_gr = row['group_n']
                 subgrupa = row['subgrupa']
+                user_lang = row.get('lang', DEFAULT_LANG)
+                if not user_lang or user_lang not in SUPPORTED_LANGS:
+                    user_lang = DEFAULT_LANG
                 
                 if pd.isna(csv_gr) or csv_gr == '' or csv_gr == 'none':
                     continue
                 
-                next_course = print_next_course(week_day, csv_gr, is_even, course_index, subgrupa)
+                next_course = print_next_course(week_day, csv_gr, is_even, course_index, subgrupa, user_lang)
                 if next_course:
-                    next_courses[sender] = next_course
+                    next_courses[sender] = (next_course, user_lang)
             except Exception as e:
                 #send_logs(f"Error preparing next course to {sender}: {e}", 'error')
                 error_count += 1
@@ -464,7 +492,7 @@ def prepare_next_courses(week_day, is_even, course_index):
     
     return next_courses
 
-async def send_notification(sender, next_course, wait_time):
+async def send_notification(sender, next_course_data, wait_time):
     global noti_send
     await asyncio.sleep(wait_time)
     
@@ -473,7 +501,9 @@ async def send_notification(sender, next_course, wait_time):
         return
     
     try:
-        await client.send_message(sender, f"\nPerechea urmatoare:{next_course}", parse_mode="HTML")
+        next_course, user_lang = next_course_data
+        text = get_text(user_lang, "next_pair", course=next_course)
+        await client.send_message(sender, text, parse_mode="HTML")
         #send_logs(f"Sent next course to {sender}", 'info')
         noti_send += 1
         return True
@@ -561,14 +591,18 @@ async def send_schedule_tomorrow():
                     sender = int(row['SENDER'][1:])
                     csv_gr = row['group_n']
                     subgrupa = row['subgrupa']
+                    user_lang = row.get('lang', DEFAULT_LANG)
+                    if not user_lang or user_lang not in SUPPORTED_LANGS:
+                        user_lang = DEFAULT_LANG
+                    lang_week_days = get_week_days(user_lang)
                 
                     if pd.isna(csv_gr) or csv_gr == '' or csv_gr == 'none':
                         continue
                         
                     # Get schedule and send if not empty
-                    day_sch = print_day(week_day, csv_gr, temp_is_even, subgrupa)
+                    day_sch = print_day(week_day, csv_gr, temp_is_even, subgrupa, user_lang)
                     if day_sch:
-                        text = f"\nOrarul de maine ({week_days[week_day]}):\n{day_sch}"
+                        text = get_text(user_lang, "notif_tomorrow_schedule", day=lang_week_days[week_day], schedule=day_sch)
                         await client.send_message(sender, text, parse_mode="HTML")
                         noti_day += 1
                 except Exception as e:
