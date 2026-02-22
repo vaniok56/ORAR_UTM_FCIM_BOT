@@ -2,6 +2,37 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.13.0] - 2026-02-22
+
+### TL;DR
+This release introduces full localization support (Romanian, Russian, English), allowing users to choose their preferred language. It also includes database updates to store language preferences, enhancements to admin statistics to track language usage, and fixes for user data caching.
+
+### Added
+- **Localization System** ([`src/localization.py`](./src/localization.py), [`locales/`](./locales/)):
+    - Implemented a new localization module to handle multi-language support.
+    - Added translation files for English (`en.json`), Romanian (`ro.json`), and Russian (`ru.json`).
+    - Added a new `/language` command for users to switch their preferred language.
+    - The `/start` command now prompts new users to select their language before proceeding.
+- **Database Updates** ([`init/init.sql.template`](./init/init.sql.template)):
+    - Added a `lang` column to the `settings` table to store user language preferences.
+    - Updated stored procedures (`migrate`, `get_all_users`, `select_all_user_data`, etc.) to include the new `lang` field.
+
+### Updated
+- **Bot Commands & Handlers** ([`src/script.py`](./src/script.py), [`src/handlers/group_handlers.py`](./src/handlers/group_handlers.py), [`src/functions.py`](./src/functions.py)):
+    - Refactored all user-facing messages, keyboards, and notifications to use the new localization system.
+    - Keyboard buttons (`bot_kb`, `start_kb`) are now generated dynamically per language (`build_bot_kb`, `build_start_kb`).
+    - Updated schedule formatting functions (`print_day`, `print_daily`, `print_next_course`, `print_sapt`) to support localized weekday names and labels.
+    - Background tasks (`prepare_next_courses`, `send_schedule_tomorrow`, `send_notification`) now fetch and use the user's preferred language for notifications.
+    - The `/donatii` command now includes a "Buy me a coffee" inline button with a URL.
+- **Admin Statistics** ([`src/handlers/admin_handlers.py`](./src/handlers/admin_handlers.py)):
+    - The `/stats` command now tracks and displays the distribution of users across different languages (Romanian, Russian, English).
+- **File Tracking** ([`.gitignore`](./.gitignore)):
+    - Stopped tracking `src/dynamic_group_lists.py` in version control.
+
+### Fixed
+- **Database Caching** ([`src/handlers/db.py`](./src/handlers/db.py)):
+    - Fixed an issue where the user data cache was not being properly refreshed after calling `update_user_field` by explicitly calling `locate_field` to refresh the cache.
+
 ## [0.12.3] - 2026-01-27
 
 ### TL;DR
