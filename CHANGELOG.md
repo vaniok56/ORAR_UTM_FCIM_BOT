@@ -2,6 +2,32 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.13.2] - 2026-03-02
+
+### TL;DR
+This release standardizes bot commands by renaming Romanian commands to their English equivalents. It also brings improvements to the Docker configuration to ensure more reliable startup and better build contexts.
+
+### Updated
+- **Bot Commands** ([`src/script.py`](./src/script.py), [`src/handlers/group_handlers.py`](./src/handlers/group_handlers.py), [`locales/`](./locales/), [`README.md`](./README.md)):
+    - Renamed all Romanian commands to standardized English commands for global consistency:
+        - `/azi` -> `/today`
+        - `/maine` -> `/tomorrow`
+        - `/ore` -> `/hours`
+        - `/sapt_curenta` -> `/curr_week`
+        - `/sapt_viitoare` -> `/next_week`
+        - `/alege_grupa` -> `/choose_gr`
+        - `/alege_subgrupa` -> `/choose_subgr`
+        - `/donatii` -> `/donations`
+    - Reordered the output for the `/help` command.
+    - Updated `lang_callback` to send a new localized keyboard as a separate message instead of replacing the old one inline.
+- **Docker Configuration** ([`docker-compose.yml`](./docker-compose.yml), [`.dockerignore`](./.dockerignore)):
+    - Increased MySQL container healthcheck interval to `5s` and retries to `60` to prevent timeout failures on slower systems.
+    - Added `condition: service_healthy` to `orar_bot` dependency on `mysql` to prevent premature startup.
+    - Refactored `.dockerignore` to use wildcards `**` (e.g. `**.env`, `**.DS_Store`, etc.) and ensure `Dockerfile`, macOS/Windows system files, and backups are correctly ignored.
+- **Documentation** ([`RUN.md`](./RUN.md), [`README.md`](./README.md)):
+    - Updated `README.md` to reflect new standardized command aliases and fixed formatting issues.
+    - Fixed formatting and markdown block indentation in `RUN.md`.
+
 ## [0.13.1] - 2026-02-22
 
 ### TL;DR

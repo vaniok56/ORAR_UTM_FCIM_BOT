@@ -25,7 +25,7 @@ async def _get_sender_id_and_lang(event):
 
 def register_group_handlers(client, years, specialties, group_list):
 
-    #alege_grupa button
+    #choose_gr button
     @client.on(events.CallbackQuery(data=b"select_group"))
     async def select_group_callback(event):
         sender = await event.get_sender()
@@ -33,8 +33,8 @@ def register_group_handlers(client, years, specialties, group_list):
         await event.delete()
         await alege_grupaa(event)
 
-    #/alege_grupa
-    @client.on(events.NewMessage(pattern='/alege_grupa|Alege grupa 🎓|Choose group 🎓|Выбрать группу 🎓')) 
+    #/choose_gr
+    @client.on(events.NewMessage(pattern='/choose_gr|Alege grupa 🎓|Choose group 🎓|Выбрать группу 🎓')) 
     async def alege_grupaa(event):
         SENDER, lang = await _get_sender_id_and_lang(event)
         if is_rate_limited(SENDER):
@@ -84,7 +84,7 @@ def register_group_handlers(client, years, specialties, group_list):
                     temp_selection[SENDER] = {}
                 temp_selection[SENDER]['year'] = cur_year
                 await event.answer(get_text(lang, "group_year_selected"))
-                send_logs(format_id(SENDER) + " - /alege_grupa year - " + cur_year, "info")
+                send_logs(format_id(SENDER) + " - /choose_gr year - " + cur_year, "info")
             except Exception as e:
                 await event.answer(get_text(lang, "group_year_unavailable"))
                 send_logs(f"Error editing message for {SENDER} selecting year {cur_year}: {e}", "error")
@@ -111,7 +111,7 @@ def register_group_handlers(client, years, specialties, group_list):
             button_rows = button_grid(group_butt, button_per_r)
             await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
             await event.answer(get_text(lang, "group_spec_selected"))
-            send_logs(format_id(SENDER) + " - /alege_grupa spec - " + cur_speciality, "info")
+            send_logs(format_id(SENDER) + " - /choose_gr spec - " + cur_speciality, "info")
 
     group_data_values = set()
     for year_groups in group_list.values():
@@ -143,7 +143,7 @@ def register_group_handlers(client, years, specialties, group_list):
             db.update_user_field(format_id(SENDER), 'year_s', int(year))
             db.update_user_field(format_id(SENDER), 'spec', cur_speciality)
 
-            send_logs(format_id(SENDER) + " - /alege_grupa - " + cur_group, "info")
+            send_logs(format_id(SENDER) + " - /choose_gr - " + cur_group, "info")
 
             text = get_text(lang, "group_selected", group=cur_group)
             await event.answer(get_text(lang, "group_group_selected"))
@@ -168,8 +168,8 @@ def register_group_handlers(client, years, specialties, group_list):
             ]
             await client.send_message(SENDER, notification_text, parse_mode="Markdown", buttons=notification_buttons)
 
-    #/alege_subgrupa
-    @client.on(events.NewMessage(pattern='/alege_subgrupa'))
+    #/choose_subgr
+    @client.on(events.NewMessage(pattern='/choose_subgr'))
     async def alege_subgrupa(event):
         SENDER, lang = await _get_sender_id_and_lang(event)
         if is_rate_limited(SENDER):
@@ -196,14 +196,14 @@ def register_group_handlers(client, years, specialties, group_list):
             db.update_user_field(format_id(SENDER), 'subgrupa', 0)
             await event.answer(get_text(lang, "subgroup_deselected"))
             await client.edit_message(SENDER, event.message_id, get_text(lang, "subgroup_deselected"), parse_mode="HTML")
-            send_logs(format_id(SENDER) + " - /alege_subgrupa - deselect(0)", "info")
+            send_logs(format_id(SENDER) + " - /choose_subgr - deselect(0)", "info")
         elif event.data == b"sub1":
             db.update_user_field(format_id(SENDER), 'subgrupa', 1)
             await event.answer(get_text(lang, "subgroup_1_selected"))
             await client.edit_message(SENDER, event.message_id, get_text(lang, "subgroup_1_selected"), parse_mode="HTML")
-            send_logs(format_id(SENDER) + " - /alege_subgrupa - 1", "info")
+            send_logs(format_id(SENDER) + " - /choose_subgr - 1", "info")
         elif event.data == b"sub2":
             db.update_user_field(format_id(SENDER), 'subgrupa', 2)
             await event.answer(get_text(lang, "subgroup_2_selected"))
             await client.edit_message(SENDER, event.message_id, get_text(lang, "subgroup_2_selected"), parse_mode="HTML")
-            send_logs(format_id(SENDER) + " - /alege_subgrupa - 2", "info")
+            send_logs(format_id(SENDER) + " - /choose_subgr - 2", "info")

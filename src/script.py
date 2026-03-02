@@ -105,7 +105,9 @@ async def lang_callback(event):
 
     text = get_text(chosen_lang, "lang_changed")
     await event.answer(text)
-    await client.edit_message(SENDER, event.message_id, text)
+    button_rows = button_grid(build_bot_kb(chosen_lang), 2)
+    #await client.edit_message(SENDER, event.message_id, text)
+    await client.send_message(SENDER, text, buttons=button_rows)
     send_logs(format_id(SENDER) + f" - lang set to {chosen_lang}", 'info')
 
 #/start
@@ -187,8 +189,8 @@ async def helpp(event):
     text += get_text(lang, "help_notif_off") + "\n"
     text += get_text(lang, "help_donations") + "\n"
     text += get_text(lang, "help_version") + "\n"
-    text += get_text(lang, "help_admin") + "\n"
     text += get_text(lang, "help_language") + "\n"
+    text += get_text(lang, "help_admin") + "\n"
     button_rows = button_grid(build_bot_kb(lang), 2)
     await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
     send_logs(format_id(SENDER) + " - /help", 'info')
@@ -276,8 +278,8 @@ async def notifofff(event):
     db.update_user_field(format_id(SENDER), 'noti', 0)
     send_logs(format_id(SENDER) + " - /notifoff", 'info')
 
-#/ore
-@client.on(events.NewMessage(pattern='/ore|Orele ⏰')) 
+#/hours
+@client.on(events.NewMessage(pattern='/hours|Orele ⏰')) 
 async def oree(event):
     SENDER, lang = await _get_sender_id_and_lang(event)
     if is_rate_limited(SENDER):
@@ -297,8 +299,8 @@ async def oree(event):
     await client.send_message(SENDER, text, parse_mode="HTML")
     send_logs(format_id(SENDER) + " - /hours", 'info')
 
-#/maine
-@client.on(events.NewMessage(pattern='/maine|Orarul de maine 📅|Tomorrow\'s schedule 📅|Расписание на завтра 📅')) 
+#/tomorrow
+@client.on(events.NewMessage(pattern='/tomorrow|Orarul de maine 📅|Tomorrow\'s schedule 📅|Расписание на завтра 📅')) 
 async def mainee(event):
     global cur_group
     week_day = int((datetime.datetime.now(moldova_tz) + datetime.timedelta(days=1)).weekday()) #weekday tomorrow(0-6)
@@ -327,13 +329,13 @@ async def mainee(event):
             else: 
                 text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_no_pairs_tomorrow", day=lang_week_days[week_day])
             await client.send_message(SENDER, text, parse_mode="HTML")
-            send_logs(format_id(SENDER) + " - /maine", 'info')
+            send_logs(format_id(SENDER) + " - /tomorrow", 'info')
     except Exception as e:
         send_logs(f"Error sending sch tomorr to {str(SENDER)}: {e}", 'error')
         await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML")
     
-#/azi
-@client.on(events.NewMessage(pattern='/azi|Orarul de azi 📅|Today\'s schedule 📅|Расписание на сегодня 📅')) 
+#/today
+@client.on(events.NewMessage(pattern='/today|Orarul de azi 📅|Today\'s schedule 📅|Расписание на сегодня 📅')) 
 async def azii(event):
     global cur_group
     SENDER, lang = await _get_sender_id_and_lang(event)
@@ -360,13 +362,13 @@ async def azii(event):
             else: 
                 text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_no_pairs_today", day=lang_week_days[week_day])
             await client.send_message(SENDER, text, parse_mode="HTML")
-            send_logs(format_id(SENDER) + " - /azi", 'info')
+            send_logs(format_id(SENDER) + " - /today", 'info')
     except Exception as e:
         send_logs(f"Error sending sch today to {str(SENDER)}: {e}", 'error')
         await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML")
 
-#/sapt_cur
-@client.on(events.NewMessage(pattern='/sapt_curenta|Săptămâna curentă 🗓️|Current week 🗓️|Текущая неделя 🗓️')) 
+#/curr_week
+@client.on(events.NewMessage(pattern='/curr_week|Săptămâna curentă 🗓️|Current week 🗓️|Текущая неделя 🗓️')) 
 async def sapt_curr(event):
     global cur_group, is_even
     SENDER, lang = await _get_sender_id_and_lang(event)
@@ -387,13 +389,13 @@ async def sapt_curr(event):
             is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
             text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_current_week") + print_sapt(is_even, cur_group, subgrupa, lang)
             await client.send_message(SENDER, text, parse_mode="HTML")
-            send_logs(format_id(SENDER) + " - /sapt_curenta", 'info')
+            send_logs(format_id(SENDER) + " - /curr_week", 'info')
     except Exception as e:
         send_logs(f"Error sending curr week to {str(SENDER)}: {e}", 'error')
         await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML")
 
-#/sapt_viit
-@client.on(events.NewMessage(pattern='/sapt_viitoare|Săptămâna viitoare 🗓️|Next week 🗓️|Следующая неделя 🗓️')) 
+#/next_week
+@client.on(events.NewMessage(pattern='/next_week|Săptămâna viitoare 🗓️|Next week 🗓️|Следующая неделя 🗓️')) 
 async def sapt_viit(event):
     global cur_group, is_even
     SENDER, lang = await _get_sender_id_and_lang(event)
@@ -415,13 +417,13 @@ async def sapt_viit(event):
             is_even = not is_even
             text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_next_week") + print_sapt(is_even, cur_group, subgrupa, lang)
             await client.send_message(SENDER, text, parse_mode="HTML")
-            send_logs(format_id(SENDER) + " - /sapt_viitoare", 'info')
+            send_logs(format_id(SENDER) + " - /next_week", 'info')
     except Exception as e:
         send_logs(f"Error sending next week to {str(SENDER)}: {e}", 'error')
         await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML")
 
-#/donatii
-@client.on(events.NewMessage(pattern='/donatii')) 
+#/donations
+@client.on(events.NewMessage(pattern='/donations')) 
 async def donatiii(event):
     SENDER, lang = await _get_sender_id_and_lang(event)
     if is_rate_limited(SENDER):
@@ -444,7 +446,7 @@ async def donatiii(event):
     ]
     await client.send_message(SENDER, get_text(lang, "donation_online"), buttons=buttons)
 
-    send_logs(format_id(SENDER) + " - /donatii", 'info')
+    send_logs(format_id(SENDER) + " - /donations", 'info')
 
 def prepare_next_courses(week_day, is_even, course_index):
     next_courses = {}

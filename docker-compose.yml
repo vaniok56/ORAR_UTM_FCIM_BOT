@@ -14,9 +14,9 @@ services:
       --default-authentication-plugin=caching_sha2_password --log-error-verbosity=1 --console=1 --default-time-zone='Europe/Chisinau' --log-timestamps=system
     healthcheck:
       test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
-      interval: 1s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 60
     networks:
       - orar_network
     env_file: configs/mysql.env
@@ -36,6 +36,9 @@ services:
     image: orar_bot:latest
     container_name: orar_bot
     restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
     env_file: configs/mysql.env
     volumes:
       - ./sessions:/sessions

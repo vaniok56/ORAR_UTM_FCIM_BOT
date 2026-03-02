@@ -6,15 +6,15 @@
 ORAR_UTM_FCIM_BOT is a Telegram bot made for UTM students to simplify access to their class schedules.
 
 ## 📋 Table of Contents
-- [✨ Features](#✨-features)
-  - [🎛️ Keyboard Buttons](#🎛️-keyboard-buttons)
-  - [🔔 Notifications](#🔔-notifications)
-- [📖 Usage Guide](#📖-usage-guide)
+- [✨ Features](#-features)
+  - [🎛️ Keyboard Buttons](#️-keyboard-buttons)
+  - [🔔 Notifications](#-notifications)
+- [📖 Usage Guide](#-usage-guide)
   - [Getting Started](#getting-started)
   - [Common Commands](#common-commands)
 - [📜 Changelog](CHANGELOG.md)
 - [💻 Run](RUN.md)
-- [📄 License](#📄-license)
+- [📄 License](#-license)
 
 ## ✨ Features
 
@@ -50,8 +50,8 @@ Enable notifications at the start or use the `/notifon` command to receive:
 
 ### Getting Started
 1. Start the bot by sending `/start`
-2. Select your group using `/alege_grupa`
-3. Optionally select subgroup with `/alege_subgrupa`
+2. Select your group using `/choose_gr`
+3. Optionally select subgroup with `/choose_subgr`
 4. Enable notifications with `/notifon`
 
 ### Common Commands
@@ -61,18 +61,18 @@ Enable notifications at the start or use the `/notifon` command to receive:
 - `/help` - Display available commands
 - `/contacts` - Get developer contact info
 - `/version` - Check bot version
-- `/donatii` - Donation information
+- `/donations` - Donation information
 
 #### Schedule Commands
-- `/azi` - Today's schedule
-- `/maine` - Tomorrow's schedule
-- `/ore` - Schedule of hours (class periods + breaks)
-- `/sapt_curenta` - Schedule for the current week
-- `/sapt_viitoare` - Schedule for next week
+- `/today` - Today's schedule
+- `/tomorrow` - Tomorrow's schedule
+- `/hours` - Schedule of hours (class periods + breaks)
+- `/curr_week` - Schedule for the current week
+- `/next_week` - Schedule for next week
 
 #### Settings Commands
-- `/alege_grupa` - Select your group
-- `/alege_subgrupa` - Select your subgroup
+- `/choose_gr` - Select your group
+- `/choose_subgr` - Select your subgroup
 - `/notifon` - Turn on notifications
 - `/notifoff` - Turn off notifications
 

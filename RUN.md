@@ -78,10 +78,10 @@ sudo docker build --tag orar_bot . && sudo docker compose up
 Once it has started successfully, `/start` the bot in Telegram to initialize your user record in the database. After that, stop the bot (e.g., by pressing `Ctrl+C`) and start it normally in the background:
 
 ```bash
-sudo docker compose down && \
-sudo docker build --tag orar_bot . && \
-sudo docker compose up -d && \
-sudo docker logs -f -n 500 orar_bot
+    sudo docker compose down && \
+    sudo docker build --tag orar_bot . && \
+    sudo docker compose up -d && \
+    sudo docker logs -f -n 500 orar_bot
 ```
 
 > **Note:** The `sudo docker logs -f -n 500 orar_bot` command allows you to follow the bot's logs in real-time, which is helpful for debugging and ensuring everything is running smoothly. You can Ctrl+C to stop following the logs without stopping the container.

@@ -7,7 +7,7 @@
 .vscode/
 .idea/
 venv/
-__pycache__/
+**__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -15,44 +15,40 @@ __pycache__/
 ORAR_UTM_FCIM_BOT.code-workspace
 
 # Configuration & sensitive files
-*.env
-.env
+**.env
 
 # Temporary and backup files
 temp/
-*.bak
-*.tmp
+**.bak
+**.tmp
 
 # Documentation
-*.md
+**.md
 LICENSE
 imgs/
-README.md
-RUN.md
-*.template
+**.template
 
 # Docker files
 docker-compose.yml
 .dockerignore
+**Dockerfile*
 
 # OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+**.DS_Store
+**._*
+**.Spotlight-V100
+**.Trashes
+**ehthumbs.db
+**Thumbs.db
 
 # Mounted volumes
-*.log
+**.log
 sessions/
 mysql/
 backups/
-*.cnf
-
-# Keep init.sql for database setup
-!init/init.sql
+contributors.csv
+**.cnf
+init/
 
 # shell script files
 *.sh
