@@ -2,6 +2,35 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.13.3] - 2026-03-09
+
+### TL;DR
+This release enhances the admin broadcast system with language-based filtering, fixes Excel schedule loading to use the first sheet dynamically, removes the obsolete static `group_lists.py` file, and includes several minor robustness improvements.
+
+### Added
+- **Admin Broadcasts — Language Filter** ([`src/handlers/admin_handlers.py`](./src/handlers/admin_handlers.py)):
+    - When sending a broadcast to groups, admins can now select the target language (Romanian 🇷🇴, Russian 🇷🇺, English 🇬🇧, or All 🌐) via inline buttons before composing the message.
+    - The selected language filter is shown in the send confirmation summary.
+    - The `send_mess` function now filters `all_users` by the `lang` column when a language filter is active.
+
+### Updated
+- **Schedule Loading** ([`src/functions.py`](./src/functions.py)):
+    - Excel workbooks are now opened using `wb.sheetnames[0]` (the first sheet by name) instead of the hardcoded `"Table 2"` sheet name.
+- **File Tracking** ([`.gitignore`](./.gitignore)):
+    - Replaced individual `orar1.xlsx` / `orar2.xlsx` ignore rules with the wildcard `orar*.xlsx`.
+
+### Fixed
+- **Admin Broadcasts — Robustness** ([`src/handlers/admin_handlers.py`](./src/handlers/admin_handlers.py)):
+    - Fixed a division-by-zero crash in broadcast progress logging when `total_users` is less than 10, by using `max(1, total_users // 10)` as the chunk size.
+    - Fixed `"now"` time comparison to be case-insensitive.
+    - Fixed a stray `return`.
+- **Database — DataFrame Schema** ([`src/handlers/db.py`](./src/handlers/db.py)):
+    - Added the missing `'lang'` column to all fallback empty DataFrame definitions in `get_all_users()` and `get_all_users_with()`.
+
+### Removed
+- **Static Group Lists** :
+    - Deleted the obsolete `src/group_lists.py` file, which is fully superseded by the `src/dynamic_group_lists.py`.
+
 ## [0.13.2] - 2026-03-02
 
 ### TL;DR

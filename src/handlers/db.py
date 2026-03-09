@@ -496,7 +496,7 @@ def get_all_users():
                     return pd.DataFrame(columns=[
                         'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                         'admins', 'prem', 'subgrupa', 'gamble', 
-                        'ban', 'ban_time', 'last_cmd'
+                        'ban', 'ban_time', 'last_cmd', 'lang'
                     ])
                     
         except mysql.connector.Error as db_err:
@@ -515,7 +515,7 @@ def get_all_users():
                 return pd.DataFrame(columns=[
                     'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                     'admins', 'prem', 'subgrupa', 'gamble', 
-                    'ban', 'ban_time', 'last_cmd'
+                    'ban', 'ban_time', 'last_cmd', 'lang'
                 ])
         except Exception as e:
             send_logs(f"Failed to get all users: {str(e)}", "error")
@@ -528,7 +528,7 @@ def get_all_users():
             return pd.DataFrame(columns=[
                 'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                 'admins', 'prem', 'subgrupa', 'gamble', 
-                'ban', 'ban_time', 'last_cmd'
+                'ban', 'ban_time', 'last_cmd', 'lang'
             ])
 
 def get_all_users_with(field, value):
@@ -553,7 +553,7 @@ def get_all_users_with(field, value):
                     return pd.DataFrame(columns=[
                         'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                         'admins', 'prem', 'subgrupa', 'gamble', 
-                        'ban', 'ban_time', 'last_cmd'
+                        'ban', 'ban_time', 'last_cmd', 'lang'
                     ])
         except mysql.connector.Error as db_err:
             if attempt < MAX_RETRIES - 1:
@@ -566,14 +566,14 @@ def get_all_users_with(field, value):
                 return pd.DataFrame(columns=[
                     'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                     'admins', 'prem', 'subgrupa', 'gamble', 
-                    'ban', 'ban_time', 'last_cmd'
+                    'ban', 'ban_time', 'last_cmd', 'lang'
                 ])
         except Exception as e:
             send_logs(f"Failed to get all users with {field}={value}: {str(e)}", "error")
             return pd.DataFrame(columns=[
                 'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                 'admins', 'prem', 'subgrupa', 'gamble', 
-                'ban', 'ban_time', 'last_cmd'
+                'ban', 'ban_time', 'last_cmd', 'lang'
             ])
 
 def get_all_users_without(field, value):
@@ -598,7 +598,7 @@ def get_all_users_without(field, value):
                     return pd.DataFrame(columns=[
                         'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                         'admins', 'prem', 'subgrupa', 'gamble', 
-                        'ban', 'ban_time', 'last_cmd'
+                        'ban', 'ban_time', 'last_cmd', 'lang'
                     ])
         except mysql.connector.Error as db_err:
             if attempt < MAX_RETRIES - 1:
@@ -611,14 +611,14 @@ def get_all_users_without(field, value):
                 return pd.DataFrame(columns=[
                     'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                     'admins', 'prem', 'subgrupa', 'gamble', 
-                    'ban', 'ban_time', 'last_cmd'
+                    'ban', 'ban_time', 'last_cmd', 'lang'
                 ])
         except Exception as e:
             send_logs(f"Failed to get all users without {field}={value}: {str(e)}", "error")
             return pd.DataFrame(columns=[
                 'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                 'admins', 'prem', 'subgrupa', 'gamble', 
-                'ban', 'ban_time', 'last_cmd'
+                'ban', 'ban_time', 'last_cmd', 'lang'
             ])
         
 def is_user_exists(sender_id):

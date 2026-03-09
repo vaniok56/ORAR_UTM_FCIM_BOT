@@ -152,7 +152,8 @@ from localization import get_text, get_week_days, DEFAULT_LANG
 #open the excel files
 for i in range(1, 5):
     try:
-        globals()[f"schedule{i}"] = openpyxl.load_workbook(f'schedules/orar{i}.xlsx', data_only=True)["Table 2"]
+        wb = openpyxl.load_workbook(f'schedules/orar{i}.xlsx', data_only=True)
+        globals()[f"schedule{i}"] = wb[wb.sheetnames[0]]
     except Exception as e:
         send_logs(f"Error loading orar{i}.xlsx: {e}", 'error')
         globals()[f"schedule{i}"] = openpyxl.Workbook()

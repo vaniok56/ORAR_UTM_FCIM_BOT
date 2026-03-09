@@ -151,11 +151,12 @@ def register_admin_handlers(client, admins1, admins2):
         
         if not data.startswith("to"):
             return
-        global to_who, useridd, when, text, input_step, media_path
+        global to_who, useridd, when, text, input_step, media_path, lang_filter
         useridd = 0
         to_who = int(data[2])
         input_step = 1
         media_path = None
+        lang_filter = None
         recipient_dict = {
             1: "Myself",
             2: "TI-241",
@@ -169,6 +170,30 @@ def register_admin_handlers(client, admins1, admins2):
         }
         await event.answer()
         await client.edit_message(SENDER, event.message_id, "Selected: " + recipient_dict.get(to_who))
+
+        # Myself, Notifon, All users, year 1/2/3/4 - also choose language to who to send
+        lang_display = {b"message_lang_ro": "Romanian 🇷🇴", b"message_lang_ru": "Russian 🇷🇺", b"message_lang_en": "English 🇬🇧", b"message_lang_all": "All 🌐"}
+        if to_who in [1, 3, 5, 6, 7, 8, 9]:
+            lang_buttons = [
+                Button.inline("RO 🇷🇴", data=b"message_lang_ro"),
+                Button.inline("RU 🇷🇺", data=b"message_lang_ru"),
+                Button.inline("EN 🇬🇧", data=b"message_lang_en"),
+                Button.inline("All 🌐", data=b"message_lang_all")
+            ]
+            await client.send_message(SENDER, "Select the language of the recipients:", buttons=button_grid(lang_buttons, 3))
+
+            @client.on(events.CallbackQuery(pattern=lambda x: x in [b"message_lang_ro", b"message_lang_ru", b"message_lang_en", b"message_lang_all"]))
+            async def lang_callback(event):
+                global lang_filter
+                if (await event.get_sender()).id != SENDER:
+                    return
+                lang_filter = event.data.decode('utf-8').split("_")[2]  # ro, ru, en, all
+                displayed_lang = lang_display.get(event.data)
+                #lang_filter = lang_map.get(event.data)
+                await event.answer(f"Language: {displayed_lang}")
+                await client.edit_message(SENDER, event.message_id, f"Language selected: {displayed_lang}")
+                client.remove_event_handler(lang_callback, events.CallbackQuery())
+
         if to_who == 4:
             await client.send_message(SENDER, "Please enter the user ID(as int):")
         else:
@@ -177,7 +202,7 @@ def register_admin_handlers(client, admins1, admins2):
 
         @client.on(events.NewMessage(from_users=SENDER))
         async def handle_input(event):
-            global input_step, useridd, when, text, media_path
+            global input_step, useridd, when, text, media_path, lang_filter
             user_input = event.text
 
             if input_step == 1 and to_who == 4:
@@ -213,6 +238,8 @@ def register_admin_handlers(client, admins1, admins2):
                 summary = f"\nSend to: {recipient_dict.get(to_who)}"
                 if useridd != 0:
                     summary += f"\nUser ID: {useridd}"
+                if to_who in [1, 3, 5, 6, 7, 8, 9]:
+                    summary += f"\nLanguage filter: {lang_display.get(b"message_lang_" + lang_filter.encode())}"
                 summary += f"\nTime: {when}"
                 
                 if media_path:
@@ -227,7 +254,7 @@ def register_admin_handlers(client, admins1, admins2):
 
                 @client.on(events.CallbackQuery(pattern=lambda x: x in [b"send_mess_yes", b"send_mess_no"]))
                 async def confirmation_callback(event):
-                    global to_who, when, useridd, text, media_path
+                    global to_who, when, useridd, text, media_path, lang_filter
                     sender = await event.get_sender()
                     SENDER = sender.id
                     if event.data == b"send_mess_yes":
@@ -251,11 +278,11 @@ def register_admin_handlers(client, admins1, admins2):
 
     #send the custom message
     async def send_mess(to_who, when, useridd):
-        global text, media_path
+        global text, media_path, lang_filter
         
         now = datetime.datetime.now(moldova_tz).time()
         current_time = datetime.datetime.strptime(str(now)[:-7], "%H:%M:%S")
-        if when == "Now":
+        if when == "Now" or when == "now":
             scheduled = current_time
         else:
             scheduled = datetime.datetime.strptime(when, "%H:%M")
@@ -288,8 +315,14 @@ def register_admin_handlers(client, admins1, admins2):
         except Exception as e:
             send_logs(f"Error retrieving users for message: {e}", 'error')
             return
-            
-        if when != "Now":
+        
+        # Apply language filter for group broadcasts
+        if lang_filter and to_who in [1, 3, 5, 6, 7, 8, 9]:
+            if 'lang' in all_users.columns:
+                all_users = all_users[all_users['lang'] == lang_filter]
+                send_logs(f"Filtered by language '{lang_filter}': {len(all_users)} users", 'info')
+        
+        if when != "Now" and when != "now":
             send_logs("waiting to send a message - " + str(scheduled - current_time), 'info')
             await asyncio.sleep((scheduled - current_time).total_seconds())
         
@@ -333,10 +366,11 @@ def register_admin_handlers(client, admins1, admins2):
                 sent_count += 1
             except Exception as e:
                 error_count += 1
-                send_logs(f"Error sending message to {user}: {e}", 'error')
+                #send_logs(f"Error sending message to {user}: {e}", 'error')
             
             await asyncio.sleep(0.05) # max 20 messages per second
-            if (i + 1) % (total_users//10) == 0:
+            chunk = max(1, total_users // 10)
+            if (i + 1) % chunk == 0:
                 send_logs(f"Broadcast progress: {i + 1}/{total_users}", 'info')
 
         send_logs(f"Broadcast finished. Sent to {sent_count}/{total_users} users (Errors: {error_count}).", 'info')
@@ -550,7 +584,6 @@ def register_admin_handlers(client, admins1, admins2):
             # Remove user from waiting list
             if SENDER in user_action_waiting:
                 del user_action_waiting[SENDER]
-            return
     
     #/use_backup admin
     backup_to_restore = None

@@ -40,6 +40,5 @@ Thumbs.db
 
 # Other
 *.sh
-orar1.xlsx
-orar2.xlsx
+orar*.xlsx
 /src/dynamic_group_lists.py
