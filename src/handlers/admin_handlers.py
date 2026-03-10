@@ -172,17 +172,18 @@ def register_admin_handlers(client, admins1, admins2):
         await client.edit_message(SENDER, event.message_id, "Selected: " + recipient_dict.get(to_who))
 
         # Myself, Notifon, All users, year 1/2/3/4 - also choose language to who to send
-        lang_display = {b"message_lang_ro": "Romanian 🇷🇴", b"message_lang_ru": "Russian 🇷🇺", b"message_lang_en": "English 🇬🇧", b"message_lang_all": "All 🌐"}
+        lang_display = {b"message_lang_ro": "Romanian 🇷🇴", b"message_lang_ru": "Russian 🇷🇺", b"message_lang_en": "English 🇬🇧", b"message_lang_notset": "Not set ❓", b"message_lang_all": "All 🌐"}
         if to_who in [1, 3, 5, 6, 7, 8, 9]:
             lang_buttons = [
                 Button.inline("RO 🇷🇴", data=b"message_lang_ro"),
                 Button.inline("RU 🇷🇺", data=b"message_lang_ru"),
                 Button.inline("EN 🇬🇧", data=b"message_lang_en"),
+                Button.inline("Not set ❓", data=b"message_lang_notset"),
                 Button.inline("All 🌐", data=b"message_lang_all")
             ]
             await client.send_message(SENDER, "Select the language of the recipients:", buttons=button_grid(lang_buttons, 3))
 
-            @client.on(events.CallbackQuery(pattern=lambda x: x in [b"message_lang_ro", b"message_lang_ru", b"message_lang_en", b"message_lang_all"]))
+            @client.on(events.CallbackQuery(pattern=lambda x: x in [b"message_lang_ro", b"message_lang_ru", b"message_lang_en", b"message_lang_notset", b"message_lang_all"]))
             async def lang_callback(event):
                 global lang_filter
                 if (await event.get_sender()).id != SENDER:
@@ -317,9 +318,12 @@ def register_admin_handlers(client, admins1, admins2):
             return
         
         # Apply language filter for group broadcasts
-        if lang_filter and to_who in [1, 3, 5, 6, 7, 8, 9]:
+        if lang_filter and lang_filter != 'all' and to_who in [1, 3, 5, 6, 7, 8, 9]:
             if 'lang' in all_users.columns:
-                all_users = all_users[all_users['lang'] == lang_filter]
+                if lang_filter == 'notset':
+                    all_users = all_users[all_users['lang'].isna() | (all_users['lang'] == '') | (all_users['lang'] == 'none')]
+                else:
+                    all_users = all_users[all_users['lang'] == lang_filter]
                 send_logs(f"Filtered by language '{lang_filter}': {len(all_users)} users", 'info')
         
         if when != "Now" and when != "now":
