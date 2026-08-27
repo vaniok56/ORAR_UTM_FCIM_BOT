@@ -61,9 +61,26 @@ def initialize_mysql_connection():
                 cursor.execute("SELECT VERSION()")
                 version = cursor.fetchone()
                 send_logs(f"Connected to MySQL version: {version[0]}", "info")
-            
+
+            # Idempotent migration: ensure app_settings table exists
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS orar_bot.app_settings (
+                        setting_name  VARCHAR(50)  PRIMARY KEY,
+                        setting_value VARCHAR(255) NOT NULL
+                    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+                """)
+                cursor.execute("""
+                    INSERT IGNORE INTO orar_bot.app_settings (setting_name, setting_value)
+                    VALUES ('holiday_mode', '0')
+                """)
+                conn.commit()
+
             # refresh cache with new data if possible
             try:
+                # clear cache and reload
+                _cached_all_users_df = None
                 load_user_cache()
             except Exception as cache_err:
                 send_logs(f"Failed to preload user cache: {str(cache_err)}", "warning")
@@ -154,7 +171,8 @@ def save_dataframe(df):
                     CALL migrate(
                         %s, %s, %s, %s, 
                         %s, %s, %s, %s, 
-                        %s, %s, %s, %s
+                        %s, %s, %s, %s,
+                        %s
                     )
                     ''', 
                     (
@@ -170,6 +188,7 @@ def save_dataframe(df):
                         row['ban'],
                         row['ban_time'],
                         row['last_cmd'],
+                        row['lang'],
                     ))  # Removed multi=True
                     
                     # Process all result sets
@@ -680,29 +699,65 @@ def restore_backup(backup_path):
             send_logs(f"Failed to restore MySQL database: {str(e)}", "error")
             return False        
 
-def update_user_years():
-    """Increment the year of all users by 1"""
-    for attempt in range(MAX_RETRIES):
+def get_app_setting(name: str, default: str = '0') -> str:
+    """Get a global app setting value by name"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT setting_value FROM orar_bot.app_settings WHERE setting_name = %s",
+                (name,)
+            )
+            row = cursor.fetchone()
+            return row[0] if row else default
+    except Exception as e:
+        send_logs(f"Failed to get app setting '{name}': {str(e)}", "error")
+        return default
+
+def set_app_setting(name: str, value: str) -> None:
+    """Set a global app setting value, raises on DB error"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO orar_bot.app_settings (setting_name, setting_value)
+            VALUES (%s, %s)
+            ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+            """,
+            (name, value)
+        )
+        conn.commit()
+
+def update_user_years_from_groups(updates):
+    """Set user years when sender and group still match the migration preview."""
+    global _cached_all_users_df
+
+    if not updates:
+        return 0
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
         try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                
-                cursor.callproc('update_user_years')
-                conn.commit()
-                
-                # Clear the entire user cache since years have changed
-                user_data_cache.clear()
-                
-                send_logs("All users' year has been updated successfully", "info")
-                return True
-        except mysql.connector.Error as db_err:
-            if attempt < MAX_RETRIES - 1:
-                delay = 0.5 * (2 ** attempt)
-                send_logs(f"DB error in update_user_years (attempt {attempt+1}/{MAX_RETRIES}): {db_err}. Retrying in {delay}s...", "warning")
-                time.sleep(delay)
-            else:
-                send_logs(f"Failed to update user years after {MAX_RETRIES} attempts: {str(db_err)}", "error")
-                return False
-        except Exception as e:
-            send_logs(f"Failed to update user years: {str(e)}", "error")
-            return False
+            conn.start_transaction()
+            cursor.executemany(
+                """
+                UPDATE users
+                SET year_s = %s
+                WHERE SENDER = %s
+                  AND group_n = %s
+                  AND NOT (year_s <=> %s)
+                """,
+                [
+                    (year, sender, group, year)
+                    for year, sender, group in updates
+                ],
+            )
+            changed = cursor.rowcount
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    user_data_cache.clear()
+    _cached_all_users_df = pd.DataFrame()
+    return changed

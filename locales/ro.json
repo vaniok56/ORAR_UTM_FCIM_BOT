@@ -1,7 +1,7 @@
 {
     "_comment1": "====================General====================",
     "lang_changed": "✅ Limba a fost schimbată în Română!",
-    "start_message": "Salut {first_name}👋\nÎti prezint botul pentru orarul UTM FCIM!\n\n⚠️ NOTĂ: Momentan sunt disponibile doar orarele pentru anul 1 și 2!\n\nPentru a începe:\n1️⃣ Selectează grupa ta\n2️⃣ Opțional, alege subgrupa\n\n📋 Vezi toate comenzile disponibile cu /help\n📞 Pentru suport folosește /contacts\n\n⚠️ ATENȚIE! __**Orarul poate să nu fie actualizat**__, nu răspund pentru absențe.",
+    "start_message": "Salut {first_name}👋\nÎti prezint botul pentru orarul UTM FCIM!\n\nPentru a începe:\n1️⃣ Selectează grupa ta\n2️⃣ Opțional, alege subgrupa\n\n📋 Vezi toate comenzile disponibile cu /help\n📞 Pentru suport folosește /contacts\n\n⚠️ ATENȚIE! __**Orarul poate să nu fie actualizat**__, nu răspund pentru absențe.",
     "contacts_text": "Salut! Acest bot a fost creat pentru a simplifica accesul la orarul UTM FCIM. Botul este în continuă dezvoltare și îmbunătățire.\n\n⚠️ __**Orarul poate să nu fie actualizat**__, nu răspund pentru absențe.\n\nPentru întrebări și sugestii:\n👤 Telegram: [@vaniok56](https://t.me/vaniok56)\n💻 Github: [ORAR_UTM_FCIM_BOT](https://github.com/vaniok56/ORAR_UTM_FCIM_BOT)\n",
     "_comment2": "====================Buttons====================",
     "btn_today": "Orarul de azi 📅",

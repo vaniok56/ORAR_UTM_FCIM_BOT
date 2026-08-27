@@ -89,12 +89,10 @@ def register_group_handlers(client, years, specialties, group_list):
                 await event.answer(get_text(lang, "group_year_unavailable"))
                 send_logs(f"Error editing message for {SENDER} selecting year {cur_year}: {e}", "error")
 
-    specialty_data_values = set()
-    for year_specs in specialties.values():
-        specialty_data_values.update(year_specs.keys())
-
     #speciality click event handle
-    @client.on(events.CallbackQuery(pattern=lambda x: x in specialty_data_values))
+    @client.on(events.CallbackQuery(pattern=lambda data: any(
+        data in year_specialties for year_specialties in specialties.values()
+    )))
     async def speciality_callback(event):
         SENDER, lang = await _get_sender_id_and_lang(event)
         year = temp_selection.get(SENDER, {}).get('year')
@@ -113,13 +111,12 @@ def register_group_handlers(client, years, specialties, group_list):
             await event.answer(get_text(lang, "group_spec_selected"))
             send_logs(format_id(SENDER) + " - /choose_gr spec - " + cur_speciality, "info")
 
-    group_data_values = set()
-    for year_groups in group_list.values():
-        for groups in year_groups.values():
-            group_data_values.update(groups.keys())
-    
     #group click event handle
-    @client.on(events.CallbackQuery(pattern=lambda x: x in group_data_values))
+    @client.on(events.CallbackQuery(pattern=lambda data: any(
+        data in groups
+        for year_groups in group_list.values()
+        for groups in year_groups.values()
+    )))
     async def group_callback(event):
         SENDER, lang = await _get_sender_id_and_lang(event)
         user_context = temp_selection.get(SENDER, {})

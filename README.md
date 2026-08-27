@@ -81,7 +81,7 @@ Enable notifications at the start or use the `/notifon` command to receive:
 - `/stats` - View usage statistics
 - `/backup` - Manual database backup
 - `/use_backup` - Restore database from latest backup
-- `/new_year` - Update all users' year (+1)
+- `/auto_migrate` - Match users' academic years to loaded schedule groups
 - `/message` - Send message to users
 - `/ban` - Ban a user
 - `/unban` - Unban a user

@@ -5,6 +5,7 @@ import pytz
 import requests
 import handlers.db as db
 import re
+from schedule_groups import extract_schedule_groups
 
 
 import time
@@ -13,6 +14,7 @@ last_command_time = defaultdict(float)
 messages_per_minute = defaultdict(list)
 COMMAND_COOLDOWN = 1 # seconds
 MAX_MESSAGES_PER_MINUTE = 5 # messages
+bulk_send_shift_earlier = datetime.timedelta(minutes=1)
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
 time_zone = pytz.timezone('Europe/Chisinau')
@@ -120,7 +122,6 @@ week_days = {
     6 : "Duminica"
 }
 
-all_groups_range = range(3, 40)
 schedule_column_start = 3
 
 cur_group = "TI-241" #initialise current group
@@ -162,7 +163,9 @@ for i in range(1, 5):
 #group lists
 for i in range(1, 5):
     try:
-        globals()[f"groups{i}"] = [globals()[f"schedule{i}"].cell(row=1,column=j).value for j in all_groups_range if globals()[f"schedule{i}"].cell(row=1,column=j).value]
+        globals()[f"groups{i}"] = extract_schedule_groups(
+            globals()[f"schedule{i}"], schedule_column_start
+        )
         send_logs(f"Extracted {len(globals()[f"groups{i}"])} groups from schedule{i}", 'info')
     except Exception as e:
         send_logs(f"Error extracting groups from schedule{i}: {e}", 'error')
@@ -250,15 +253,25 @@ def get_schedule_and_groups(cur_group):
         #send_logs(f"Cache hit get_schedule_and_groups for {cur_group}", 'info')
         return schedule_groups_cache[cur_group]
 
-    group_year = int(cur_group[-3:-1]) # from TI-241 to 24
-    sch_nr = current_year - group_year # from 24 to 2
-    if sch_nr >= 1 and sch_nr <= 4:
-        result = globals()[f"schedule{sch_nr}"], globals()[f"groups{sch_nr}"] # schedule{year} and groups{year}
-    else:
-        raise ValueError("Invalid group number")
-    #cache
-    schedule_groups_cache[cur_group] = result
-    return result
+    # Check loaded group lists directly first
+    for i in range(1, 5):
+        gr_list = globals().get(f"groups{i}", [])
+        if cur_group in gr_list:
+            result = globals()[f"schedule{i}"], gr_list
+            schedule_groups_cache[cur_group] = result
+            return result
+
+    try:
+        group_year = int(cur_group[-3:-1]) # from TI-241 to 24
+        sch_nr = current_year - group_year # from 24 to 2
+        if 1 <= sch_nr <= 4:
+            result = globals()[f"schedule{sch_nr}"], globals()[f"groups{sch_nr}"]
+            schedule_groups_cache[cur_group] = result
+            return result
+    except (ValueError, IndexError, KeyError):
+        pass
+
+    raise ValueError(f"Invalid group number: {cur_group}")
 
 #get value from a cell even if it's a merged cell
 merged_cell_ranges = {}  # cache merged cell ranges
@@ -308,6 +321,8 @@ def button_grid(buttons, butoane_rand):
 #get daily schedule
 def print_day(week_day, cur_group, is_even, subgrupa, lang=DEFAULT_LANG):
     schedule, groups = get_schedule_and_groups(cur_group)[0:2]
+    if cur_group not in groups:
+        return ""
     col_gr = groups.index(cur_group) + schedule_column_start  # column with the selected group
     return print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang)
      
@@ -450,6 +465,8 @@ def print_sapt(is_even, cur_group, subgrupa, lang=DEFAULT_LANG):
         #send_logs(f"Cache hit print_sapt for {cache_key}", 'info')
         return weekly_schedule_cache[cache_key]
     schedule, groups = get_schedule_and_groups(cur_group)[0:2]
+    if cur_group not in groups:
+        return ""
     col_gr = groups.index(cur_group) + 3 #column with the selected group
 
     lang_week_days = get_week_days(lang)
@@ -471,14 +488,12 @@ def get_next_course_time():
     course_index = 0
     for i, hour in enumerate(hours):
         course_time = datetime.datetime.strptime(hour[0].split("-")[0], "%H.%M")
-        if (course_time - datetime.timedelta(minutes=15)).time() > current_time.time():
+        notification_time = course_time - datetime.timedelta(minutes=15) - bulk_send_shift_earlier
+        if notification_time.time() >= current_time.time():
             course_index = i
             break
     
-    #15 min before the next course
-    time_before_course = course_time - datetime.timedelta(minutes=15)
-    
-    return current_time, course_index + 1, time_before_course
+    return current_time, course_index + 1, notification_time
 
 def is_rate_limited(user_id):
     if user_id == 500303890:
@@ -590,15 +605,16 @@ def write_groups_to_json():
             for group in groups_var:
                 if not group.startswith(spec):
                     continue
-                key = group.lower().encode()
+                key = group.lower().replace('-', '').encode()
                 group_list[year_num][spec_key][key] = f"  {group}  "
     
     # Write to a Python file
     current_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(current_dir, "dynamic_group_lists.py")
     
+    temp_path = f"{file_path}.tmp"
     try:
-        with open(file_path, "w", encoding="utf-8") as f:
+        with open(temp_path, "w", encoding="utf-8") as f:
             f.write("# This file was automatically generated\n\n")
             
             f.write("years = {\n")
@@ -620,40 +636,66 @@ def write_groups_to_json():
                 for spec_key, spec_groups in year_groups.items():
                     f.write(f"        \"{spec_key}\": {{\n")
                     for k, v in spec_groups.items():
-                        f.write(f"            b\"{k.decode().replace('-', '')}\": \"{v}\",\n")
+                        f.write(f"            b\"{k.decode()}\": \"{v}\",\n")
                     f.write("        },\n\n")
                 f.write("    },\n\n")
             f.write("}\n")
+        os.replace(temp_path, file_path)
         send_logs(f"Dynamic group lists have been written to {file_path}", 'info')
     except Exception as e:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
         send_logs(f"Error writing dynamic_group_lists.py: {e}", 'error')
+        return None, None, None
         
     return years, specialties, group_list
 
-def process_schedule_file(file_path, schedule_number):
-    try:
-        wb = openpyxl.load_workbook(file_path, data_only=True)
-        if not wb.sheetnames:
-            raise ValueError(f"No sheets found in workbook {file_path}")
-        schedule = wb[wb.sheetnames[0]]
-        globals()[f"schedule{schedule_number}"] = schedule
-        globals()[f"groups{schedule_number}"] = [schedule.cell(row=1,column=j).value for j in all_groups_range if schedule.cell(row=1,column=j).value]
-        send_logs(f"Processed and loaded {file_path} as schedule{schedule_number}", 'info')
-        
-        # Clear relevant caches
-        keys_to_clear = [key for key in schedule_groups_cache if key.startswith(f"U{schedule_number}")]
-        for key in keys_to_clear:
-            del schedule_groups_cache[key]
-        
-        day_row_start_cache.clear()
-        daily_schedule_cache.clear()
-        cell_value_cache.clear()
-        weekly_schedule_cache.clear()
-        next_course_cache.clear()
-        orele_cache.clear()
-        schedule_groups_cache.clear()
-        
-        return True
-    except Exception as e:
-        send_logs(f"Error processing schedule file {file_path}: {e}", 'error')
-        return False
+def load_schedule_file(file_path):
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    if not wb.sheetnames:
+        raise ValueError(f"No sheets found in workbook {file_path}")
+
+    schedule = wb[wb.sheetnames[0]]
+    groups = extract_schedule_groups(schedule, schedule_column_start)
+    if not groups:
+        raise ValueError(f"No groups found in workbook {file_path}")
+    if not all(isinstance(group, str) for group in groups):
+        raise ValueError(f"Group headers must be text in workbook {file_path}")
+    if not all(re.fullmatch(r"[A-Za-z]+-\d{3}", group) for group in groups):
+        raise ValueError(f"Invalid group name in workbook {file_path}")
+    group_keys = [group.lower().replace('-', '') for group in groups]
+    if len(group_keys) != len(set(group_keys)):
+        raise ValueError(f"Duplicate group name in workbook {file_path}")
+
+    valid_days = set(week_days.values())
+    valid_times = {slot[0] for slot in hours}
+    day_starts = [
+        row
+        for row in range(1, min(schedule.max_row, 83) + 1)
+        if schedule.cell(row=row, column=1).value in valid_days
+    ]
+    if not day_starts:
+        raise ValueError(f"Missing weekday blocks in workbook {file_path}")
+
+    for row_start in day_starts:
+        block_times = {
+            getMergedCellVal(schedule, schedule.cell(row=row, column=2))
+            for row in range(row_start, row_start + 14)
+        }
+        if not valid_times.issubset(block_times):
+            raise ValueError(f"Invalid course-time block in workbook {file_path}")
+
+    return schedule, groups
+
+
+def activate_schedule(schedule, groups, schedule_number):
+    globals()[f"schedule{schedule_number}"] = schedule
+    globals()[f"groups{schedule_number}"] = groups
+
+    day_row_start_cache.clear()
+    daily_schedule_cache.clear()
+    cell_value_cache.clear()
+    weekly_schedule_cache.clear()
+    next_course_cache.clear()
+    orele_cache.clear()
+    schedule_groups_cache.clear()

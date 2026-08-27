@@ -2,6 +2,53 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.14.0] - 2026-08-27
+
+### TL;DR
+This release introduces Holiday Mode for pausing notifications during breaks, automated academic year migration (`/auto_migrate`), hot-reloading schedule validation, direct catalog group lookup, major admin broadcast refactoring with media support and cancellation, notification rate pacing, and critical memory/event-listener leak fixes.
+
+### Added
+- **Holiday Mode** ([`src/handlers/db.py`](./src/handlers/db.py), [`src/handlers/admin_handlers.py`](./src/handlers/admin_handlers.py), [`src/script.py`](./src/script.py)):
+    - Created `app_settings` key-value table in MySQL for persistent global flags.
+    - Added `/holidays` admin toggle command to pause/resume background notification loops without stopping the bot.
+- **Academic Year Auto-Migration** ([`src/year_migration.py`](./src/year_migration.py), [`src/handlers/admin_handlers.py`](./src/handlers/admin_handlers.py), [`src/handlers/db.py`](./src/handlers/db.py)):
+    - Implemented `/auto_migrate` to automatically match users' registered groups against loaded schedule groups.
+    - Provides a dry-run preview showing updates, correct, unknown, and ambiguous groups before executing a single atomic batch transaction (`db.update_user_years_from_groups`).
+- **Live Schedule Validation & Hot Reload** ([`src/functions.py`](./src/functions.py), [`src/schedule_groups.py`](./src/schedule_groups.py), [`src/handlers/admin_handlers.py`](./src/handlers/admin_handlers.py)):
+    - Added `load_schedule_file()` to strictly validate sheet structure, group name regex (`[A-Za-z]+-\d{3}`), duplicate group keys, weekday blocks, and course-time ranges before applying changes.
+    - Added `activate_schedule()` to atomically update schedule globals and clear all lookup caches.
+    - Updated group selection callbacks in [`src/handlers/group_handlers.py`](./src/handlers/group_handlers.py) to dynamic matching, enabling immediate recognition of new groups upon `/update_schedule` without restarting the process.
+- **Direct Catalog Group Lookup & Index Guards** ([`src/functions.py`](./src/functions.py)):
+    - `get_schedule_and_groups()` searches loaded memory group catalogs directly across all study years before falling back to year math.
+    - Added membership safety guards in `print_day()` and `print_sapt()` to eliminate unhandled `list.index(x): x not in list` exceptions.
+- **Admin Broadcast Improvements** ([`src/handlers/admin_handlers.py`](./src/handlers/admin_handlers.py)):
+    - Added `/cancel_message` command to abort in-flight message drafts and clean up downloaded media.
+    - Support for media attachments (photos/files) with captions.
+    - Background broadcast tasks tracked via `asyncio.Task` references to prevent concurrent duplicate broadcasts.
+
+### Updated
+- **Notification Loops & Rate Limiting** ([`src/script.py`](./src/script.py), [`src/functions.py`](./src/functions.py)):
+    - Background loops (`send_curr_course_users`, `send_schedule_tomorrow`) dynamically evaluate current timestamp, weekday, and parity on each tick instead of using stale startup arguments.
+    - Paced bulk deliveries using `bulk_send_interval` (15 msg/s) and shifted delivery time by `bulk_send_shift_earlier` (1 minute) to avoid Telegram FloodWait rate limits.
+- **Container Configuration** ([`docker-compose.yml`](./docker-compose.yml)):
+    - Tuned MySQL healthcheck intervals to 10s and retries to 60.
+    - Updated restarter schedule to `20:10` and `07:00` with host localtime mount.
+- **Documentation & File Tracking** ([`README.md`](./README.md), [`.gitignore`](./.gitignore)):
+    - Replaced `/new_year` command reference with `/auto_migrate`.
+    - Added `transform*` and `schedule_parser*` to `.gitignore`.
+
+### Fixed
+- **Telethon Event Handler Leaks** ([`src/script.py`](./src/script.py), [`src/handlers/admin_handlers.py`](./src/handlers/admin_handlers.py)):
+    - Converted `/start` language selection callback and admin message callbacks to static top-level handlers, eliminating repeated handler registrations and memory leaks.
+- **Localization Sync** ([`src/handlers/db.py`](./src/handlers/db.py)):
+    - Passed user `lang` column into the MySQL `migrate` stored procedure call during DataFrame save.
+
+### Removed
+- **Obsolete `/new_year` Command**:
+    - Removed naive `+1` year increment command in favor of `/auto_migrate`.
+- **Outdated Locale Limitations** ([`locales/`](./locales/)):
+    - Removed outdated notice stating only years 1 and 2 schedules are available from `en.json`, `ro.json`, and `ru.json`.
+
 ## [0.13.3] - 2026-03-09
 
 ### TL;DR

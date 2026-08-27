@@ -5,12 +5,14 @@ import datetime
 import pytz
 import os
 import glob
+from pathlib import Path
 
 from telethon import TelegramClient, events, types
 from telethon.tl.custom import Button
 
 import handlers.db as db
-from functions import button_grid, send_logs, print_next_course, is_rate_limited, format_id, process_schedule_file
+from functions import activate_schedule, button_grid, send_logs, print_next_course, is_rate_limited, format_id, load_schedule_file, write_groups_to_json
+from year_migration import plan_year_migration
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
 
@@ -18,7 +20,51 @@ current_year = 26  # (+1 each year)
 main_admin = "U500303890"  # Your user ID here as string
 contributors_df = pd.read_csv('contributors.csv')
 
-def register_admin_handlers(client, admins1, admins2):
+def register_admin_handlers(client, admins1, admins2, specialties, group_list):
+    draft = {}
+    broadcast_task = None
+    pending_auto_migrations = {}
+
+    recipient_names = {
+        1: "Myself",
+        2: "TI-241",
+        3: "Notifon users",
+        4: "A user",
+        5: "All users",
+        6: "Year 1",
+        7: "Year 2",
+        8: "Year 3",
+        9: "Year 4",
+    }
+    language_recipients = {1, 3, 5, 6, 7, 8, 9}
+
+    def clear_draft():
+        media_path = draft.get("media_path")
+        if media_path:
+            Path(media_path).unlink(missing_ok=True)
+        draft.clear()
+
+    def finish_broadcast(task):
+        nonlocal broadcast_task
+        broadcast_task = None
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except Exception as error:
+            send_logs(f"Broadcast failed: {error}", "error")
+
+    @client.on(events.NewMessage(pattern=r'^/cancel_message$'))
+    async def cancel_message(event):
+        if format_id(event.sender_id) != main_admin:
+            return
+        if not draft:
+            await client.send_message(event.sender_id, "No active message draft.")
+            return
+
+        clear_draft()
+        await client.send_message(event.sender_id, "Message draft canceled.")
+
     #/admin_help admin
     @client.on(events.NewMessage(pattern=r'^/admin_help$'))
     async def admin_help(event):
@@ -31,9 +77,10 @@ def register_admin_handlers(client, admins1, admins2):
         text += "/stats - show statistics\n\n"
         text += "/backup - manual database backup\n\n"
         text += "/use_backup - restore database from backup\n\n"
-        text += "/message - send a message to users\n\n"
+        text += "/message - send a message to users\n"
+        text += "/cancel_message - cancel the current message draft\n\n"
         text += "/debug_next - debug print next course\n\n"
-        #text += "/new_year - update all users' year(+1)\n\n"
+        text += "/auto_migrate - match user years to schedule groups\n\n"
         text += "Change user status:\n"
         text += "/ban - ban a user\n"
         text += "/unban - unban a user\n"
@@ -44,6 +91,8 @@ def register_admin_handlers(client, admins1, admins2):
         text += "/contrib - show contributors\n\n"
         text += "/edit_contrib - edit contributors\n\n"
         text += "/update_schedule - update schedule from file\n\n"
+        text += "/auto_migrate - match user years to schedule groups\n\n"
+        text += "/holidays - toggle holiday mode (pauses scheduled notifications)\n\n"
         await client.send_message(SENDER, text, parse_mode="HTML")
         send_logs(format_id(SENDER) + " - /admin_help", 'info')
         return
@@ -121,12 +170,17 @@ def register_admin_handlers(client, admins1, admins2):
     #/message admin
     @client.on(events.NewMessage(pattern=r'^/message$'))
     async def message_command(event):
-        sender = await event.get_sender()
-        SENDER = sender.id
-        if "U" + str(SENDER) not in admins1:
-            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+        if format_id(event.sender_id) != main_admin:
+            await client.send_message(event.sender_id, "Nu ai acces!", parse_mode="HTML")
             return
-        text = "Select the recipient:"
+        if draft:
+            await event.reply("Finish or cancel current message draft.")
+            return
+        if broadcast_task and not broadcast_task.done():
+            await event.reply("One broadcast is already scheduled or running.")
+            return
+
+        draft["step"] = "recipient"
         buttons = [
             Button.inline("Myself", data=b"to1"),
             Button.inline("TI-241", data=b"to2"),
@@ -137,43 +191,25 @@ def register_admin_handlers(client, admins1, admins2):
             Button.inline("Year 3", data=b"to8"),
             Button.inline("Year 4", data=b"to9"),
             Button.inline("All users", data=b"to5")
-            
         ]
-        buttons = button_grid(buttons, 2)
-        await client.send_message(SENDER, text, buttons=buttons)
+        message = await event.reply("Select the recipient:", buttons=button_grid(buttons, 2))
+        draft["button_message_id"] = message.id
 
-    #message callback
-    @client.on(events.CallbackQuery(pattern=lambda x: x.startswith(b"to")))
+    @client.on(events.CallbackQuery(pattern=rb"^to[1-9]$"))
     async def message_callback(event):
-        sender = await event.get_sender()
-        SENDER = sender.id
-        data = event.data.decode('utf-8')
-        
-        if not data.startswith("to"):
+        if format_id(event.sender_id) != main_admin:
             return
-        global to_who, useridd, when, text, input_step, media_path, lang_filter
-        useridd = 0
-        to_who = int(data[2])
-        input_step = 1
-        media_path = None
-        lang_filter = None
-        recipient_dict = {
-            1: "Myself",
-            2: "TI-241",
-            3: "Notifon users",
-            4: "A user",
-            5: "All users",
-            6: "Year 1",
-            7: "Year 2",
-            8: "Year 3",
-            9: "Year 4"
-        }
-        await event.answer()
-        await client.edit_message(SENDER, event.message_id, "Selected: " + recipient_dict.get(to_who))
+        if draft.get("step") != "recipient" or draft.get("button_message_id") != event.message_id:
+            await event.answer("This message draft expired.", alert=True)
+            return
 
-        # Myself, Notifon, All users, year 1/2/3/4 - also choose language to who to send
-        lang_display = {b"message_lang_ro": "Romanian 🇷🇴", b"message_lang_ru": "Russian 🇷🇺", b"message_lang_en": "English 🇬🇧", b"message_lang_notset": "Not set ❓", b"message_lang_all": "All 🌐"}
-        if to_who in [1, 3, 5, 6, 7, 8, 9]:
+        recipient = int(event.data[2:])
+        draft.update(recipient=recipient, user_id=0, language=None)
+        await event.answer()
+        await event.edit("Selected: " + recipient_names[recipient])
+
+        if recipient in language_recipients:
+            draft["step"] = "language"
             lang_buttons = [
                 Button.inline("RO 🇷🇴", data=b"message_lang_ro"),
                 Button.inline("RU 🇷🇺", data=b"message_lang_ru"),
@@ -181,114 +217,141 @@ def register_admin_handlers(client, admins1, admins2):
                 Button.inline("Not set ❓", data=b"message_lang_notset"),
                 Button.inline("All 🌐", data=b"message_lang_all")
             ]
-            await client.send_message(SENDER, "Select the language of the recipients:", buttons=button_grid(lang_buttons, 3))
-
-            @client.on(events.CallbackQuery(pattern=lambda x: x in [b"message_lang_ro", b"message_lang_ru", b"message_lang_en", b"message_lang_notset", b"message_lang_all"]))
-            async def lang_callback(event):
-                global lang_filter
-                if (await event.get_sender()).id != SENDER:
-                    return
-                lang_filter = event.data.decode('utf-8').split("_")[2]  # ro, ru, en, all
-                displayed_lang = lang_display.get(event.data)
-                #lang_filter = lang_map.get(event.data)
-                await event.answer(f"Language: {displayed_lang}")
-                await client.edit_message(SENDER, event.message_id, f"Language selected: {displayed_lang}")
-                client.remove_event_handler(lang_callback, events.CallbackQuery())
-
-        if to_who == 4:
-            await client.send_message(SENDER, "Please enter the user ID(as int):")
+            message = await client.send_message(event.sender_id, "Select the language of the recipients:", buttons=button_grid(lang_buttons, 3))
+            draft["button_message_id"] = message.id
+        elif recipient == 4:
+            draft["step"] = "user"
+            draft.pop("button_message_id", None)
+            await client.send_message(event.sender_id, "Please enter the user ID(as int):")
         else:
-            input_step = 2
-            await client.send_message(SENDER, "Please enter the time in HH:MM format or \"Now\":")
+            draft["step"] = "time"
+            draft.pop("button_message_id", None)
+            await client.send_message(event.sender_id, 'Please enter the time in HH:MM format or "Now":')
 
-        @client.on(events.NewMessage(from_users=SENDER))
-        async def handle_input(event):
-            global input_step, useridd, when, text, media_path, lang_filter
-            user_input = event.text
+    @client.on(events.CallbackQuery(pattern=rb"^message_lang_(ro|ru|en|notset|all)$"))
+    async def message_language(event):
+        if format_id(event.sender_id) != main_admin:
+            return
+        if draft.get("step") != "language" or draft.get("button_message_id") != event.message_id:
+            await event.answer("This message draft expired.", alert=True)
+            return
 
-            if input_step == 1 and to_who == 4:
-                useridd = int(user_input)
-                input_step = 2
-                await client.send_message(SENDER, "Please enter the time in HH:MM format or \"Now\":")
-            elif input_step == 2:
-                when = user_input
-                input_step = 3
-                await client.send_message(SENDER, "Send your message (text or attach image/file with caption):")
-            elif input_step == 3:
-                # Check if there's media attached
-                has_media = event.media is not None
-                
-                if has_media:
-                    try:
-                        # Download the media
-                        timestamp = datetime.datetime.now(moldova_tz).strftime("%Y%m%d_%H%M%S")
-                        sender_id = str(SENDER)[-6:]  # Last 6 digits of sender ID
-                        filename = f"message_{timestamp}_{sender_id}"
-                        media_path = await event.download_media(f"temp/{filename}")
-                        text = event.text  # Caption becomes the text
-                    except Exception as e:
-                        send_logs(f"Error downloading media: {e}", 'error')
-                        await client.send_message(SENDER, f"Error with media: {e}")
-                        return
-                else:
-                    text = user_input
-                    media_path = None
-                
-                client.remove_event_handler(handle_input, events.NewMessage(from_users=SENDER))
+        draft["language"] = event.data.decode().rsplit("_", 1)[1]
+        draft["step"] = "time"
+        draft.pop("button_message_id", None)
+        await event.answer()
+        await event.edit(f"Language selected: {draft['language']}")
+        await client.send_message(event.sender_id, 'Please enter the time in HH:MM format or "Now":')
 
-                summary = f"\nSend to: {recipient_dict.get(to_who)}"
-                if useridd != 0:
-                    summary += f"\nUser ID: {useridd}"
-                if to_who in [1, 3, 5, 6, 7, 8, 9]:
-                    summary += f"\nLanguage filter: {lang_display.get(b"message_lang_" + lang_filter.encode())}"
-                summary += f"\nTime: {when}"
-                
-                if media_path:
-                    summary += f"\nMessage with media: \n{text}"
-                else:
-                    summary += f"\nMessage: \n{text}"
-                
-                await client.send_message(SENDER, summary)
-                
-                buttons = button_grid([Button.inline("Yes", data=b"send_mess_yes"), Button.inline("No", data=b"send_mess_no")], 2)
-                await client.send_message(SENDER, "Send the message?", buttons=buttons)
+    @client.on(events.NewMessage(from_users=int(main_admin[1:])))
+    async def message_input(event):
+        user_input = event.text or ""
+        if not draft or user_input.startswith("/"):
+            return
 
-                @client.on(events.CallbackQuery(pattern=lambda x: x in [b"send_mess_yes", b"send_mess_no"]))
-                async def confirmation_callback(event):
-                    global to_who, when, useridd, text, media_path, lang_filter
-                    sender = await event.get_sender()
-                    SENDER = sender.id
-                    if event.data == b"send_mess_yes":
-                        try:
-                            await event.answer("Scheduling message...")
-                            await client.edit_message(SENDER, event.message_id, "Message scheduled successfully!")
-                            await send_mess(to_who, when, useridd)
-                        except Exception as e:
-                            send_logs(f"Error confirmation_callback(yes): {e}", 'error')
-                    elif event.data == b"send_mess_no":
-                        try:
-                            await event.answer("Canceling...")
-                            await client.edit_message(SENDER, event.message_id, "Message sending canceled.")
-                            # Clean up media file if exists
-                            if media_path and os.path.exists(media_path):
-                                os.remove(media_path)
-                                send_logs(f"Removed temp file: {media_path}", 'info')
-                        except Exception as e:
-                            send_logs(f"Error confirmation_callback(no): {e}", 'error')
-                    client.remove_event_handler(confirmation_callback, events.CallbackQuery())
+        step = draft.get("step")
+        if step == "user":
+            try:
+                draft["user_id"] = int(user_input)
+            except ValueError:
+                await event.reply("User ID must be an integer.")
+                return
+            draft["step"] = "time"
+            await event.reply('Please enter the time in HH:MM format or "Now":')
+            return
+
+        if step == "time":
+            if user_input.lower() != "now":
+                try:
+                    datetime.datetime.strptime(user_input, "%H:%M")
+                except ValueError:
+                    await event.reply('Invalid time. Use HH:MM or "Now".')
+                    return
+            draft["time"] = user_input
+            draft["step"] = "content"
+            await event.reply("Send your message (text or attach image/file with caption):")
+            return
+
+        if step != "content":
+            return
+        if not user_input and not event.media:
+            return
+
+        try:
+            draft["media_path"] = await event.download_media("temp/") if event.media else None
+        except Exception as error:
+            send_logs(f"Error downloading media: {error}", "error")
+            await event.reply(f"Error with media: {error}")
+            return
+
+        draft["text"] = user_input
+        draft["step"] = "confirm"
+        summary = f"\nSend to: {recipient_names[draft['recipient']]}"
+        if draft["user_id"]:
+            summary += f"\nUser ID: {draft['user_id']}"
+        if draft["recipient"] in language_recipients:
+            summary += f"\nLanguage filter: {draft['language']}"
+        summary += f"\nTime: {draft['time']}\nMessage: \n{draft['text']}"
+        await event.reply(summary)
+        message = await event.reply(
+            "Send the message?",
+            buttons=[[Button.inline("Yes", data=b"send_mess_yes"), Button.inline("No", data=b"send_mess_no")]],
+        )
+        draft["button_message_id"] = message.id
+
+    @client.on(events.CallbackQuery(pattern=rb"^send_mess_(yes|no)$"))
+    async def message_confirmation(event):
+        nonlocal broadcast_task
+        if format_id(event.sender_id) != main_admin:
+            return
+        if draft.get("step") != "confirm" or draft.get("button_message_id") != event.message_id:
+            await event.answer("This message draft expired.", alert=True)
+            return
+
+        if event.data == b"send_mess_no":
+            clear_draft()
+            await event.answer()
+            await event.edit("Message sending canceled.")
+            return
+
+        campaign = draft.copy()
+        draft.clear()
+        broadcast_task = asyncio.create_task(send_mess(campaign))
+        broadcast_task.add_done_callback(finish_broadcast)
+        await event.answer("Scheduling message...")
+        await event.edit("Message scheduled successfully!")
 
     #send the custom message
-    async def send_mess(to_who, when, useridd):
-        global text, media_path, lang_filter
-        
-        now = datetime.datetime.now(moldova_tz).time()
-        current_time = datetime.datetime.strptime(str(now)[:-7], "%H:%M:%S")
-        if when == "Now" or when == "now":
-            scheduled = current_time
-        else:
-            scheduled = datetime.datetime.strptime(when, "%H:%M")
-        
+    async def send_mess(campaign):
+        to_who = campaign["recipient"]
+        when = campaign["time"]
+        useridd = campaign["user_id"]
+        text = campaign["text"]
+        media_path = campaign.get("media_path")
+        lang_filter = campaign.get("language")
+        def cleanup_media():
+            if media_path and os.path.exists(media_path):
+                os.remove(media_path)
+                send_logs(f"Removed temp file: {media_path}", 'info')
+
         try:
+            if when.lower() != "now":
+                scheduled = datetime.datetime.strptime(when, "%H:%M").time()
+                now = datetime.datetime.now(moldova_tz)
+                target_time = now.replace(
+                    hour=scheduled.hour,
+                    minute=scheduled.minute,
+                    second=0,
+                    microsecond=0,
+                )
+                if target_time <= now:
+                    target_time += datetime.timedelta(days=1)
+                try:
+                    await asyncio.sleep((target_time - now).total_seconds())
+                except asyncio.CancelledError:
+                    cleanup_media()
+                    raise
+
             if to_who == 1:
                 all_users = db.get_all_users_with('SENDER', main_admin)
             elif to_who == 2:
@@ -308,13 +371,16 @@ def register_admin_handlers(client, admins1, admins2):
                 send_logs(f"Sending to Year {to_who - 5}", 'info')
             else:
                 send_logs("No users to send a message", 'info')
+                cleanup_media()
                 return
                 
             if len(all_users) == 0:
                 send_logs("No users found to send message to", 'warning')
+                cleanup_media()
                 return
         except Exception as e:
             send_logs(f"Error retrieving users for message: {e}", 'error')
+            cleanup_media()
             return
         
         # Apply language filter for group broadcasts
@@ -326,64 +392,52 @@ def register_admin_handlers(client, admins1, admins2):
                     all_users = all_users[all_users['lang'] == lang_filter]
                 send_logs(f"Filtered by language '{lang_filter}': {len(all_users)} users", 'info')
         
-        if when != "Now" and when != "now":
-            send_logs("waiting to send a message - " + str(scheduled - current_time), 'info')
-            await asyncio.sleep((scheduled - current_time).total_seconds())
-        
-        # upload to telegram once
-        uploaded_media = None
-        if media_path and os.path.exists(media_path):
-            try:
-                uploaded_media = await client.upload_file(media_path)
-            except Exception as e:
-                send_logs(f"Error uploading media initially: {e}", 'error')
+        try:
+            uploaded_media = None
+            if media_path and os.path.exists(media_path):
+                try:
+                    uploaded_media = await client.upload_file(media_path)
+                except Exception as e:
+                    send_logs(f"Error uploading media initially: {e}", 'error')
 
-        sent_count = 0
-        error_count = 0
-        total_users = len(all_users)
-        send_logs(f"Starting broadcast to {total_users} users...", 'info')
+            sent_count = 0
+            error_count = 0
+            total_users = len(all_users)
+            send_logs(f"Starting broadcast to {total_users} users...", 'info')
 
-        for i, (_, row) in enumerate(all_users.iterrows()):
-            user = row['SENDER']
-            try:
-                sender = int(user[1:])
-                if uploaded_media:
-                    # pre-uploaded media
-                    await client.send_file(
-                        sender,
-                        uploaded_media,
-                        caption=text,
-                        parse_mode="Markdown"
-                    )
-                elif media_path and os.path.exists(media_path):
-                    # fallback to local path
-                    await client.send_file(
-                        sender,
-                        media_path,
-                        caption=text,
-                        parse_mode="Markdown"
-                    )
-                else:
-                    # Send text only
-                    await client.send_message(sender, text, parse_mode="Markdown")
-                
-                sent_count += 1
-            except Exception as e:
-                error_count += 1
-                #send_logs(f"Error sending message to {user}: {e}", 'error')
-            
-            await asyncio.sleep(0.05) # max 20 messages per second
-            chunk = max(1, total_users // 10)
-            if (i + 1) % chunk == 0:
-                send_logs(f"Broadcast progress: {i + 1}/{total_users}", 'info')
+            for i, (_, row) in enumerate(all_users.iterrows()):
+                user = row['SENDER']
+                try:
+                    sender = int(user[1:])
+                    if uploaded_media:
+                        await client.send_file(
+                            sender,
+                            uploaded_media,
+                            caption=text,
+                            parse_mode="Markdown"
+                        )
+                    elif media_path and os.path.exists(media_path):
+                        await client.send_file(
+                            sender,
+                            media_path,
+                            caption=text,
+                            parse_mode="Markdown"
+                        )
+                    else:
+                        await client.send_message(sender, text, parse_mode="Markdown")
 
-        send_logs(f"Broadcast finished. Sent to {sent_count}/{total_users} users (Errors: {error_count}).", 'info')
-        
-        # Clean up after sending
-        if media_path and os.path.exists(media_path):
-            os.remove(media_path)
-            text = ""
-            send_logs(f"Removed temp file: {media_path}", 'info')
+                    sent_count += 1
+                except Exception:
+                    error_count += 1
+
+                await asyncio.sleep(1 / 15)
+                chunk = max(1, total_users // 10)
+                if (i + 1) % chunk == 0:
+                    send_logs(f"Broadcast progress: {i + 1}/{total_users}", 'info')
+
+            send_logs(f"Broadcast finished. Sent to {sent_count}/{total_users} users (Errors: {error_count}).", 'info')
+        finally:
+            cleanup_media()
 
     #/debug_next admin
     @client.on(events.NewMessage(pattern=r'^/debug_next$'))
@@ -644,6 +698,9 @@ def register_admin_handlers(client, admins1, admins2):
     async def cancel_restore(event):
         sender = await event.get_sender()
         SENDER = sender.id
+        if format_id(SENDER) != main_admin:
+            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+            return
         global backup_to_restore
         backup_to_restore = None
         await client.edit_message(SENDER, event.message_id, "Database restoration cancelled.")
@@ -654,6 +711,9 @@ def register_admin_handlers(client, admins1, admins2):
         nonlocal backup_to_restore
         sender = await event.get_sender()
         SENDER = sender.id
+        if format_id(SENDER) != main_admin:
+            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+            return
         
         if not isinstance(backup_to_restore, list):
             await event.answer("No backups available")
@@ -711,46 +771,98 @@ def register_admin_handlers(client, admins1, admins2):
                 send_logs(f"Database restore failed from {backup_to_restore}", 'error')
                 await client.edit_message(SENDER, event.message_id, f"❌ Database restore failed")
 
-    #/new_year admin
-    @client.on(events.NewMessage(pattern=r'^/new_year$'))
-    async def new_year(event):
+    @client.on(events.NewMessage(pattern=r'^/auto_migrate$'))
+    async def auto_migrate(event):
         sender = await event.get_sender()
         SENDER = sender.id
         if format_id(SENDER) != main_admin:
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
-        #1 year passed
-        #update all users year_n field
-        await client.send_message(SENDER,
-                f"⚠️ WARNING: This will update all users' year by +1\n\nDo you want to continue?",
-                buttons=[
-                    [Button.inline("Yes, update years", data=b"confirm_update_years")],
-                    [Button.inline("Cancel", data=b"cancel_update_years")]
-                ])
 
-    @client.on(events.CallbackQuery(pattern=b"confirm_update_years"))
-    async def confirm_update_years(event):
+        plan = plan_year_migration(db.get_all_users(), group_list)
+        unknown_text = "\n".join(
+            f"  {group}: {count}"
+            for group, count in plan["unknown"].most_common(20)
+        ) or "  none"
+        if len(plan["unknown"]) > 20:
+            unknown_text += f"\n  ...and {len(plan['unknown']) - 20} more; see logs"
+        ambiguous_text = "\n".join(
+            f"  {group}: {count}"
+            for group, count in plan["ambiguous"].most_common(20)
+        ) or "  none"
+        if len(plan["ambiguous"]) > 20:
+            ambiguous_text += f"\n  ...and {len(plan['ambiguous']) - 20} more; see logs"
+        text = (
+            "Academic year migration preview\n\n"
+            f"Will update: {len(plan['updates'])}\n"
+            f"Already correct: {plan['correct']}\n"
+            f"No group: {plan['no_group']}\n"
+            f"Unknown groups: {sum(plan['unknown'].values())}\n"
+            f"Ambiguous groups: {sum(plan['ambiguous'].values())}\n\n"
+            f"Unknown:\n{unknown_text}\n\n"
+            f"Ambiguous:\n{ambiguous_text}"
+        )
+        message = await client.send_message(
+            SENDER,
+            text,
+            buttons=[
+                [Button.inline("Apply migration", data=b"apply_auto_migrate")],
+                [Button.inline("Cancel", data=b"cancel_auto_migrate")],
+            ],
+        )
+        pending_auto_migrations.clear()
+        pending_auto_migrations[message.id] = plan["updates"]
+        send_logs(
+            f"Auto migration preview: {len(plan['updates'])} updates, "
+            f"{sum(plan['unknown'].values())} unknown, "
+            f"{sum(plan['ambiguous'].values())} ambiguous",
+            "info",
+        )
+        if plan["unknown"]:
+            send_logs(f"Auto migration unknown groups: {dict(plan['unknown'])}", "warning")
+        if plan["ambiguous"]:
+            send_logs(f"Auto migration ambiguous groups: {dict(plan['ambiguous'])}", "warning")
+
+    @client.on(events.CallbackQuery(
+        pattern=lambda data: data in {b"apply_auto_migrate", b"cancel_auto_migrate"}
+    ))
+    async def confirm_auto_migrate(event):
         sender = await event.get_sender()
         SENDER = sender.id
 
-        await event.answer("Updating user years...")
-        await client.edit_message(SENDER, event.message_id, "Updating user years...")
+        if format_id(SENDER) != main_admin:
+            await event.answer("Nu ai acces!", alert=True)
+            return
 
-        if db.update_user_years():
-            await client.edit_message(SENDER, event.message_id, "All users' year has been updated successfully.")
-            send_logs("All users' year has been updated successfully.", 'info')
-        else:
-            await client.edit_message(SENDER, event.message_id, "Failed to update user years.")
-            send_logs("Failed to update user years.", 'error')
+        updates = pending_auto_migrations.pop(event.message_id, None)
+        if updates is None:
+            await event.answer("Migration preview expired.", alert=True)
+            return
 
-    @client.on(events.CallbackQuery(pattern=b"cancel_update_years"))
-    async def cancel_update_years(event):
-        sender = await event.get_sender()
-        SENDER = sender.id
+        if event.data == b"cancel_auto_migrate":
+            await event.answer("Migration cancelled.")
+            await client.edit_message(SENDER, event.message_id, "Academic year migration cancelled.")
+            return
 
-        await event.answer("Update cancelled.")
-        await client.edit_message(SENDER, event.message_id, "Update cancelled.")
-        send_logs("User cancelled update user years.", 'info')
+        await event.answer("Migrating user years...")
+        await client.edit_message(SENDER, event.message_id, "Academic year migration in progress...")
+        try:
+            changed = db.update_user_years_from_groups(updates)
+        except Exception as error:
+            send_logs(f"Academic year migration failed: {error}", "error")
+            await client.edit_message(
+                SENDER,
+                event.message_id,
+                "Academic year migration failed. No partial update committed.",
+            )
+            return
+
+        send_logs(f"Academic year migration completed: {changed} users updated", "info")
+        await client.edit_message(
+            SENDER,
+            event.message_id,
+            f"Academic year migration completed: {changed} users updated.",
+        )
 
     #/admin/unadmin/list_admin/add_admin commands
     @client.on(events.NewMessage(pattern=r'^/admin$'))
@@ -867,34 +979,36 @@ def register_admin_handlers(client, admins1, admins2):
             if file_event.text and file_event.text.startswith('/'):
                 return
 
-            if file_event.media and hasattr(file_event.media, 'document') and file_event.file.name.endswith('.xlsx'):
+            if file_event.media and file_event.file.name and file_event.file.name.endswith('.xlsx'):
                 await file_event.reply(f"File received for Year {year_selected}. Processing...")
-                # Download the file
-                file_path = await file_event.download_media(f"temp/schedule_year_{year_selected}.xlsx")
-                send_logs(f"User {SENDER} uploaded schedule for Year {year_selected}", 'info')
-                
-                # Process the schedule file
+                schedule_dir = Path("schedules")
+                target = schedule_dir / f"orar{year_selected}.xlsx"
+                staged = schedule_dir / f".orar{year_selected}.{file_event.id}.upload.xlsx"
+
                 try:
-                    if process_schedule_file(f"temp/schedule_year_{year_selected}.xlsx", year_selected):
-                        await client.send_message(SENDER, f"✅ Schedule for Year {year_selected} updated successfully.")
-                        send_logs(f"Schedule for Year {year_selected} updated successfully.", 'info')
-                    else:
-                        await client.send_message(SENDER, f"❌ Failed to update schedule for Year {year_selected}. Check the file format.")
-                        send_logs(f"Failed to update schedule for Year {year_selected}.", 'error')
-                except Exception as e:
-                    send_logs(f"Error processing schedule for Year {year_selected}: {str(e)}", 'error')
-                    await client.send_message(SENDER, f"Error processing schedule: {str(e)}")
-                
-                # Replace the old schedule file
-                try:
-                    import shutil
-                    shutil.copy2(f"../temp/schedule_year_{year_selected}.xlsx", f"../schedules/orar{year_selected}.xlsx")
-                    os.remove(f"../temp/schedule_year_{year_selected}.xlsx")  # Clean up temp file after copying
-                    send_logs(f"Replaced old schedule file for Year {year_selected}", 'info')
-                    await client.send_message(SENDER, f"Old schedule file for Year {year_selected} replaced successfully.")
-                except Exception as e:
-                    send_logs(f"Error replacing schedule file for Year {year_selected}: {str(e)}", 'error')
-                    await client.send_message(SENDER, f"Error replacing schedule file: {str(e)}")
+                    staged.unlink(missing_ok=True)
+                    await file_event.download_media(str(staged))
+                    schedule, groups = load_schedule_file(staged)
+                    os.replace(staged, target)
+                    activate_schedule(schedule, groups, year_selected)
+
+                    _, new_specialties, new_group_list = write_groups_to_json()
+                    if new_specialties is None or new_group_list is None:
+                        raise RuntimeError("group catalog refresh failed; restart required")
+
+                    specialties.clear()
+                    specialties.update(new_specialties)
+                    group_list.clear()
+                    group_list.update(new_group_list)
+                except Exception as error:
+                    send_logs(f"Schedule update failed for Year {year_selected}: {error}", "error")
+                    await client.send_message(SENDER, f"Schedule update failed: {error}")
+                    return
+                finally:
+                    staged.unlink(missing_ok=True)
+
+                send_logs(f"Schedule for Year {year_selected} updated successfully", "info")
+                await client.send_message(SENDER, f"✅ Schedule for Year {year_selected} updated successfully.")
             else:
                 await file_event.reply("Please send a valid .xlsx file or type /update_schedule to start over.")
     
@@ -924,6 +1038,47 @@ def register_admin_handlers(client, admins1, admins2):
         except Exception as e:
             send_logs(f"Error showing contributors: {str(e)}", 'error')
             await client.send_message(SENDER, f"Erroare la afisare contribuitori", parse_mode="HTML")
+
+    #/holidays admin
+    def _render_holiday_view():
+        state = db.get_app_setting("holiday_mode", "0")
+        if state == "1":
+            text = "Holiday mode: <b>ON</b>\nScheduled notifications are paused."
+            button = Button.inline("Turn OFF", b"holiday_set_0")
+        else:
+            text = "Holiday mode: <b>OFF</b>\nScheduled notifications are active."
+            button = Button.inline("Turn ON", b"holiday_set_1")
+        return text, [[button]]
+
+    @client.on(events.NewMessage(pattern=r'^/holidays$'))
+    async def holidays_cmd(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+        if format_id(SENDER) not in admins1:
+            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+            send_logs(format_id(SENDER) + " - /holidays - no acces", "info")
+            return
+        text, buttons = _render_holiday_view()
+        await client.send_message(SENDER, text, buttons=buttons, parse_mode="HTML")
+
+    @client.on(events.CallbackQuery(pattern=rb"^holiday_set_(0|1)$"))
+    async def holidays_cb(event):
+        sender = await event.get_sender()
+        SENDER = sender.id
+        if format_id(SENDER) not in admins1:
+            await event.answer("No access", alert=True)
+            return
+        requested = event.data.decode().rsplit("_", 1)[1]  # "0" or "1"
+        try:
+            db.set_app_setting("holiday_mode", requested)
+        except Exception as e:
+            send_logs(f"{format_id(SENDER)} - holiday_mode write FAILED: {e}", "error")
+        actual = db.get_app_setting("holiday_mode", "0")
+        text, buttons = _render_holiday_view()
+        if actual != requested:
+            text = "<b>Write failed — state unchanged.</b>\n\n" + text
+        await event.edit(text, buttons=buttons, parse_mode="HTML")
+        send_logs(f"{format_id(SENDER)} - holiday_mode requested={requested} actual={actual}", "info")
 
     #/edit_contrib admin
     @client.on(events.NewMessage(pattern=r'^/edit_contrib$'))

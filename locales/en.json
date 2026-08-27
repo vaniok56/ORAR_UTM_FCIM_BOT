@@ -1,7 +1,7 @@
 {
     "_comment1": "====================General====================",
     "lang_changed": "✅ Language changed to English!",
-    "start_message": "Hello {first_name}👋\nWelcome to the UTM FCIM schedule bot!\n\n⚠️ NOTE: Currently only schedules for years 1 and 2 are available!\n\nTo get started:\n1️⃣ Select your group\n2️⃣ Optionally, choose your subgroup\n\n📋 See all available commands with /help\n📞 For support use /contacts\n\n⚠️ WARNING! __**The schedule may not be up to date**__, I am not responsible for absences.",
+    "start_message": "Hello {first_name}👋\nWelcome to the UTM FCIM schedule bot!\n\nTo get started:\n1️⃣ Select your group\n2️⃣ Optionally, choose your subgroup\n\n📋 See all available commands with /help\n📞 For support use /contacts\n\n⚠️ WARNING! __**The schedule may not be up to date**__, I am not responsible for absences.",
     "contacts_text": "Hello! This bot was created to simplify access to the UTM FCIM schedule. The bot is continuously being developed and improved.\n\n⚠️ __**The schedule may not be up to date**__, I am not responsible for absences.\n\nFor questions and suggestions:\n👤 Telegram: [@vaniok56](https://t.me/vaniok56)\n💻 Github: [ORAR_UTM_FCIM_BOT](https://github.com/vaniok56/ORAR_UTM_FCIM_BOT)\n",
     "_comment2": "====================Buttons====================",
     "btn_today": "Today's schedule 📅",

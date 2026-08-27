@@ -9,7 +9,7 @@ import os
 import handlers.db as db
 from functions import print_day, print_sapt, print_next_course, button_grid, send_logs, get_next_course_time, is_rate_limited, format_id, get_version, write_groups_to_json, get_online_schedule_versions, get_local_schedule_versions
 write_groups_to_json()
-from functions import cur_group, hours, week_days, is_even
+from functions import cur_group, hours, week_days, is_even, bulk_send_shift_earlier
 from dynamic_group_lists import years, group_list, specialties
 
 import handlers.admin_handlers as admin_handlers
@@ -60,10 +60,11 @@ admins1 = db.get_admins(1)
 admins2 = db.get_admins(2)
 
 noti_send = 0
+bulk_send_interval = 1 / 15
 
 latest_version, latest_date = get_version()
 
-admin_handlers.register_admin_handlers(client, admins1, admins2)
+admin_handlers.register_admin_handlers(client, admins1, admins2, specialties, group_list)
 group_handlers.register_group_handlers(client, years, specialties, group_list)
 
 # Helper to get user lang
@@ -110,6 +111,23 @@ async def lang_callback(event):
     await client.send_message(SENDER, text, buttons=button_rows)
     send_logs(format_id(SENDER) + f" - lang set to {chosen_lang}", 'info')
 
+@client.on(events.CallbackQuery(pattern=lambda x: x.startswith(b"start_lang_")))
+async def start_lang_callback(event):
+    sender = await event.get_sender()
+    chosen_lang = event.data.decode().replace("start_lang_", "")
+    if chosen_lang not in SUPPORTED_LANGS:
+        return
+
+    db.update_user_field(format_id(sender.id), 'lang', chosen_lang)
+    await event.answer()
+    await client.send_message(
+        sender.id,
+        get_text(chosen_lang, "start_message", first_name=sender.first_name),
+        parse_mode="Markdown",
+        buttons=button_grid(build_start_kb(chosen_lang), 2),
+        link_preview=False,
+    )
+
 #/start
 @client.on(events.NewMessage(pattern="/start")) 
 async def startt(event):
@@ -118,7 +136,6 @@ async def startt(event):
     if is_rate_limited(SENDER):
         send_logs(f"Rate limited user: {SENDER}", 'warning')
         return
-    first_name = sender.first_name
 
     #add the user to users
     if not db.is_user_exists(format_id(SENDER)):
@@ -128,25 +145,11 @@ async def startt(event):
 
     text = "🌐 Choose language / Alege limba / Выберите язык:"
     lang_buttons = [
-        Button.inline(label, data=f"lang_{code}".encode())
+        Button.inline(label, data=f"start_lang_{code}".encode())
         for code, label in SUPPORTED_LANGS.items()
     ]
     button_rows = button_grid(lang_buttons, 3)
     await client.send_message(SENDER, text, buttons=button_rows)
-
-    @client.on(events.CallbackQuery(pattern=lambda x: x.startswith(b"lang_")))
-    async def start_lang_callback(event):
-        lang = event.data.decode().replace("lang_", "")
-        text = get_text(lang, "start_message", first_name=first_name)
-        
-        buttons_in_row = 2
-        button_rows = button_grid(build_start_kb(lang), buttons_in_row)
-
-        await client.send_message(SENDER, text, parse_mode="Markdown", buttons=button_rows, link_preview=False)
-
-        # Kill this handler so no repeated start messages
-        event.client.remove_event_handler(start_lang_callback)
-        return
 
 #notif button handle
 @client.on(events.CallbackQuery(pattern = lambda x: x in [b"noti_on", b"noti_off"]))
@@ -494,9 +497,8 @@ def prepare_next_courses(week_day, is_even, course_index):
     
     return next_courses
 
-async def send_notification(sender, next_course_data, wait_time):
+async def send_notification(sender, next_course_data):
     global noti_send
-    await asyncio.sleep(wait_time)
     
     #re-check if notifications are still enabled for this user
     if db.locate_field(format_id(sender), 'noti') != 1:
@@ -514,68 +516,81 @@ async def send_notification(sender, next_course_data, wait_time):
         return False
 
 #send current course to users with notifications on
-async def send_curr_course_users(week_day, is_even):
+async def send_curr_course_users():
     global noti_send
     while True:
+        now = datetime.datetime.now(moldova_tz)
+        week_day = now.weekday()
+        is_even = now.isocalendar().week % 2
         noti_send = 0
         
         #get next course time, index and time before course
         current_time, course_index, time_before_course = get_next_course_time()
+
+        if db.get_app_setting("holiday_mode", "0") == "1":
+            wait_time = (time_before_course - current_time).total_seconds() + 900 # Add 15 minutes buffer
+            if wait_time < 1:
+                send_logs("Holiday mode active - no more courses today. Waiting 4h.", 'info')
+                await asyncio.sleep(14400)
+            else:
+                send_logs(f"Holiday mode active - skipping next course notifications. Waiting {wait_time:.0f}s.", 'info')
+                await asyncio.sleep(wait_time)
+            continue
 
         #prepare next courses for all users
         next_courses = prepare_next_courses(week_day, is_even, course_index)
 
         #if no more courses today, wait and retry
         wait_time = (time_before_course - current_time).total_seconds()
-        if wait_time < 1:
+        if wait_time < 0:
             send_logs("No more courses for today. Waiting - 4:00:00", 'info')
             await asyncio.sleep(14400)  # Wait 4 hours
-            return await send_curr_course_users(week_day, is_even)
+            continue
         
         if next_courses:
             send_logs(f"Waiting for next course - {time_before_course - current_time}", 'info')
             
             #create and schedule tasks for all notifications
-            tasks = [
-                send_notification(sender, course, wait_time) 
-                for sender, course in next_courses.items()
-            ]
+            await asyncio.sleep(max(wait_time, 0))
+            for sender, course in next_courses.items():
+                await send_notification(sender, course)
+                await asyncio.sleep(bulk_send_interval)
             
-            await asyncio.gather(*tasks)
             send_logs(f"Sent next course to {noti_send} users", 'info')
         else:
             send_logs(f"No users have the next course. Waiting - {time_before_course - current_time}", 'info')
-            await asyncio.sleep(wait_time)
+            await asyncio.sleep(max(wait_time, 1))
         
 
 #send schedule for tomorrow to users with notifications on
 async def send_schedule_tomorrow():
     while True:
         try:
-            #gain vars
             now = datetime.datetime.now(moldova_tz)
-            current_time = datetime.datetime.strptime(str(now.time())[:-7], "%H:%M:%S")
-            
-            # Calculate tomorrow and its weekday
-            tomorrow = now + datetime.timedelta(days=1)
-            week_day = int(tomorrow.weekday())
+
+            target_time = (
+                now.replace(hour=20, minute=0, second=0, microsecond=0) - bulk_send_shift_earlier
+            )
+            if target_time <= now:
+                target_time += datetime.timedelta(days=1)
+
+            wait_seconds = (target_time - now).total_seconds()
+            send_logs(
+                f"Starting tomorrow-schedule delivery at "
+                f"{target_time.strftime('%H:%M')} "
+                f"({wait_seconds / 60:.1f} minutes)",
+                "info",
+            )
+            await asyncio.sleep(max(wait_seconds, 1))
+
+            tomorrow = datetime.datetime.now(moldova_tz) + datetime.timedelta(days=1)
+            week_day = tomorrow.weekday()
             temp_is_even = tomorrow.isocalendar().week % 2
-            
-            # Set target time to 20:00 today
-            scheduled = datetime.datetime.strptime("20:00:00", "%H:%M:%S")
-            
-            # If it's already past 20:00, set target to tomorrow
-            wait_seconds = (scheduled - current_time).total_seconds()
-            if wait_seconds < 0:
-                send_logs("Already past schedule time, waiting until tomorrow 20:00", 'info')
-                target_time = now.replace(hour=20, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)
-                wait_seconds = (target_time - now).total_seconds()
-            else:
-                send_logs(f"Waiting until 20:00 to send tomorrow's schedule - {wait_seconds/60:.1f} minutes", 'info')
-            
-            # Wait until scheduled time
-            await asyncio.sleep(wait_seconds)
-            
+
+            if db.get_app_setting("holiday_mode", "0") == "1":
+                send_logs("holiday_mode active - skipping tomorrow-schedule broadcast", "info")
+                continue
+
             # Get users with notifications enabled
             all_users = db.get_all_users()
             filtered_users = all_users[
@@ -609,6 +624,8 @@ async def send_schedule_tomorrow():
                         noti_day += 1
                 except Exception as e:
                     send_logs(f"Error sending schedule to {row['SENDER']}: {e}", 'error')
+
+                await asyncio.sleep(bulk_send_interval)
                     
             send_logs(f"Successfully sent tomorrow's schedule to {noti_day} users", 'info')
             
@@ -662,7 +679,8 @@ if __name__ == '__main__':
     async def main():
         await client.start(bot_token=BOT_TOKEN)
         loop = client.loop
-        loop.create_task(send_curr_course_users(week_day, is_even))
+
+        loop.create_task(send_curr_course_users())
         loop.create_task(send_schedule_tomorrow())
         loop.create_task(backup_database())
         await client.run_until_disconnected()
