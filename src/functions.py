@@ -343,11 +343,12 @@ def _extract_teacher_from_line(line: str):
     Обрабатывает также случай когда комната после учителя: 'sem. PC Rotari A. 201' -> ('sem. PC', 'Rotari A.', '201')"""
     import re
     # Find ALL teacher-name patterns in the line, take the LAST one
-    # Handles: "Name I." / "Name. I" / "Name I" / "Full Name" (no initial)
+    # Handles: "Name I." / "Name. I" / "Name I" / "Full Name" / "NameI." (no space before initial)
     patterns = [
-        r'\b([A-ZĂÎȘȚa-zăîșț]{2,})\s+([A-ZĂÎȘȚ][a-zăîșț]*\.)',  # Name I.
+        r'([A-ZĂÎȘȚa-zăîșț]{2,})\s+([A-ZĂÎȘȚ][a-zăîșț]*\.)',  # Name I.
         r'\b([A-ZĂÎȘȚa-zăîșț]{2,})\.\s+([A-ZĂÎȘȚ][a-zăîșț]{0,1})\b',  # Name. I (short initial)
-        r'\b([A-ZĂÎȘȚ][a-zăîșț]{2,})\s+([A-ZĂÎȘȚ][a-zăîșț]{2,})\b',  # Full Name (mixed-case, no initial)
+        r'([A-ZĂÎȘȚ][a-zăîșț]{2,})\s+([A-ZĂÎȘȚ][a-zăîșț]{2,})\b',  # Full Name (mixed-case, no initial)
+        r'([A-ZĂÎȘȚa-zăîșț]{2,})([A-ZĂÎȘȚ]\.)',  # NameI. (no space before initial)
     ]
     all_matches = []
     for pat in patterns:
@@ -407,6 +408,17 @@ def parse_course(course: str):
             return lines[1], "", lines[0]
         else:
             # "c. CDE\nCrețu V." or "sem. ALGA\nRepescu V." or "Istrati D. 310"
+            # or "lab. Fizica 302-304\nGutium S./BernatO." (multiple teachers via /)
+            # Check if line[1] has multiple teachers separated by /
+            if '/' in lines[1] and not _is_room(lines[1]):
+                parts = lines[1].split('/')
+                teacher_parts = []
+                for p in parts:
+                    p = p.strip()
+                    if p:
+                        teacher_parts.append(p)
+                if len(teacher_parts) >= 2:
+                    return lines[0], ' / '.join(teacher_parts), ""
             # Check if line[1] contains a teacher name with room after it
             _, test_teacher, test_room = _extract_teacher_from_line(lines[1])
             if test_teacher and test_room:
@@ -422,11 +434,14 @@ def parse_course(course: str):
                     teacher = lines[1]
                 return subject, teacher, room
     else:
-        # 3+ lines: subject / teacher / room (and maybe subgroup markers)
+        # 3+ lines: try to identify subject / teacher / room
         # Special case: language classes have no teacher, just 2 rooms
         # e.g. "L. Engleză\n624\n630" or "L. Română\n611\n624"
         if len(lines) >= 3 and _is_room(lines[1]) and _is_room(lines[2]):
             return lines[0], "", f"{lines[1]}/{lines[2]}"
+        # "lab. CI 2\nA03\nMagariu N." — room then teacher
+        if len(lines) == 3 and _is_room(lines[1]) and not _is_room(lines[2]):
+            return lines[0], lines[2], lines[1]
         return lines[0], lines[1], lines[2]
 
 

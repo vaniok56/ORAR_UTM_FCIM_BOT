@@ -12,9 +12,10 @@ def _is_room(val: str) -> bool:
 
 def _extract_teacher_from_line(line: str):
     patterns = [
-        r'\b([A-ZĂÎȘȚa-zăîșț]{2,})\s+([A-ZĂÎȘȚ][a-zăîșț]*\.)',  # Name I.
+        r'([A-ZĂÎȘȚa-zăîșț]{2,})\s+([A-ZĂÎȘȚ][a-zăîșț]*\.)',  # Name I.
         r'\b([A-ZĂÎȘȚa-zăîșț]{2,})\.\s+([A-ZĂÎȘȚ][a-zăîșț]{0,1})\b',  # Name. I
-        r'\b([A-ZĂÎȘȚ][a-zăîșț]{2,})\s+([A-ZĂÎȘȚ][a-zăîșț]{2,})\b',  # Full Name (mixed-case, no initial)
+        r'([A-ZĂÎȘȚ][a-zăîșț]{2,})\s+([A-ZĂÎȘȚ][a-zăîșț]{2,})\b',  # Full Name (mixed-case, no initial)
+        r'([A-ZĂÎȘȚa-zăîșț]{2,})([A-ZĂÎȘȚ]\.)',  # NameI. (no space before initial)
     ]
     all_matches = []
     for pat in patterns:
@@ -54,6 +55,11 @@ def parse_course(course: str):
         elif _is_room(lines[0]):
             return lines[1], "", lines[0]
         else:
+            if '/' in lines[1] and not _is_room(lines[1]):
+                parts = lines[1].split('/')
+                teacher_parts = [p.strip() for p in parts if p.strip()]
+                if len(teacher_parts) >= 2:
+                    return lines[0], ' / '.join(teacher_parts), ""
             _, test_teacher, test_room = _extract_teacher_from_line(lines[1])
             if test_teacher and test_room:
                 return lines[0], test_teacher, test_room
@@ -67,6 +73,8 @@ def parse_course(course: str):
     else:
         if len(lines) >= 3 and _is_room(lines[1]) and _is_room(lines[2]):
             return lines[0], "", f"{lines[1]}/{lines[2]}"
+        if len(lines) == 3 and _is_room(lines[1]) and not _is_room(lines[2]):
+            return lines[0], lines[2], lines[1]
         return lines[0], lines[1], lines[2]
 
 
@@ -574,6 +582,21 @@ class TestFullTeacherNames:
         assert s == "c. CDE"
         assert t == ""
         assert r == "3-3"
+
+    def test_initial_no_space_before_period(self):
+        """'BernatO.' — initial attached to surname without space"""
+        s, t, r = parse_course("BernatO.\n310")
+        assert s == ""
+        assert t == "Bernat O."
+        assert r == "310"
+
+    def test_multiple_teachers_slash(self):
+        """'Gutium S./BernatO.' — two teachers separated by /"""
+        s, t, r = parse_course("lab. Fizica 302-304\nGutium S./BernatO.")
+        assert s == "lab. Fizica 302-304"
+        assert "Gutium S." in t
+        assert "BernatO." in t
+        assert r == ""
 
 
 # ============================================================

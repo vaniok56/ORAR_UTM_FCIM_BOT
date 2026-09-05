@@ -170,7 +170,7 @@ async def notiff(event):
         send_logs(format_id(SENDER) + " - Notif on", 'info')
 
 #/help
-@client.on(events.NewMessage(pattern='/help')) 
+@client.on(events.NewMessage(pattern='^/help$')) 
 async def helpp(event):
     SENDER, lang = await _get_sender_id_and_lang(event)
     if is_rate_limited(SENDER):
@@ -197,6 +197,13 @@ async def helpp(event):
     button_rows = button_grid(build_bot_kb(lang), 2)
     await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows)
     send_logs(format_id(SENDER) + " - /help", 'info')
+
+@client.on(events.NewMessage(pattern='^/myid$'))
+async def myid(event):
+    SENDER = event.sender_id
+    uid = format_id(SENDER)
+    await client.send_message(SENDER, f"Your user ID: <code>{uid}</code>", parse_mode="HTML")
+    send_logs(f"{uid} - /myid", 'info')
 
 #/version
 @client.on(events.NewMessage(pattern='/version'))
