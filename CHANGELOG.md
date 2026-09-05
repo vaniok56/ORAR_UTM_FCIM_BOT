@@ -2,6 +2,40 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.14.4] - 2026-09-05
+
+### TL;DR
+Schedule output now in Emojis. Each lesson is parsed into subject, teacher, and room — with smart detection of inline rooms, multiple teachers separated by `/`, initials without spaces (`BernatO.`), and room-teacher ordering in multi-line cells. Empty fields are silently hidden. A new `/myid` command lets users discover their Telegram ID, and `/help` no longer intercepts `/admin_help`.
+
+### Added
+- **Structured Pair Output** ([`src/functions.py`](./src/functions.py), [`src/localization.py`](./src/localization.py), [`locales/`](./locales/)):
+    - Introduced `parse_course()` to split raw Excel cell content into three clean fields: subject, teacher, and room.
+    - Added `INDEX_EMOJIS` dictionary mapping pair numbers (1–7) to keycap emoji sequences.
+    - Rewrote `pair_format` in all locale files (ro/en/ru) to display each field with its own emoji label: 📖 subject, 🧑‍🏫 teacher, 🏫 room, 🕧 time.
+    - Added `_format_pair()` helper that conditionally skips emoji lines when the corresponding field is empty — no more orphaned icons for missing teachers or rooms.
+- **Teacher Name Parsing** ([`src/functions.py`](./src/functions.py)):
+    - Added four regex patterns to cover every teacher naming convention found across 1740+ schedule cells: `Name I.` (standard), `Name. I` (short initial), `Full Name` (mixed-case, no initial), and `NameI.` (initial attached without space, e.g. `BernatO.`).
+    - Added `/`-split logic for lines containing multiple teachers (e.g. `Gutium S./BernatO.`), joining them with ` / `.
+    - Added subject-prefix detection (`Limba`, `L.`, `Ed.`, `Sem.`) to prevent language and elective names from being misidentified as teacher names.
+- **Room Detection** ([`src/functions.py`](./src/functions.py)):
+    - Added `_is_room()` validator that recognizes room patterns: plain numbers (`201`), hyphenated (`3-3`), letter-prefixed (`D-02`), letter-suffixed (`310A`), and multi-room strings separated by `/` (`707/718`).
+- **3-Line Cell Reordering** ([`src/functions.py`](./src/functions.py)):
+    - Fixed three-line cells where the room appears before the teacher (e.g. `lab. CI 2\nA03\nMagariu N.`) — the parser now swaps them into the correct order.
+- **`/myid` Command** ([`src/script.py`](./src/script.py)):
+    - Added a new `/myid` command that displays the user's Telegram ID in HTML code format, useful for admin setup.
+
+### Updated
+- **`/help` Pattern** ([`src/script.py`](./src/script.py)):
+    - Changed from `/help` to `^/help$` so that `/admin_help` is no longer caught by the help handler.
+- **Schedule Files** ([`schedules/`](./schedules/)):
+    - Loaded updated schedule files (orar1–4) with new semester data, resulting in different group counts per file (42, 26, 27, 21 groups respectively).
+
+### Fixed
+- **`/admin_help` Access** ([`src/handlers/admin_handlers.py`](./src/handlers/admin_handlers.py), [`src/script.py`](./src/script.py)):
+    - Diagnosed and resolved the "Nu ai acces" issue: the `/help` handler's regex was matching `/admin_help` as a substring, preventing the admin handler from ever firing. Fixed with an anchored pattern.
+- **Admin List Not Loading**:
+    - Identified that the database `settings.admins` column was `0` for the intended admin user. Manually promoted the correct user via MySQL.
+
 ## [0.14.0] - 2026-08-27
 
 ### TL;DR
