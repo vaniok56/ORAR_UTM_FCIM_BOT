@@ -1,7 +1,7 @@
 # 📅 ORAR_UTM_FCIM_BOT
 
 [![Telegram Bot](https://img.shields.io/badge/Orar_UTM-bot-blue?logo=telegram)](https://t.me/orar_utm_fcim_bot)
-[![Contacts](https://img.shields.io/badge/Contacts-gray?logo=telegram)](https://t.me/vaniok5§)
+[![Contacts](https://img.shields.io/badge/Contacts-gray?logo=telegram)](https://t.me/vaniok56)
 
 ORAR_UTM_FCIM_BOT is a Telegram bot made for UTM students to simplify access to their class schedules.
 

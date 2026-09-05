@@ -70,9 +70,7 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
     async def admin_help(event):
         sender = await event.get_sender()
         SENDER = sender.id
-        uid = format_id(SENDER)
-        send_logs(f"/admin_help called by {uid}, admins1={admins1}, admins2={admins2}", 'info')
-        if uid not in admins1 and uid not in admins2:
+        if format_id(SENDER) not in admins1 and format_id(SENDER) not in admins2:
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
         text = "Admin commands:\n\n"
