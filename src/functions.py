@@ -148,7 +148,7 @@ def send_logs(message, type):
         logging.info(message)
 
 # Moved down because of circular import with localization.py
-from localization import get_text, get_week_days, DEFAULT_LANG
+from localization import get_text, get_week_days, DEFAULT_LANG, INDEX_EMOJIS
 
 #open the excel files
 for i in range(1, 5):
@@ -326,6 +326,96 @@ def print_day(week_day, cur_group, is_even, subgrupa, lang=DEFAULT_LANG):
     col_gr = groups.index(cur_group) + schedule_column_start  # column with the selected group
     return print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang)
      
+def _is_room(val: str) -> bool:
+    """Проверяет, похоже ли значение на аудиторию (3-3, D-02-04, 201, 707/718, etc.)"""
+    import re
+    v = val.strip()
+    # Handle multiple rooms separated by / (e.g. "707/718")
+    if '/' in v:
+        parts = v.split('/')
+        return all(bool(re.match(r'^[A-Za-z]?[\d\-]*\d[\dA-Za-z\-]*$', p.strip())) for p in parts)
+    return bool(re.match(r'^[A-Za-z]?[\d\-]*\d[\dA-Za-z\-]*$', v))
+
+
+def _extract_teacher_from_line(line: str):
+    """Извлекает учителя из строки вида 'sem. ALGA Repescu V.' -> ('sem. ALGA', 'Repescu V.')
+    или 'c. Fizică Pîrțac C.' -> ('c. Fizică', 'Pîrțac C.')
+    Обрабатывает также случай когда комната после учителя: 'sem. PC Rotari A. 201' -> ('sem. PC', 'Rotari A.', '201')"""
+    import re
+    # Find ALL teacher-name patterns in the line, take the LAST one
+    # Handles: "Name I." / "Name. I" / "Name I" / "Full Name" (no initial)
+    patterns = [
+        r'\b([A-ZĂÎȘȚa-zăîșț]{2,})\s+([A-ZĂÎȘȚ][a-zăîșț]*\.)',  # Name I.
+        r'\b([A-ZĂÎȘȚa-zăîșț]{2,})\.\s+([A-ZĂÎȘȚ][a-zăîșț]{0,1})\b',  # Name. I (short initial)
+        r'\b([A-ZĂÎȘȚ][a-zăîșț]{2,})\s+([A-ZĂÎȘȚ][a-zăîșț]{2,})\b',  # Full Name (mixed-case, no initial)
+    ]
+    all_matches = []
+    for pat in patterns:
+        all_matches.extend(re.finditer(pat, line))
+
+    if all_matches:
+        # Take the last match
+        m = sorted(all_matches, key=lambda x: x.end())[-1]
+        subject = line[:m.start()].strip()
+        teacher = f"{m.group(1)} {m.group(2)}"
+        room = line[m.end():].strip()
+        return subject, teacher, room
+
+    return line.strip(), "", ""
+
+
+def parse_course(course: str):
+    """Разбивает содержимое ячейки на subject / teacher / room"""
+    if not course or not str(course).strip():
+        return "", "", ""
+
+    lines = [line.strip() for line in str(course).split("\n") if line.strip()]
+
+    if len(lines) == 0:
+        return "", "", ""
+    elif len(lines) == 1:
+        subject, teacher, room = _extract_teacher_from_line(lines[0])
+        return subject, teacher, room
+    elif len(lines) == 2:
+        if _is_room(lines[1]):
+            # "c. CDE\n3-3" or "L. Engleză\n707" — no teacher line
+            subject, teacher, room = _extract_teacher_from_line(lines[0])
+            if not room:
+                room = lines[1]
+            # If extracted "teacher" is actually a subject prefix, fix it
+            _SUBJ_PFX = ("Limba", "L.", "L.", "Ed.", "Ed", "Sem.", "se.")
+            if teacher and any(teacher.startswith(p) for p in _SUBJ_PFX):
+                subject = f"{subject} {teacher}".strip() if subject else teacher
+                teacher = ""
+            return subject, teacher, room
+        elif _is_room(lines[0]):
+            # rare: room then something else
+            return lines[1], "", lines[0]
+        else:
+            # "c. CDE\nCrețu V." or "sem. ALGA\nRepescu V." or "Istrati D. 310"
+            # Check if line[1] contains a teacher name with room after it
+            _, test_teacher, test_room = _extract_teacher_from_line(lines[1])
+            if test_teacher and test_room:
+                # "Istrati D. 310" — teacher+room on same line
+                return lines[0], test_teacher, test_room
+            elif test_teacher:
+                # "Crețu V." — standalone teacher name
+                return lines[0], lines[1], ""
+            else:
+                # line[1] is not a teacher — treat as teacher+room inline
+                subject, teacher, room = _extract_teacher_from_line(lines[0])
+                if not teacher:
+                    teacher = lines[1]
+                return subject, teacher, room
+    else:
+        # 3+ lines: subject / teacher / room (and maybe subgroup markers)
+        # Special case: language classes have no teacher, just 2 rooms
+        # e.g. "L. Engleză\n624\n630" or "L. Română\n611\n624"
+        if len(lines) >= 3 and _is_room(lines[1]) and _is_room(lines[2]):
+            return lines[0], "", f"{lines[1]}/{lines[2]}"
+        return lines[0], lines[1], lines[2]
+
+
 #extract daily schedule
 def print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang=DEFAULT_LANG):
     #cache key — includes lang for per-language output
@@ -420,8 +510,19 @@ def print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang=DEFAULT_LANG
                     course = ""
         
         if course:
-            try :
-                processed_courses.append(get_text(lang, "pair_format", index=i + 1, course=course, time=hours[i][0].replace('.', ':')))
+            try:
+                subject, teacher, room = parse_course(course)
+                processed_courses.append(
+                    get_text(
+                        lang,
+                        "pair_format",
+                        index_emoji=INDEX_EMOJIS.get(i + 1, str(i + 1)),
+                        subject=subject,
+                        teacher=teacher,
+                        room=room,
+                        time=hours[i][0].replace('.', ':')
+                    )
+                )
             except Exception:
                 pass
             
@@ -442,16 +543,32 @@ def print_next_course(week_day, cur_group, is_even, course_index, subgrupa, lang
         next_course_cache[cache_key] = ""
         return ""
     
-    courses = daily.split(get_text(lang, "pair_label", index="").rstrip())
-    for i in range(1, len(courses)):
-        if int(courses[i][0]) != course_index:
+    # Reverse lookup: emoji -> int
+    emoji_to_index = {v: k for k, v in INDEX_EMOJIS.items()}
+    
+    courses = daily.split("\n\n")
+    for block in courses:
+        block = block.strip()
+        if not block:
             continue
-        course = courses[i]
-        parts = course.split(get_text(lang, "hour_label", time="").rstrip())
-        course_name = parts[0][1:]  # Skip the index digit
-        course_time = parts[1]
-        hour_word = get_text(lang, "hour_label", time="").rstrip()
-        result = f"<b>{course_name}</b>{hour_word}{course_time}"
+        # Find the emoji index digit in the block (e.g. "1️⃣" starts with "1")
+        m = re.search(r'([1-7])\ufe0f\u20e3', block)
+        if not m:
+            continue
+        idx = int(m.group(1))
+        if idx != course_index:
+            continue
+        # Extract subject (first 📖 line) and time (after 🕧)
+        lines = block.split("\n")
+        subject = ""
+        time_str = ""
+        for line in lines:
+            if line.startswith("📖"):
+                subject = line[2:].strip()
+            elif "🕧" in line:
+                # Everything after the clock emoji is the time label + value
+                time_str = line.split("🕧", 1)[1].strip()
+        result = f"<b>{subject}</b>\n{time_str}"
         next_course_cache[cache_key] = result
         return result
     

@@ -47,7 +47,7 @@
     "error_no_group": "An error occurred, you may not have selected a group /choose_gr",
     "next_pair": "\nNext class:{course}",
     "notif_tomorrow_schedule": "\nTomorrow's schedule ({day}):\n{schedule}",
-    "pair_format": "\nPair: #{index}\n<b>{course}</b>\nTime: {time}\n",
+    "pair_format": "\nPair: {index_emoji}\n📖 {subject}\n🧑‍🏫 {teacher}\n🏫 {room}\n🕧 Time: {time}\n",
     "_comment6": "====================Donations====================",
     "donation_title": "Buy me a coffee ☕️\n\n      Recipient:\n",
     "donation_name": "`Ivan Proscurchin`\n\n",

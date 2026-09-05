@@ -20,6 +20,11 @@ _week_days = {
     "en": {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday", 5: "Saturday", 6: "Sunday"},
 }
 
+INDEX_EMOJIS = {
+    1: "1️⃣", 2: "2️⃣", 3: "3️⃣", 4: "4️⃣",
+    5: "5️⃣", 6: "6️⃣", 7: "7️⃣"
+}
+
 
 def load_locales():
     global _locales

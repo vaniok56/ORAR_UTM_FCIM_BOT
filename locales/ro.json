@@ -47,7 +47,7 @@
     "error_no_group": "A intervenit o eroare, posibil nu ai ales grupa /choose_gr",
     "next_pair": "\nPerechea urmatoare:{course}",
     "notif_tomorrow_schedule": "\nOrarul de maine ({day}):\n{schedule}",
-    "pair_format": "\nPerechea: #{index}\n<b>{course}</b>\nOra : {time}\n",
+    "pair_format": "\nPerechea: {index_emoji}\n📖 {subject}\n🧑‍🏫 {teacher}\n🏫 {room}\n🕧 Ora : {time}\n",
     "_comment6": "====================Donations====================",
     "donation_title": "Buy me a coffee ☕️\n\n      Destinatorul:\n",
     "donation_name": "`Ivan Proscurchin`\n\n",

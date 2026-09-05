@@ -47,7 +47,7 @@
     "error_no_group": "Произошла ошибка, возможно вы не выбрали группу /choose_gr",
     "next_pair": "\nСледующая пара:{course}",
     "notif_tomorrow_schedule": "\nРасписание на завтра ({day}):\n{schedule}",
-    "pair_format": "\nПара: #{index}\n<b>{course}</b>\nВремя: {time}\n",
+    "pair_format": "\nПара: {index_emoji}\n📖 {subject}\n🧑‍🏫 {teacher}\n🏫 {room}\n🕧 Время: {time}\n",
     "_comment6": "====================Donations====================",
     "donation_title": "Buy me a coffee ☕️\n\n      Получатель:\n",
     "donation_name": "`Ivan Proscurchin`\n\n",
