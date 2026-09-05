@@ -5,7 +5,7 @@ All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 ## [0.14.4] - 2026-09-05
 
 ### TL;DR
-Schedule output now speaks in structure, not walls of text. Each lesson is parsed into subject, teacher, and room — with smart detection of inline rooms, multiple teachers separated by `/`, initials without spaces (`BernatO.`), and room-teacher ordering in multi-line cells. Empty fields are silently hidden. A new `/myid` command lets users discover their Telegram ID, and `/help` no longer intercepts `/admin_help`.
+Schedule output now in Emojis. Each lesson is parsed into subject, teacher, and room — with smart detection of inline rooms, multiple teachers separated by `/`, initials without spaces (`BernatO.`), and room-teacher ordering in multi-line cells. Empty fields are silently hidden. A new `/myid` command lets users discover their Telegram ID, and `/help` no longer intercepts `/admin_help`.
 
 ### Added
 - **Structured Pair Output** ([`src/functions.py`](./src/functions.py), [`src/localization.py`](./src/localization.py), [`locales/`](./locales/)):
