@@ -364,6 +364,20 @@ def _extract_teacher_from_line(line: str):
     return line.strip(), "", ""
 
 
+def _format_pair(lang, index, subject, teacher, room, time):
+    """Форматирует строку пары, пропуская пустые поля"""
+    index_emoji = INDEX_EMOJIS.get(index, str(index))
+    lines = [f"\nПара: {index_emoji}"]
+    if subject:
+        lines.append(f"📖 {subject}")
+    if teacher:
+        lines.append(f"🧑‍🏫 {teacher}")
+    if room:
+        lines.append(f"🏫 {room}")
+    lines.append(f"🕧 {get_text(lang, 'hour_label', time=time).strip()}")
+    return "\n".join(lines) + "\n"
+
+
 def parse_course(course: str):
     """Разбивает содержимое ячейки на subject / teacher / room"""
     if not course or not str(course).strip():
@@ -513,15 +527,7 @@ def print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang=DEFAULT_LANG
             try:
                 subject, teacher, room = parse_course(course)
                 processed_courses.append(
-                    get_text(
-                        lang,
-                        "pair_format",
-                        index_emoji=INDEX_EMOJIS.get(i + 1, str(i + 1)),
-                        subject=subject,
-                        teacher=teacher,
-                        room=room,
-                        time=hours[i][0].replace('.', ':')
-                    )
+                    _format_pair(lang, i + 1, subject, teacher, room, hours[i][0].replace('.', ':'))
                 )
             except Exception:
                 pass
