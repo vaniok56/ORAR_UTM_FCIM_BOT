@@ -5,7 +5,7 @@ import pytz
 import requests
 import handlers.db as db
 import re
-from schedule_groups import extract_schedule_groups
+from schedule_groups import extract_schedule_groups, normalize_schedule_version
 
 
 import time
@@ -18,7 +18,6 @@ bulk_send_shift_earlier = datetime.timedelta(minutes=1)
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
 time_zone = pytz.timezone('Europe/Chisinau')
-current_year = 26
 #logs
 import logging
 class ColoredFormatter(logging.Formatter):
@@ -157,8 +156,7 @@ for i in range(1, 5):
         globals()[f"schedule{i}"] = wb[wb.sheetnames[0]]
     except Exception as e:
         send_logs(f"Error loading orar{i}.xlsx: {e}", 'error')
-        globals()[f"schedule{i}"] = openpyxl.Workbook()
-        globals()[f"schedule{i}"].create_sheet("Table 2")
+        globals()[f"schedule{i}"] = openpyxl.Workbook().active
 
 #group lists
 for i in range(1, 5):
@@ -174,19 +172,18 @@ for i in range(1, 5):
 def get_local_schedule_versions():
     versions = {}
     for i in range(1, 5):
+        if not globals().get(f"groups{i}"):
+            versions[i] = None
+            send_logs(f"Local schedule{i} version: missing", 'info')
+            continue
         try:
             version_cell = globals()[f"schedule{i}"].cell(row=1, column=1).value
-            if isinstance(version_cell, float):
-                version = int(version_cell)
-            elif version_cell:
-                version = str(version_cell).strip()
-            else:
-                version = 0
+            version = normalize_schedule_version(version_cell)
             versions[i] = version
             send_logs(f"Local schedule{i} version: {version}", 'info')
         except Exception as e:
             send_logs(f"Error reading version from schedule{i}: {e}", 'error')
-            versions[i] = 0
+            versions[i] = None
     return versions
 
 def get_online_schedule_versions():
@@ -213,13 +210,29 @@ def get_online_schedule_versions():
             if start_tr != -1 and end_tr != -1:
                 row_content = content[start_tr:end_tr]
                 
-                # Match filenames like:
-                #  - Anul_II_Semestrul_III-12.pdf   (has numeric version)
-                #  - Anul_II_Semestrul_III.pdf       (no numeric version -> final)
-                #  - anul_iii_2025_semestrul_vi-2-9.pdf (weird versioning - take last number)
-                pdf_pattern = r'Anul_([IVX]+).*?_Semestrul_[IVX]+.*?(?:-([0-9]+))?\.pdf'
-                pdf_pattern = re.compile(pdf_pattern, re.IGNORECASE)
-                matches = re.findall(pdf_pattern, row_content)
+                # Parse each link. The site uses different separators and filenames.
+                links = re.findall(
+                    r'href\s*=\s*["\']([^"\']+\.pdf)(?:\?[^"\']*)?["\']',
+                    row_content,
+                    re.IGNORECASE,
+                )
+                matches = []
+                for link in links:
+                    filename = link.rsplit('/', 1)[-1].split('?', 1)[0]
+                    year_match = re.match(
+                        r'anul[_-](IV|III|II|I)(?:[_-]|\.pdf$)',
+                        filename,
+                        re.IGNORECASE,
+                    )
+                    if not year_match:
+                        continue
+                    version_match = re.search(r'-(\d+)\.pdf$', filename, re.IGNORECASE)
+                    matches.append(
+                        (
+                            year_match.group(1),
+                            version_match.group(1) if version_match else '',
+                        )
+                    )
             else:
                  send_logs("Found 'Orar Semestrul de' but could not isolate table row", 'warning')
         else:
@@ -233,13 +246,7 @@ def get_online_schedule_versions():
             if not year_num:
                 continue
             # If the second capture group (version) is empty, the file is final
-            if version is None or version == "":
-                versions[year_num] = 'final'
-            else:
-                try:
-                    versions[year_num] = int(version)
-                except ValueError:
-                    versions[year_num] = 'final'
+            versions[year_num] = normalize_schedule_version(version)
         
         send_logs(f"Fetched online versions: {versions}", 'info')
         return versions
@@ -263,7 +270,7 @@ def get_schedule_and_groups(cur_group):
 
     try:
         group_year = int(cur_group[-3:-1]) # from TI-241 to 24
-        sch_nr = current_year - group_year # from 24 to 2
+        sch_nr = db.get_current_year() - group_year # from 24 to 2
         if 1 <= sch_nr <= 4:
             result = globals()[f"schedule{sch_nr}"], globals()[f"groups{sch_nr}"]
             schedule_groups_cache[cur_group] = result

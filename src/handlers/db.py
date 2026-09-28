@@ -15,6 +15,7 @@ pool = None
 MAX_RETRIES = 5
 RETRY_DELAY = 2  # seconds
 user_data_cache = {}
+_current_year = None
 
 def initialize_mysql_connection():
     """Initialize MySQL connection pool with retry logic"""
@@ -187,7 +188,7 @@ def save_dataframe(df):
                         row['gamble'],
                         row['ban'],
                         row['ban_time'],
-                        row['last_cmd'],
+                        row.get('last_interaction_at'),
                         row['lang'],
                     ))  # Removed multi=True
                     
@@ -515,7 +516,7 @@ def get_all_users():
                     return pd.DataFrame(columns=[
                         'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                         'admins', 'prem', 'subgrupa', 'gamble', 
-                        'ban', 'ban_time', 'last_cmd', 'lang'
+                        'ban', 'ban_time', 'last_interaction_at', 'lang'
                     ])
                     
         except mysql.connector.Error as db_err:
@@ -534,7 +535,7 @@ def get_all_users():
                 return pd.DataFrame(columns=[
                     'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                     'admins', 'prem', 'subgrupa', 'gamble', 
-                    'ban', 'ban_time', 'last_cmd', 'lang'
+                    'ban', 'ban_time', 'last_interaction_at', 'lang'
                 ])
         except Exception as e:
             send_logs(f"Failed to get all users: {str(e)}", "error")
@@ -547,7 +548,7 @@ def get_all_users():
             return pd.DataFrame(columns=[
                 'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                 'admins', 'prem', 'subgrupa', 'gamble', 
-                'ban', 'ban_time', 'last_cmd', 'lang'
+                'ban', 'ban_time', 'last_interaction_at', 'lang'
             ])
 
 def get_all_users_with(field, value):
@@ -572,7 +573,7 @@ def get_all_users_with(field, value):
                     return pd.DataFrame(columns=[
                         'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                         'admins', 'prem', 'subgrupa', 'gamble', 
-                        'ban', 'ban_time', 'last_cmd', 'lang'
+                        'ban', 'ban_time', 'last_interaction_at', 'lang'
                     ])
         except mysql.connector.Error as db_err:
             if attempt < MAX_RETRIES - 1:
@@ -585,14 +586,14 @@ def get_all_users_with(field, value):
                 return pd.DataFrame(columns=[
                     'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                     'admins', 'prem', 'subgrupa', 'gamble', 
-                    'ban', 'ban_time', 'last_cmd', 'lang'
+                    'ban', 'ban_time', 'last_interaction_at', 'lang'
                 ])
         except Exception as e:
             send_logs(f"Failed to get all users with {field}={value}: {str(e)}", "error")
             return pd.DataFrame(columns=[
                 'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                 'admins', 'prem', 'subgrupa', 'gamble', 
-                'ban', 'ban_time', 'last_cmd', 'lang'
+                'ban', 'ban_time', 'last_interaction_at', 'lang'
             ])
 
 def get_all_users_without(field, value):
@@ -617,7 +618,7 @@ def get_all_users_without(field, value):
                     return pd.DataFrame(columns=[
                         'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                         'admins', 'prem', 'subgrupa', 'gamble', 
-                        'ban', 'ban_time', 'last_cmd', 'lang'
+                        'ban', 'ban_time', 'last_interaction_at', 'lang'
                     ])
         except mysql.connector.Error as db_err:
             if attempt < MAX_RETRIES - 1:
@@ -630,14 +631,14 @@ def get_all_users_without(field, value):
                 return pd.DataFrame(columns=[
                     'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                     'admins', 'prem', 'subgrupa', 'gamble', 
-                    'ban', 'ban_time', 'last_cmd', 'lang'
+                    'ban', 'ban_time', 'last_interaction_at', 'lang'
                 ])
         except Exception as e:
             send_logs(f"Failed to get all users without {field}={value}: {str(e)}", "error")
             return pd.DataFrame(columns=[
                 'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                 'admins', 'prem', 'subgrupa', 'gamble', 
-                'ban', 'ban_time', 'last_cmd', 'lang'
+                'ban', 'ban_time', 'last_interaction_at', 'lang'
             ])
         
 def is_user_exists(sender_id):
@@ -727,6 +728,84 @@ def set_app_setting(name: str, value: str) -> None:
             (name, value)
         )
         conn.commit()
+
+
+def load_current_year():
+    global _current_year
+    value = get_app_setting("current_year", None)
+    try:
+        value = int(value)
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("app_settings.current_year must be an integer") from error
+    if not 1 <= value <= 99:
+        raise RuntimeError("app_settings.current_year must be between 1 and 99")
+    _current_year = value
+    send_logs(f"Loaded current_year: {_current_year}", "info")
+    return _current_year
+
+
+def get_current_year():
+    if _current_year is None:
+        raise RuntimeError("current_year was not loaded")
+    return _current_year
+
+
+def touch_user(sender_id):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE settings s
+            JOIN users u ON u.id = s.id
+            SET s.last_interaction_at = CURRENT_TIMESTAMP
+            WHERE u.SENDER = %s
+            """,
+            (sender_id,),
+        )
+        conn.commit()
+
+
+def touch_user_safely(sender_id):
+    try:
+        touch_user(sender_id)
+    except Exception as error:
+        send_logs(f"Failed to update activity for {sender_id}: {error}", "warning")
+
+
+def get_activity_summary():
+    with get_db_connection() as conn:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) AS total_users,
+                COALESCE(SUM(last_interaction_at >= CURRENT_TIMESTAMP - INTERVAL 1 DAY), 0) AS active_1d,
+                COALESCE(SUM(last_interaction_at >= CURRENT_TIMESTAMP - INTERVAL 7 DAY), 0) AS active_7d,
+                COALESCE(SUM(last_interaction_at >= CURRENT_TIMESTAMP - INTERVAL 30 DAY), 0) AS active_30d,
+                COALESCE(SUM(last_interaction_at < CURRENT_TIMESTAMP - INTERVAL 30 DAY), 0) AS inactive_30d,
+                COALESCE(SUM(last_interaction_at IS NULL), 0) AS never_active
+            FROM settings
+            """
+        )
+        return {key: int(value) for key, value in cursor.fetchone().items()}
+
+
+def get_activity_for_days(days):
+    if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= 3650:
+        raise ValueError("days must be between 1 and 3650")
+    cutoff = datetime.datetime.now(moldova_tz).replace(tzinfo=None) - datetime.timedelta(days=days)
+    with get_db_connection() as conn:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) AS total_users,
+                COALESCE(SUM(last_interaction_at >= %s), 0) AS active
+            FROM settings
+            """,
+            (cutoff,),
+        )
+        return {key: int(value) for key, value in cursor.fetchone().items()}
 
 def update_user_years_from_groups(updates):
     """Set user years when sender and group still match the migration preview."""

@@ -19,3 +19,22 @@ def extract_schedule_groups(schedule, min_column=3):
     if None in groups:
         raise ValueError("Group headers must be contiguous")
     return groups
+
+
+def normalize_schedule_version(value):
+    if value is None:
+        return "final"
+    if isinstance(value, str):
+        value = value.strip().lower()
+        if value in {"", "final"}:
+            return "final"
+    if isinstance(value, bool) or isinstance(value, float) and not value.is_integer():
+        raise ValueError(f"Invalid schedule version: {value}")
+
+    try:
+        version = int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"Invalid schedule version: {value}") from error
+    if not 0 <= version <= 99:
+        raise ValueError(f"Invalid schedule version: {value}")
+    return "final" if version == 0 else version

@@ -22,12 +22,21 @@ CREATE TABLE IF NOT EXISTS orar_bot.settings (
     gamble INT DEFAULT 0,
     ban SMALLINT DEFAULT 0,
     ban_time VARCHAR(50) DEFAULT 'none',
-    last_cmd VARCHAR(50) DEFAULT 'none',
-    lang VARCHAR(5) DEFAULT 'none'
+    last_interaction_at DATETIME DEFAULT NULL,
+    lang VARCHAR(5) DEFAULT 'none',
+    INDEX idx_settings_last_interaction_at (last_interaction_at)
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 ALTER TABLE settings
 ADD FOREIGN KEY (id) REFERENCES users(id); 
+
+CREATE TABLE IF NOT EXISTS orar_bot.app_settings (
+    setting_name  VARCHAR(50)  PRIMARY KEY,
+    setting_value VARCHAR(255) NOT NULL
+) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO orar_bot.app_settings (setting_name, setting_value)
+VALUES ('holiday_mode', '0'), ('current_year', '27');
 
 -- new users
 DELIMITER //
@@ -66,7 +75,7 @@ CREATE PROCEDURE IF NOT EXISTS orar_bot.migrate(
     IN gamble INT,
     IN ban SMALLINT,
     IN ban_time VARCHAR(50),
-    IN last_cmd VARCHAR(50),
+    IN last_interaction_at DATETIME,
     IN lang VARCHAR(5)
 )
 BEGIN
@@ -83,7 +92,6 @@ BEGIN
     SET gamble = IF(gamble = '' OR gamble IS NULL, 0, gamble);
     SET ban = IF(ban = '' OR ban IS NULL, 0, ban);
     SET ban_time = IF(ban_time = '' OR ban_time IS NULL, 'none', ban_time);
-    SET last_cmd = IF(last_cmd = '' OR last_cmd IS NULL, 'none', last_cmd);
     SET lang = IF(lang = '' OR lang IS NULL, 'none', lang);
 
     -- Insert user
@@ -100,8 +108,8 @@ BEGIN
     SET @user_id = LAST_INSERT_ID();
 
     -- Insert settings for the user
-    INSERT INTO settings (id, noti, admins, prem, gamble, ban, ban_time, last_cmd, lang)
-    VALUES (@user_id, noti_value, admins, prem, gamble, ban, ban_time, last_cmd, lang)
+    INSERT INTO settings (id, noti, admins, prem, gamble, ban, ban_time, last_interaction_at, lang)
+    VALUES (@user_id, noti_value, admins, prem, gamble, ban, ban_time, last_interaction_at, lang)
     ON DUPLICATE KEY UPDATE
         noti = VALUES(noti),
         admins = VALUES(admins),
@@ -109,7 +117,7 @@ BEGIN
         gamble = VALUES(gamble),
         ban = VALUES(ban),
         ban_time = VALUES(ban_time),
-        last_cmd = VALUES(last_cmd),
+        last_interaction_at = VALUES(last_interaction_at),
         lang = VALUES(lang);
 END //
 DELIMITER ;
@@ -183,7 +191,7 @@ DELIMITER //
 CREATE PROCEDURE IF NOT EXISTS orar_bot.get_all_users()
 BEGIN
     SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa,
-           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd, s.lang
+           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang
     FROM users u
     JOIN settings s ON u.id = s.id;
 END //
@@ -200,7 +208,7 @@ BEGIN
     SET @value_val = field_value;
     
     SET @query = CONCAT('SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa, ',
-                       's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd, s.lang ',
+                       's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang ',
                        'FROM users u JOIN settings s ON u.id = s.id WHERE ', @field_val, ' = ?');
     
     PREPARE stmt FROM @query;
@@ -220,7 +228,7 @@ BEGIN
     SET @value_val = field_value;
     
     SET @query = CONCAT('SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa, ',
-                       's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd, s.lang ',
+                       's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang ',
                        'FROM users u JOIN settings s ON u.id = s.id WHERE ', @field_val, ' != ?');
     
     PREPARE stmt FROM @query;
@@ -280,7 +288,7 @@ CREATE PROCEDURE IF NOT EXISTS orar_bot.select_all_user_data(
 )
 BEGIN
     SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa,
-           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_cmd, s.lang
+           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang
     FROM users u
     JOIN settings s ON u.id = s.id
     WHERE u.SENDER = sender COLLATE utf8mb4_unicode_ci;

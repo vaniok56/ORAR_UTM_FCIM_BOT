@@ -49,7 +49,11 @@ def register_group_handlers(client, years, specialties, group_list):
             action=types.SendMessageTypingAction()
         ))
         text = get_text(lang, "group_choose_year")
-        year_butt = [Button.inline("  " + year + "  ", data=data) for data, year in years.items()]
+        year_butt = [
+            Button.inline("  " + year + "  ", data=data)
+            for data, year in years.items()
+            if group_list.get(year.strip())
+        ]
         button_per_r = 4
         button_rows_year = button_grid(year_butt, button_per_r)
 
@@ -75,6 +79,9 @@ def register_group_handlers(client, years, specialties, group_list):
         if cur_year:
             text = get_text(lang, "group_choose_spec", year=cur_year)
             spec_items = specialties.get(cur_year, {})
+            if not spec_items:
+                await event.answer(get_text(lang, "group_year_unavailable"))
+                return
             spec_butt = [Button.inline(spec, data=data) for data, spec in spec_items.items()]
             button_per_r = 4
             button_rows = button_grid(spec_butt, button_per_r)

@@ -2,6 +2,32 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.14.1] - 2026-09-28
+
+### TL;DR
+This update adds admin user-activity statistics and a configurable academic-year base, improves schedule version and group availability handling, and clarifies notification settings.
+
+### Added
+- **User Activity** ([`src/handlers/db.py`](./src/handlers/db.py), [`src/script.py`](./src/script.py), [`src/handlers/admin_handlers.py`](./src/handlers/admin_handlers.py)):
+    - Record the last interaction timestamp for recognized private commands, reply-keyboard buttons, and inline callbacks; scheduled messages are not counted.
+    - Added admin-only `/activity` with 1-, 7-, and 30-day totals, inactive and never-active counts, plus `/activity [days]` for a custom rolling period.
+- **Current Academic Year Setting** ([`init/init.sql.template`](./init/init.sql.template), [`src/handlers/db.py`](./src/handlers/db.py)):
+    - Added `app_settings.current_year` (default `27`), validated and loaded once at startup for schedule lookup and admin year statistics.
+
+### Updated
+- **Database Schema** ([`init/init.sql.template`](./init/init.sql.template), [`src/handlers/db.py`](./src/handlers/db.py)):
+    - Replaced unused `last_cmd` with indexed, nullable `last_interaction_at` and updated migration and user-selection fields.
+- **Schedule Versions** ([`src/functions.py`](./src/functions.py), [`src/schedule_groups.py`](./src/schedule_groups.py), [`src/script.py`](./src/script.py)):
+    - Normalized numbered and final versions, improved online PDF filename parsing, and distinguish missing local or online schedules in `/version`.
+- **Notification Copy** ([`locales/en.json`](./locales/en.json), [`locales/ro.json`](./locales/ro.json), [`locales/ru.json`](./locales/ru.json)):
+    - Clarified that notification settings control both 15-minute class reminders and the daily 20:00 tomorrow schedule.
+
+### Fixed
+- **Group Selection** ([`src/handlers/group_handlers.py`](./src/handlers/group_handlers.py)):
+    - Hide years without loaded groups and reject unavailable specialty selections.
+- **Admin Statistics** ([`src/handlers/admin_handlers.py`](./src/handlers/admin_handlers.py)):
+    - Count enabled notifications using stored numeric value `1`.
+
 ## [0.14.0] - 2026-08-27
 
 ### TL;DR

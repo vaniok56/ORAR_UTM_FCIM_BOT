@@ -18,6 +18,22 @@ import handlers.group_handlers as group_handlers
 from localization import load_locales, get_text, get_user_lang, get_week_days, SUPPORTED_LANGS, DEFAULT_LANG
 load_locales()
 
+TRACKED_COMMANDS = {
+    "/start", "/language", "/help", "/version", "/contacts", "/notifon",
+    "/notifoff", "/hours", "/tomorrow", "/today", "/curr_week", "/next_week",
+    "/donations", "/choose_gr", "/choose_subgr", "/cancel_message", "/admin_help",
+    "/stats", "/message", "/debug_next", "/backup", "/logs",
+    "/use_backup", "/cancel_restore", "/auto_migrate", "/admin", "/unadmin",
+    "/list_admin", "/ban", "/unban", "/list_ban", "/update_schedule", "/contrib",
+    "/holidays", "/edit_contrib",
+}
+TRACKED_BUTTONS = {
+    get_text(lang, key)
+    for lang in SUPPORTED_LANGS
+    for key in ("btn_today", "btn_tomorrow", "btn_current_week", "btn_next_week", "btn_choose_group")
+}
+TRACKED_BUTTONS.add("Orele ⏰")
+
 import pandas as pd
 import numpy as np
 import asyncio
@@ -51,6 +67,7 @@ def build_start_kb(lang):
 if not db.initialize_mysql_connection():
     send_logs("Failed to establish MySQL connection", 'critical')
     exit(1)
+db.load_current_year()
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
 week_day = int((datetime.datetime.now(moldova_tz)).weekday()) #weekday today(0-6)
@@ -213,18 +230,11 @@ async def versionn(event):
     online_schedule_versions = get_online_schedule_versions()
     text = get_text(lang, "version_schedule_info")
     for year in local_schedule_versions.keys():
-        local_ver = local_schedule_versions.get(year, 0)
-        online_ver = online_schedule_versions.get(year, 0)
-
-        # Prepare display for online version (handle 'final')
-        online_display = f"v{online_ver}" if isinstance(online_ver, int) else (str(online_ver) if online_ver else "v0")
-        local_display = f"v{local_ver}" if isinstance(local_ver, int) else (str(local_ver) if local_ver else "v0")
-
-        # Determine match: only mark as equal if both are integers and equal and non-zero,
-        # or if online is 'final' and local equals that final marker (not applicable numerically).
-        match = False
-        if local_ver != 0 and local_ver == online_ver:
-            match = True
+        local_ver = local_schedule_versions.get(year)
+        online_ver = online_schedule_versions.get(year)
+        local_display = "missing" if local_ver is None else f"v{local_ver}" if isinstance(local_ver, int) else local_ver
+        online_display = "missing" if online_ver is None else f"v{online_ver}" if isinstance(online_ver, int) else online_ver
+        match = local_ver is not None and local_ver == online_ver
 
         text += get_text(lang, "version_year", year=year, local=local_display, online=online_display) + (" ✅" if match else " ❌") + "\n"
     text += get_text(lang, "version_bot_info")
@@ -450,6 +460,21 @@ async def donatiii(event):
     await client.send_message(SENDER, get_text(lang, "donation_online"), buttons=buttons)
 
     send_logs(format_id(SENDER) + " - /donations", 'info')
+
+
+@client.on(events.NewMessage(incoming=True))
+async def track_message_activity(event):
+    if not event.is_private:
+        return
+    text = (event.raw_text or "").strip()
+    command = text.split(maxsplit=1)[0].split("@", 1)[0] if text else ""
+    if command in TRACKED_COMMANDS or text in TRACKED_BUTTONS:
+        db.touch_user_safely(format_id(event.sender_id))
+
+
+@client.on(events.CallbackQuery())
+async def track_callback_activity(event):
+    db.touch_user_safely(format_id(event.sender_id))
 
 def prepare_next_courses(week_day, is_even, course_index):
     next_courses = {}

@@ -16,7 +16,6 @@ from year_migration import plan_year_migration
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
 
-current_year = 26  # (+1 each year)
 main_admin = "U500303890"  # Your user ID here as string
 contributors_df = pd.read_csv('contributors.csv')
 
@@ -75,6 +74,7 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
             return
         text = "Admin commands:\n\n"
         text += "/stats - show statistics\n\n"
+        text += "/activity [days] - show user activity\n\n"
         text += "/backup - manual database backup\n\n"
         text += "/use_backup - restore database from backup\n\n"
         text += "/message - send a message to users\n"
@@ -129,7 +129,7 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
         
         text = "📊 Stats:\n\n"
         for year in sorted(groups_by_year.keys(), reverse=True):
-            text += (f"🎓 Year {current_year-year}")
+            text += (f"🎓 Year {db.get_current_year()-year}")
             sorted_groups = sorted(groups_by_year[year].items(), key=lambda x: (-x[1], x[0]))
             text += f" - {len(sorted_groups)} groups, {sum(count for group, count in sorted_groups)} users\n"
 
@@ -147,7 +147,7 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
         
         total_users = db.get_user_count()
         users_with_groups_count = len(users_with_groups)
-        users_with_notifications = len(db.get_all_users_with('noti', 'on'))
+        users_with_notifications = len(db.get_all_users_with('noti', 1))
         users_with_subgroups = len(db.get_all_users_without('subgrupa', 0))
 
         lang_ro = len(db.get_all_users_with('lang', 'ro'))
@@ -166,6 +166,41 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
 
         await client.send_message(SENDER, text, parse_mode="HTML")
         send_logs(format_id(SENDER) + " - /stats", "info")
+
+    @client.on(events.NewMessage(pattern=r'^/activity(?:\s+(\d+))?$'))
+    async def activity_stats(event):
+        SENDER = event.sender_id
+        db.touch_user_safely(format_id(SENDER))
+        if format_id(SENDER) not in admins1 and format_id(SENDER) not in admins2:
+            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+            return
+
+        days_text = event.pattern_match.group(1)
+        if days_text:
+            days = int(days_text)
+            if not 1 <= days <= 3650:
+                await client.send_message(SENDER, "Days must be between 1 and 3650.")
+                return
+            stats = db.get_activity_for_days(days)
+            percent = stats['active'] / stats['total_users'] * 100 if stats['total_users'] else 0
+            text = (
+                f"User activity: last {days} days\n\n"
+                f"Active users: {stats['active']:,} / {stats['total_users']:,} ({percent:.1f}%)"
+            )
+        else:
+            stats = db.get_activity_summary()
+            text = (
+                "User activity\n\n"
+                f"Last 24 hours: {stats['active_1d']:,}\n"
+                f"Last 7 days: {stats['active_7d']:,}\n"
+                f"Last 30 days: {stats['active_30d']:,}\n"
+                f"Inactive over 30 days: {stats['inactive_30d']:,}\n"
+                f"Never interacted: {stats['never_active']:,}\n"
+                f"Total users: {stats['total_users']:,}"
+            )
+
+        await client.send_message(SENDER, text)
+        send_logs(f"{format_id(SENDER)} - /activity" + (f" {days_text}" if days_text else ""), "info")
 
     #/message admin
     @client.on(events.NewMessage(pattern=r'^/message$'))
