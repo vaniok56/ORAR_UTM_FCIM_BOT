@@ -5,7 +5,7 @@ from telethon import TelegramClient, events, functions, types
 from telethon.tl.custom import Button
 
 import handlers.db as db
-from functions import button_grid, send_logs, is_rate_limited, format_id
+from functions import button_grid, simu_button, send_logs, is_rate_limited, format_id
 from localization import get_text, get_user_lang, SUPPORTED_LANGS, DEFAULT_LANG
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
@@ -157,7 +157,7 @@ def register_group_handlers(client, years, specialties, group_list):
                 Button.text(get_text(lang, 'btn_tomorrow'), resize=True),
                 Button.text(get_text(lang, 'btn_current_week'), resize=True),
                 Button.text(get_text(lang, 'btn_next_week'), resize=True),
-                types.KeyboardButtonSimpleWebView("SIMU📚", "https://simu.utm.md/students/"),
+                simu_button(),
             ]
             buttons_kb = button_grid(bot_kb, 2)
 
