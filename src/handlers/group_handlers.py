@@ -67,7 +67,10 @@ def register_group_handlers(client, years, specialties, group_list):
                 send_logs("Failed to add new user! - " + format_id(SENDER), 'error')
                 await client.send_message(SENDER, get_text(lang, "group_add_error"), parse_mode="HTML")
                 return
-        await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows_year)
+        if year_butt:
+            await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows_year)
+        else:
+            await client.send_message(SENDER, get_text(lang, "group_year_unavailable"), parse_mode="HTML")
         
         
     #year click event handle

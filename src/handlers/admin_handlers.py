@@ -1146,13 +1146,18 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
                     [week_days[day] for day in sorted(week_days)], [slot[0] for slot in hours],
                 )
                 target = Path("schedules") / f"orar{year}.xlsx"
-                active_value = load_schedule_file(target)[0].cell(1, 1).value
-                newer, reason = compare_versions(prepared.version, active_value)
-                changed, added, removed, differences = await asyncio.to_thread(schedule_diff, target, prepared.xlsx)
+                if target.exists():
+                    active_value = load_schedule_file(target)[0].cell(1, 1).value
+                    newer, reason = compare_versions(prepared.version, active_value)
+                    changed, added, removed, differences = await asyncio.to_thread(schedule_diff, target, prepared.xlsx)
+                    item["target_hash"] = hashlib.sha256(target.read_bytes()).hexdigest()
+                else:
+                    newer, reason = True, "no active schedule yet"
+                    changed, added, removed, differences = 0, 0, 0, []
+                    item["target_hash"] = ""
                 write_diff_csv(differences, item["stage"] / "changes.csv")
                 group_delta = (sum(row[0] == "group added" for row in differences),
                                sum(row[0] == "group removed" for row in differences))
-                item["target_hash"] = hashlib.sha256(target.read_bytes()).hexdigest()
                 item["prepared"] = prepared
                 item["version_warning"] = not newer
             except UploadReject as error:
@@ -1222,7 +1227,8 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
                     await event.answer("Already handled or permission denied.", alert=True)
                     return
                 target = Path("schedules") / f"orar{year}.xlsx"
-                if not target.exists() or hashlib.sha256(target.read_bytes()).hexdigest() != item["target_hash"]:
+                if item["target_hash"] and (not target.exists()
+                                             or hashlib.sha256(target.read_bytes()).hexdigest() != item["target_hash"]):
                     await event.answer("Schedule changed since review; restart upload.", alert=True)
                     return
                 await event.answer(f"Publishing Year {year}.")

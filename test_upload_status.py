@@ -27,6 +27,17 @@ class VersionPolicyTests(unittest.TestCase):
         self.assertIn("⚠️ Warning: not newer than the active revision.", source)
         self.assertIn("⚠️ Warning: published a same/older revision.", source)
 
+    def test_a_year_without_an_active_schedule_can_be_published(self):
+        source = (Path(__file__).parent / "src" / "handlers" / "admin_handlers.py").read_text(encoding="utf-8")
+        # No active file means nothing to compare against and nothing to guard on.
+        self.assertIn('newer, reason = True, "no active schedule yet"', source)
+        self.assertIn('item["target_hash"] = ""', source)
+        self.assertIn('if item["target_hash"] and (not target.exists()', source)
+
+    def test_empty_group_catalog_sends_no_keyboard(self):
+        source = (Path(__file__).parent / "src" / "handlers" / "group_handlers.py").read_text(encoding="utf-8")
+        self.assertIn("if year_butt:", source)
+
 
 @unittest.skipUnless(
     bot_dependencies_installed(),
@@ -106,7 +117,6 @@ class BatchStatusMessageTests(unittest.TestCase):
 
     def test_stale_stages_are_purged_and_fresh_ones_kept(self):
         from handlers.admin_handlers import purge_stale_stages
-
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             stale, fresh = root / "stale-batch", root / "fresh-batch"
@@ -120,3 +130,10 @@ class BatchStatusMessageTests(unittest.TestCase):
 
             self.assertFalse(stale.exists())
             self.assertTrue(fresh.exists())
+
+    def test_empty_group_catalog_sends_no_keyboard(self):
+        import handlers.db  # noqa: F401  loads functions through the order the bot itself uses
+        from functions import button_grid
+
+        # Telegram rejects a send with an empty button list, which is why the guard exists.
+        self.assertEqual(button_grid([], 4), [])
