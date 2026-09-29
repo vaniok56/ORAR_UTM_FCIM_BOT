@@ -217,6 +217,110 @@ sudo rm -rf ./mysql
 sudo docker compose up -d
 ```
 
+## Local test bot on Mac
+
+Run from the repository root. This setup uses `configs/config2.ini` for the test
+Telegram bot, an independent `orar_test` Docker project, a fresh named MySQL
+volume, and `.test-env/` for schedules, logs, backups, and the Telegram session.
+Neither container publishes a host port. Do not run the normal
+`docker-compose.yml` for this test: it publishes MySQL on port 3306 and mounts
+the regular `mysql/` and `sessions/` directories.
+
+First-time preparation (already done on this Mac):
+
+```bash
+mkdir -p .test-env/{schedules,sessions,logs,backups}
+chmod 700 .test-env .test-env/{schedules,sessions,logs,backups}
+cp -p schedules/orar{1,2,3,4}.xlsx .test-env/schedules/
+cp -p contributors.csv .test-env/contributors.csv
+chmod 600 configs/config2.ini configs/mysql.env .test-env/contributors.csv
+```
+
+`init/init.sql` must match the credentials in `configs/mysql.env`; the test
+Compose file mounts only that initialization script, not migration scripts.
+Initialize and check the isolated database:
+
+```bash
+docker compose -p orar_test -f docker-compose.test.yml up -d mysql
+docker compose -p orar_test -f docker-compose.test.yml ps
+```
+
+For the Telegram account currently hardcoded as `main_admin` in
+`src/handlers/admin_handlers.py`, seed admin rank **before** starting the bot.
+This modifies the test database only. If you use a different Telegram account,
+replace the ID below with its `U`-prefixed ID:
+
+```bash
+docker compose -p orar_test -f docker-compose.test.yml exec -T mysql sh -c \
+  'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -D orar_bot' <<'SQL'
+CALL add_new_user('U500303890');
+UPDATE settings SET admins=1
+WHERE id=(SELECT id FROM users WHERE SENDER='U500303890');
+SQL
+```
+
+Build and start the test bot, then check logs and send `/start`, `/admin_help`,
+and `/today` to the **test** bot in Telegram:
+
+```bash
+docker compose -p orar_test -f docker-compose.test.yml up -d --build orar_bot
+docker compose -p orar_test -f docker-compose.test.yml logs --tail 80 orar_bot
+```
+
+`/update_schedule` writes only to `.test-env/schedules/`. The test bot session
+is `.test-env/sessions/session_test.session`; the regular `session_master`
+is untouched. The database persists across stops. Code or locale changes
+require rebuilding the test bot with the `up -d --build orar_bot` command above.
+`/update_schedule` collects **1–8 files**: dean-layout XLSX (20 MiB max)
+and optional matching PDF (30 MiB max), at most one each per Year 1–4. Send
+in any order or Telegram album, then tap **Review uploads**; omitted PDFs
+mean XLSX-only audit. PDF without XLSX cannot publish. Bot pairs academic
+year, study year, and semester from file titles; academic year itself is
+unrestricted. PDF filename provides version when recognized; for XLSX-only
+or versionless PDF, send `YEAR=1`–`YEAR=99` or `YEAR=final` when prompted,
+then tap **Review uploads** again. Bot sends independent audit/diff reports
+and Publish Year buttons; no year publishes until clicked. Each year can
+publish independently. Same/older revisions and PDF text-audit findings need
+explicit review; parser/layout/source-output failures cannot publish.
+Staging lives under `.test-env/schedules/.uploads/` and expires after 30
+minutes. Published output saves classifications beside it as
+`orarN.classifications.json`; uncertain labels keep raw text. Review CSV records
+source coordinates and XLSX hash; changed-cell CSV identifies displayed
+**ISO-even/ISO-odd** weeks. Previous XLSX, sidecar, and group catalog copies
+stay under `.test-env/schedules/rollback/` after publication. Check `/today`,
+`/curr_week`, reminders, and restart persistence. Existing test schedules
+need matching sidecars when testing without upload.
+
+To refresh test schedules from reactor, fetch only the four production XLSX
+files into `.test-env/incoming/`, compare their SHA-256 hashes to files on
+reactor, then move the checked files into `.test-env/schedules/`. The bot holds
+worksheets in memory, so restart **only the test bot** afterward:
+
+```bash
+mkdir -p .test-env/incoming
+chmod 700 .test-env/incoming
+scp -p 'reactor:/home/vaniok56/Desktop/ORAR_UTM_FCIM_BOT/schedules/orar[1-4].xlsx' .test-env/incoming/
+ssh reactor 'sha256sum /home/vaniok56/Desktop/ORAR_UTM_FCIM_BOT/schedules/orar[1-4].xlsx'
+shasum -a 256 .test-env/incoming/orar[1-4].xlsx
+# Only after all four hashes match:
+mv .test-env/incoming/orar[1-4].xlsx .test-env/schedules/
+docker compose -p orar_test -f docker-compose.test.yml restart orar_bot
+```
+
+Reactor stays read-only. `docker compose ... logs --tail 50 orar_bot` shows
+loaded group counts after restart. Local test schedules were refreshed from
+reactor on 2026-09-28; prior copies are in `.test-env/previous-schedules/`.
+
+Stop the local test without deleting its database:
+
+```bash
+docker compose -p orar_test -f docker-compose.test.yml stop
+```
+
+Do not use `down -v`: it deletes the test database volume. Check isolation with
+`docker compose -p orar_test -f docker-compose.test.yml ps`; the `PORTS` column
+must not show a published host address.
+
 ## 🔍 Troubleshooting
 
 If you encounter issues, check the following:
