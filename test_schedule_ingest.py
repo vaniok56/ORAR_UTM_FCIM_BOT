@@ -123,6 +123,8 @@ class ScheduleIngestTests(unittest.TestCase):
         self.assertEqual(ask_version(Path("orar_semestrul_i-27.pdf"), lambda _: "", messages.append), 27)
 
     def test_geometry_half_comparison_rejects_swapped_weeks(self):
+        if not (Path(__file__).parent / "schedule_parser" / "pdf_geometry.py").exists():
+            self.skipTest("development-only geometry tool is not shipped in the image")
         from schedule_parser.pdf_geometry import compare_half
 
         self.assertTrue(compare_half("AM\nDohotaru L.\n720", "ALGA\n720",
