@@ -42,6 +42,11 @@ docker-compose.yml
 **Thumbs.db
 
 # Mounted volumes
+.test-env/
+schedule_parser/*
+!schedule_parser/__init__.py
+!schedule_parser/parser.py
+!schedule_parser/audit_outputs.py
 **.log
 sessions/
 mysql/

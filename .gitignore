@@ -43,4 +43,5 @@ Thumbs.db
 orar*.xlsx
 /src/dynamic_group_lists.py
 transform*
-schedule_parser*
+.test-env/
+schedule_parser/output/
