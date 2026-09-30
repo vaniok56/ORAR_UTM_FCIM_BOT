@@ -481,7 +481,7 @@ def get_next_course_time():
     for i, hour in enumerate(hours):
         course_time = datetime.datetime.strptime(hour[0].split("-")[0], "%H.%M")
         notification_time = course_time - datetime.timedelta(minutes=15) - bulk_send_shift_earlier
-        if notification_time.time() >= current_time.time():
+        if notification_time.time() > current_time.time():
             course_index = i
             break
     
