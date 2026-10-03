@@ -219,6 +219,9 @@ sudo docker compose up -d
 
 ## Local test bot on Mac
 
+Mac and private stage share the test Telegram token. Stop one before starting
+the other. Live Telegram/stage checks require a separate execution decision.
+
 Run from the repository root. This setup uses `configs/config2.ini` for the test
 Telegram bot, an independent `orar_test` Docker project, a fresh named MySQL
 volume, and `.test-env/` for schedules, logs, backups, and the Telegram session.
@@ -283,7 +286,12 @@ and Publish Year buttons; no year publishes until clicked. Each year can
 publish independently. Same/older revisions and PDF text-audit findings need
 explicit review; parser/layout/source-output failures cannot publish.
 Staging lives under `.test-env/schedules/.uploads/` and expires after 30
-minutes. Published output saves classifications beside it as
+minutes of idle time, refreshed only by accepted files/versions and valid
+Review/Publish actions. Duplicate files require restarting the batch. Manual
+versions win over PDF filename guesses, with a warning. Once review is prepared,
+editing ends. Stale targets or publication failures clear remaining batch;
+already-published years stay committed. Sunday/seven-day uploads reject.
+Published output saves classifications beside it as
 `orarN.classifications.json`; uncertain labels keep raw text. Review CSV records
 source coordinates and XLSX hash; changed-cell CSV identifies displayed
 **ISO-even/ISO-odd** weeks. Previous XLSX, sidecar, and group catalog copies
@@ -291,25 +299,8 @@ stay under `.test-env/schedules/rollback/` after publication. Check `/today`,
 `/curr_week`, reminders, and restart persistence. Existing test schedules
 need matching sidecars when testing without upload.
 
-To refresh test schedules from reactor, fetch only the four production XLSX
-files into `.test-env/incoming/`, compare their SHA-256 hashes to files on
-reactor, then move the checked files into `.test-env/schedules/`. The bot holds
-worksheets in memory, so restart **only the test bot** afterward:
-
-```bash
-mkdir -p .test-env/incoming
-chmod 700 .test-env/incoming
-scp -p 'reactor:/home/vaniok56/Desktop/ORAR_UTM_FCIM_BOT/schedules/orar[1-4].xlsx' .test-env/incoming/
-ssh reactor 'sha256sum /home/vaniok56/Desktop/ORAR_UTM_FCIM_BOT/schedules/orar[1-4].xlsx'
-shasum -a 256 .test-env/incoming/orar[1-4].xlsx
-# Only after all four hashes match:
-mv .test-env/incoming/orar[1-4].xlsx .test-env/schedules/
-docker compose -p orar_test -f docker-compose.test.yml restart orar_bot
-```
-
-Reactor stays read-only. `docker compose ... logs --tail 50 orar_bot` shows
-loaded group counts after restart. Local test schedules were refreshed from
-reactor on 2026-09-28; prior copies are in `.test-env/previous-schedules/`.
+Private schedule-refresh host paths live in ignored `RUN_PRIVATE.md`. Compare
+all SHA-256 hashes before replacing local copies; restart only the test bot.
 
 Stop the local test without deleting its database:
 
@@ -320,6 +311,35 @@ docker compose -p orar_test -f docker-compose.test.yml stop
 Do not use `down -v`: it deletes the test database volume. Check isolation with
 `docker compose -p orar_test -f docker-compose.test.yml ps`; the `PORTS` column
 must not show a published host address.
+
+## Runtime configuration and checks
+
+Production uses read-only `/configs/config.ini`; Mac/stage set
+`ORAR_CONFIG=configs/config2.ini`. Production base pins Python 3.14.8 bookworm.
+
+```sh
+python -m pip install -r requirements.txt
+python -m pip check
+python -m unittest test_schedule_ingest test_upload_status
+docker build -t orar-pr4-smoke .
+docker run --rm --network none \
+  --mount type=bind,source="$PWD/tests",target=/checks/tests,readonly \
+  --mount type=bind,source="$PWD/test_schedule_ingest.py",target=/checks/test_schedule_ingest.py,readonly \
+  orar-pr4-smoke python /checks/tests/image_smoke.py
+```
+
+Checks use synthetic inputs only. Upload caps: 2,000 rows, 1,024 columns,
+100,000 cells, 2,000 merges, 20,000 merged cells, 100 groups; measured maxima:
+873, 518, 27,689, 793, 3,368, 42. Existing size/archive caps remain. PDF timeout:
+30 seconds.
+
+## Manual recovery after interrupted publication
+
+Normal failures restore files and RAM. Rollback errors alert uploader/admin and
+leave durable copies in `schedules/rollback/`. Before manual recovery, stop bot;
+restore matching workbook/sidecar/catalog copies, preserve independently
+published years, validate workbook/sidecar hashes, then restart. RAM state alone
+does not make disk safe for restart.
 
 ## 🔍 Troubleshooting
 

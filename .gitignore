@@ -45,3 +45,14 @@ orar*.xlsx
 transform*
 .test-env/
 schedule_parser/output/
+schedule_parser/app.py
+schedule_parser/pdf_geometry.py
+schedule_parser/test_app.py
+schedule_parser/test_geometry.py
+schedule_parser/requirements.txt
+schedule_parser/LOCAL_WIZARD.md
+PDF_GEOMETRY_FIX_PLAN.md
+UTM_SCHEDULE_TUTORIAL.md
+DEAN_UPLOAD_PLAN.md
+ORAR_FCIM_WEB_IMPLEMENTATION_PLAN.md
+RUN_PRIVATE.md
