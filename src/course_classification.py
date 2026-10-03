@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import re
 from html import escape
 from pathlib import Path
@@ -256,7 +257,7 @@ def format_course(raw, classifications, subgroup=None, is_even=None):
 
         With a subgroup selected the glyph is that subgroup. In the combined
         view each entry carries the half that attends it this week, and the
-        halves swap over on even ISO weeks.
+        halves swap over on odd ISO weeks.
         """
         if subgroup in (1, 2):
             half = subgroup
@@ -280,7 +281,7 @@ def format_course(raw, classifications, subgroup=None, is_even=None):
 
 
 def viewer_subgroup(subgrupa, is_even):
-    """Half-group labs alternate: even ISO weeks the viewer sees the other half."""
+    """Half-group labs alternate: odd ISO weeks the viewer sees the other half."""
     try:
         value = int(subgrupa)
     except (ValueError, TypeError):
@@ -424,11 +425,61 @@ def save_classifications(xlsx_path, classifications, output_path, source_path=No
     Path(output_path).write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
 
 
+def _valid_entry(entry, raw=None, depth=0):
+    if not isinstance(entry, dict) or depth > 1:
+        return False
+    if not isinstance(entry.get("status"), str) or entry["status"] not in {"classified", "needs_review", "unclassified"}:
+        return False
+    if not isinstance(entry.get("raw"), str) or (raw is not None and entry["raw"] != raw):
+        return False
+    if not isinstance(entry.get("subject"), str) or not isinstance(entry.get("reason"), str):
+        return False
+    for field in ("teachers", "rooms", "teacher_candidates"):
+        values = entry.get(field, [] if field == "teacher_candidates" else None)
+        if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+            return False
+    if "review_required" in entry and type(entry["review_required"]) is not bool:
+        return False
+    if "lab" in entry and entry["lab"] not in ("0.5", "whole"):
+        return False
+    if "lab_source_line" in entry and not isinstance(entry["lab_source_line"], str):
+        return False
+    if "entries" in entry:
+        entries = entry["entries"]
+        if depth or not isinstance(entries, list) or len(entries) != 2:
+            return False
+        if not all(_valid_entry(value, depth=depth + 1) for value in entries):
+            return False
+        if any(value["raw"] != select_subgroup(entry["raw"], index)
+               for index, value in enumerate(entries, 1)):
+            return False
+        if entry["status"] == "classified" and any(value["status"] != "classified" for value in entries):
+            return False
+    elif entry["status"] == "classified" and not entry["subject"].strip():
+        return False
+    return True
+
+
 def load_classifications(xlsx_path):
     try:
         payload = json.loads(sidecar_path(xlsx_path).read_text(encoding="utf-8"))
-        if payload["xlsx_sha256"] == hashlib.sha256(Path(xlsx_path).read_bytes()).hexdigest():
-            return payload["classes"]
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    return {}
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        logging.warning("Malformed classification sidecar; using raw schedule text")
+        return {}
+    if (not isinstance(payload, dict) or not isinstance(payload.get("xlsx_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", payload["xlsx_sha256"])
+            or not isinstance(payload.get("classes"), dict)
+            or not all(isinstance(raw, str) and _valid_entry(entry, raw)
+                       for raw, entry in payload["classes"].items())):
+        logging.warning("Malformed classification sidecar; using raw schedule text")
+        return {}
+    try:
+        if payload["xlsx_sha256"] != hashlib.sha256(Path(xlsx_path).read_bytes()).hexdigest():
+            logging.warning("Classification sidecar workbook hash mismatch; using raw schedule text")
+            return {}
+    except OSError:
+        logging.warning("Classification workbook unavailable; using raw schedule text")
+        return {}
+    return payload["classes"]

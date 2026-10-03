@@ -24,6 +24,35 @@ from course_classification import (
 
 
 class CourseClassificationTests(unittest.TestCase):
+    def test_sidecar_schema_rejects_whole_map_including_raw_and_nested_entries(self):
+        import copy
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "schedule.xlsx"
+            Workbook().save(path)
+            raw = "1) lab. Algebra\nExample A.\n101\n2) lab. Logic\nSample B.\n102"
+            valid = {raw: classify(raw), "unknown": classify("unknown")}
+            save_classifications(path, valid, sidecar_path(path))
+            self.assertEqual(load_classifications(path), valid)
+            payload = json.loads(sidecar_path(path).read_text())
+            broken = [[], {"xlsx_sha256": 1, "classes": valid},
+                      {"xlsx_sha256": payload["xlsx_sha256"], "classes": []}]
+            for field, value in (("teachers", [1]), ("rooms", "101"), ("status", []),
+                                 ("subject", None), ("review_required", "yes"), ("raw", "other"), ("lab", True)):
+                item = copy.deepcopy(payload)
+                item["classes"]["unknown"][field] = value
+                broken.append(item)
+            for field, value in (("subject", ""), ("teachers", [None]), ("raw", "wrong nested raw")):
+                item = copy.deepcopy(payload)
+                item["classes"][raw]["entries"][0][field] = value
+                broken.append(item)
+            for item in broken:
+                with self.subTest(item=item):
+                    sidecar_path(path).write_text(json.dumps(item))
+                    with self.assertLogs(level="WARNING"):
+                        self.assertEqual(load_classifications(path), {})
+            sidecar_path(path).unlink()
+            self.assertEqual(load_classifications(path), {})
+
     def test_review_counts_never_sum_none(self):
         labels = {
             "normal": {"status": "classified"},
@@ -310,7 +339,7 @@ class HalfLabTests(unittest.TestCase):
         self.assertTrue(format_course(raw, labels, 1, True).startswith("🌗 Lab. 0.5 gr."))
         self.assertTrue(format_course(raw, labels, 2, False).startswith("🌓 Lab. 0.5 gr."))
         self.assertTrue(format_course(raw, labels, 2, True).startswith("🌓 Lab. 0.5 gr."))
-        # Combined view: single class belongs to half 1 on odd weeks, half 2 on even.
+        # Combined view: single class belongs to half 1 on ISO-even weeks, half 2 on ISO-odd.
         self.assertTrue(format_course(raw, labels, 0, False).startswith("🌗 Lab. 0.5 gr."))
         self.assertTrue(format_course(raw, labels, 0, True).startswith("🌓 Lab. 0.5 gr."))
         self.assertTrue(format_course(raw, labels).startswith("🌗 Lab. 0.5 gr."))
@@ -325,7 +354,7 @@ class HalfLabTests(unittest.TestCase):
         self.assertIn("🌓 Lab. 0.5 gr.\n📖 1) ASR", even)
         self.assertIn("🌗 Lab. 0.5 gr.\n📖 2) IP", even)
 
-    def test_attending_half_alternates_on_even_iso_weeks(self):
+    def test_attending_half_alternates_on_odd_iso_weeks(self):
         self.assertEqual(viewer_subgroup(1, False), 1)
         self.assertEqual(viewer_subgroup(2, False), 2)
         self.assertEqual(viewer_subgroup(1, True), 2)
@@ -400,4 +429,3 @@ class WholeLabTests(unittest.TestCase):
 
     def test_lab_word_inside_another_word_is_not_a_lab_marker(self):
         self.assertIsNone(classify("Elaborare\nPopescu I.\n220").get("lab"))
-
