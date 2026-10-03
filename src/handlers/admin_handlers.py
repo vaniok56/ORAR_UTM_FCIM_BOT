@@ -9,6 +9,8 @@ import hashlib
 import shutil
 import tempfile
 import secrets
+import copy
+import re
 from pathlib import Path
 
 from telethon import TelegramClient, events, types
@@ -16,9 +18,10 @@ from telethon.errors import MessageNotModifiedError
 from telethon.tl.custom import Button
 
 import handlers.db as db
+import functions as runtime
 from functions import activate_schedule, button_grid, send_logs, print_next_course, is_rate_limited, format_id, load_schedule_file, write_groups_to_json, hours, week_days
 from course_classification import classification_counts, sidecar_path
-from schedule_ingest import UploadReject, compare_versions, inspect_pdf, inspect_xlsx, parse_version, pdf_version, prepare_upload, schedule_diff, write_diff_csv
+from schedule_ingest import MAX_XLSX_BYTES, MAX_PDF_BYTES, UploadReject, compare_versions, inspect_pdf, inspect_xlsx, parse_version, pdf_version, prepare_upload, schedule_diff, write_diff_csv
 from year_migration import plan_year_migration
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
@@ -57,6 +60,32 @@ def batch_progress_line(state):
 
 UPLOAD_STAGE_ROOT = Path("schedules/.uploads")
 UPLOAD_MAX_AGE_SECONDS = 1800
+
+
+def target_fingerprint(path):
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except FileNotFoundError:
+        return None
+
+
+def capture_runtime(year, specialties, group_list):
+    return {"sheet": getattr(runtime, f"schedule{year}"),
+            "groups": list(getattr(runtime, f"groups{year}")),
+            "classes": runtime.classifications_by_schedule.copy(),
+            "specialties": copy.deepcopy(specialties), "group_list": copy.deepcopy(group_list)}
+
+
+def restore_runtime(year, snapshot, specialties, group_list):
+    setattr(runtime, f"schedule{year}", snapshot["sheet"])
+    setattr(runtime, f"groups{year}", snapshot["groups"])
+    runtime.classifications_by_schedule.clear()
+    runtime.classifications_by_schedule.update(snapshot["classes"])
+    specialties.clear()
+    specialties.update(snapshot["specialties"])
+    group_list.clear()
+    group_list.update(snapshot["group_list"])
+    runtime.clear_schedule_caches()
 
 
 def purge_stale_stages(root=UPLOAD_STAGE_ROOT):
@@ -538,7 +567,8 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
         try:
             for i in range(1, 8):
                 text = "Perechea urmatore: #" + str(i)
-                text += print_next_course(week_day, 'TI-241', is_even, i, subgrupa)
+                text += print_next_course(week_day, 'TI-241', is_even, i, subgrupa,
+                                          study_year=db.locate_field(format_id(SENDER), 'year_s'))
                 if text:
                     await client.send_message(SENDER, text, parse_mode="HTML")
                 send_logs(format_id(SENDER) + " - /debug_next", 'info')
@@ -989,14 +1019,30 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
 
     def clear_upload(sender_id):
         state = active_uploads.pop(sender_id, None)
-        if state and state.get("stage"):
+        if state:
+            task = state.get("expiry_task")
+            if task and task is not asyncio.current_task():
+                task.cancel()
             shutil.rmtree(state["stage"], ignore_errors=True)
 
+    def touch_upload(state):
+        state["deadline"] = asyncio.get_running_loop().time() + UPLOAD_MAX_AGE_SECONDS
+
+    def expired(sender_id, state):
+        if asyncio.get_running_loop().time() >= state["deadline"]:
+            clear_upload(sender_id)
+            return True
+        return False
+
     async def expire_upload(sender_id, state):
-        await asyncio.sleep(1800)
-        async with state["lock"]:
-            if active_uploads.get(sender_id) is state:
-                clear_upload(sender_id)
+        loop = asyncio.get_running_loop()
+        while active_uploads.get(sender_id) is state:
+            await asyncio.sleep(max(0, state["deadline"] - loop.time()))
+            async with state["lock"]:
+                if active_uploads.get(sender_id) is not state:
+                    return
+                if expired(sender_id, state):
+                    return
 
     async def send_stage_file(sender_id, path, name):
         if path.exists():
@@ -1016,19 +1062,19 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
         rollback_dir = schedule_dir / "rollback"
         rollback_dir.mkdir(mode=0o700, exist_ok=True)
         stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + state["token"]
-        published = False
+        snapshot = capture_runtime(year_selected, specialties, group_list)
+        files = ((target, backup, rollback_dir / f"orar{year_selected}.{stamp}.xlsx"),
+                 (sidecar, backup_sidecar, rollback_dir / f"orar{year_selected}.{stamp}.classifications.json"),
+                 (catalog, catalog_backup, rollback_dir / f"orar{year_selected}.{stamp}.dynamic_group_lists.py"))
+        present = {path: path.exists() for path, _, _ in files}
+        replaced = False
         try:
-            if target.exists():
-                shutil.copy2(target, backup)
-                shutil.copy2(backup, rollback_dir / f"orar{year_selected}.{stamp}.xlsx")
-            if sidecar.exists():
-                shutil.copy2(sidecar, backup_sidecar)
-                shutil.copy2(backup_sidecar, rollback_dir / f"orar{year_selected}.{stamp}.classifications.json")
-            if catalog.exists():
-                shutil.copy2(catalog, catalog_backup)
-                shutil.copy2(catalog_backup, rollback_dir / f"orar{year_selected}.{stamp}.dynamic_group_lists.py")
+            for path, staged_backup, durable_backup in files:
+                if present[path]:
+                    shutil.copy2(path, staged_backup)
+                    shutil.copy2(staged_backup, durable_backup)
             os.replace(prepared.xlsx, target)
-            published = True
+            replaced = True
             os.replace(prepared.sidecar, sidecar)
             schedule, groups = load_schedule_file(target)
             activate_schedule(schedule, groups, year_selected)
@@ -1039,22 +1085,26 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
             specialties.update(new_specialties)
             group_list.clear()
             group_list.update(new_group_list)
-        except Exception:
-            if published:
-                if backup.exists():
-                    os.replace(backup, target)
-                else:
-                    target.unlink(missing_ok=True)
-                if backup_sidecar.exists():
-                    os.replace(backup_sidecar, sidecar)
-                else:
-                    sidecar.unlink(missing_ok=True)
-                if catalog_backup.exists():
-                    os.replace(catalog_backup, catalog)
-                if target.exists():
-                    schedule, groups = load_schedule_file(target)
-                    activate_schedule(schedule, groups, year_selected)
-            raise
+        except Exception as error:
+            rollback_errors = []
+            if replaced:
+                for path, staged_backup, _ in files:
+                    try:
+                        if present[path]:
+                            shutil.copy2(staged_backup, path)
+                        else:
+                            path.unlink(missing_ok=True)
+                    except Exception as restore_error:
+                        rollback_errors.append(f"{path.name}: {restore_error}")
+            try:
+                restore_runtime(year_selected, snapshot, specialties, group_list)
+            except Exception as restore_error:
+                rollback_errors.append(f"RAM: {restore_error}")
+                setattr(runtime, f"schedule{year_selected}", runtime.openpyxl.Workbook().active)
+                setattr(runtime, f"groups{year_selected}", [])
+                runtime.clear_schedule_caches()
+            detail = "; ".join(rollback_errors) if rollback_errors else "files and RAM restored"
+            raise RuntimeError(f"{error}; rollback: {detail}; durable copies: {rollback_dir}") from error
         item["published"] = True
         try:
             await client.send_message(
@@ -1080,21 +1130,21 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
         existing = active_uploads.get(SENDER)
         if existing:
             async with existing["lock"]:
+                if active_uploads.get(SENDER) is not existing:
+                    return
                 clear_upload(SENDER)
-        root = Path("schedules/.uploads")
+        root = UPLOAD_STAGE_ROOT
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
         stage = Path(tempfile.mkdtemp(prefix=f"{SENDER}-", dir=root))
         token = secrets.token_hex(4)
-        state = {"phase": "collect", "started": datetime.datetime.now().timestamp(),
+        state = {"phase": "collect",
                  "stage": stage, "years": {}, "lock": asyncio.Lock(), "token": token}
         active_uploads[SENDER] = state
-        asyncio.create_task(expire_upload(SENDER, state))
-        state["status_message"] = await client.send_message(
-            SENDER,
+        touch_upload(state)
+        state["expiry_task"] = asyncio.create_task(expire_upload(SENDER, state))
+        await update_batch_status(client, state, SENDER,
             "Send 1–8 files: dean XLSX and optional matching PDF for up to four years, any order. "
             "Then tap Review uploads. PDFs without XLSX cannot publish.",
-            buttons=[[Button.inline("Review uploads", data=f"upload_review_{token}".encode()),
-                      Button.inline("Cancel", data=f"cancel_update_schedule_{token}".encode())]],
         )
         send_logs(f"User {SENDER} initiated schedule update", 'info')
         return
@@ -1127,7 +1177,11 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
             return
         xlsx_years = [year for year, item in sorted(years.items()) if item.get("xlsx")]
         if not xlsx_years:
-            await client.send_message(sender_id, "No dean XLSX uploaded. Send at least one XLSX before reviewing.")
+            if years:
+                clear_upload(sender_id)
+                await client.send_message(sender_id, "PDF-only years excluded; no publishable XLSX. Start /update_schedule again.")
+            else:
+                await client.send_message(sender_id, "No dean XLSX uploaded. Send at least one XLSX before reviewing.")
             return
         state["phase"] = "review"
         for year in xlsx_years:
@@ -1146,19 +1200,20 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
                     [week_days[day] for day in sorted(week_days)], [slot[0] for slot in hours],
                 )
                 target = Path("schedules") / f"orar{year}.xlsx"
-                if target.exists():
-                    active_value = load_schedule_file(target)[0].cell(1, 1).value
-                    newer, reason = compare_versions(prepared.version, active_value)
-                    changed, added, removed, differences = await asyncio.to_thread(schedule_diff, target, prepared.xlsx)
-                    item["target_hash"] = hashlib.sha256(target.read_bytes()).hexdigest()
-                else:
-                    newer, reason = True, "no active schedule yet"
-                    changed, added, removed, differences = 0, 0, 0, []
-                    item["target_hash"] = ""
+                async with year_publish_locks[year]:
+                    expected = target_fingerprint(target)
+                    if expected is not None:
+                        active_value = load_schedule_file(target)[0].cell(1, 1).value
+                        newer, reason = compare_versions(prepared.version, active_value)
+                        changed, added, removed, differences = await asyncio.to_thread(schedule_diff, target, prepared.xlsx)
+                    else:
+                        newer, reason = True, "no active schedule yet"
+                        changed, added, removed, differences = 0, 0, 0, []
                 write_diff_csv(differences, item["stage"] / "changes.csv")
                 group_delta = (sum(row[0] == "group added" for row in differences),
                                sum(row[0] == "group removed" for row in differences))
                 item["prepared"] = prepared
+                item["target_hash"] = expected
                 item["version_warning"] = not newer
             except UploadReject as error:
                 item["rejected"] = True
@@ -1182,7 +1237,7 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
                 sender_id,
                 f"Year {year}: {scope}, version {prepared.version}. Changed {changed}, added {added}, removed {removed} parity cells; "
                 f"groups +{group_delta[0]}/-{group_delta[1]}. "
-                f"{warning}{reason}. {warning_text}"
+                f"{warning}{reason}. {warning_text}{item.get('version_advisory', '')}"
                 f"Classified {counts['classified']}, "
                 f"review variants {len(prepared.review)}. Review before publishing this year.",
                 buttons=[[Button.inline(f"Publish Year {year}", data=f"upload_publish_{state['token']}_{year}".encode()),
@@ -1195,7 +1250,10 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
                 await send_stage_file(sender_id, prepared.review_csv, f"year-{year}-classification-review.csv")
         for year, item in sorted(years.items()):
             if not item.get("xlsx"):
+                item["rejected"] = True
                 await client.send_message(sender_id, f"Year {year}: PDF received without XLSX; cannot publish.")
+        if all(item.get("rejected") for item in years.values()):
+            clear_upload(sender_id)
 
     @client.on(events.CallbackQuery(pattern=rb"^upload_review_([0-9a-f]{8})$"))
     async def upload_review(event):
@@ -1203,23 +1261,31 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
         if not state or not event.data.endswith(state["token"].encode()) or state["phase"] not in {"collect", "versions"}:
             await event.answer("No open upload batch.", alert=True)
             return
-        await event.answer("Reviewing uploads.")
         async with state["lock"]:
-            if active_uploads.get(event.sender_id) is state:
-                await review_batch(event.sender_id, state)
+            if active_uploads.get(event.sender_id) is not state or state["phase"] not in {"collect", "versions"}:
+                await event.answer("No open upload batch.", alert=True)
+                return
+            if expired(event.sender_id, state):
+                await event.answer("Batch expired. Start /update_schedule again.", alert=True)
+                return
+            touch_upload(state)
+            await event.answer("Reviewing uploads.")
+            await review_batch(event.sender_id, state)
 
     @client.on(events.CallbackQuery(pattern=rb"^upload_publish_([0-9a-f]{8})_([1-4])$"))
     async def upload_publish(event):
         state = active_uploads.get(event.sender_id)
         year = int(event.data[-1:])
         if (not state or state["phase"] != "review" or year not in state["years"]
-                or not event.data.startswith(f"upload_publish_{state['token']}_".encode())
-                or datetime.datetime.now().timestamp() - state["started"] > 1800):
+                or not event.data.startswith(f"upload_publish_{state['token']}_".encode())):
             await event.answer("No prepared year in this batch.", alert=True)
             return
         async with state["lock"]:
             if active_uploads.get(event.sender_id) is not state:
                 await event.answer("Batch no longer active.", alert=True)
+                return
+            if expired(event.sender_id, state):
+                await event.answer("Batch expired. Start /update_schedule again.", alert=True)
                 return
             async with year_publish_locks[year]:
                 item = state["years"][year]
@@ -1227,16 +1293,22 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
                     await event.answer("Already handled or permission denied.", alert=True)
                     return
                 target = Path("schedules") / f"orar{year}.xlsx"
-                if item["target_hash"] and (not target.exists()
-                                             or hashlib.sha256(target.read_bytes()).hexdigest() != item["target_hash"]):
-                    await event.answer("Schedule changed since review; restart upload.", alert=True)
+                if "target_hash" not in item or target_fingerprint(target) != item["target_hash"]:
+                    clear_upload(event.sender_id)
+                    await event.answer("Schedule changed since review; restart upload and review.", alert=True)
                     return
+                touch_upload(state)
                 await event.answer(f"Publishing Year {year}.")
                 try:
                     await publish_upload(event.sender_id, state, year)
                 except Exception as error:
+                    clear_upload(event.sender_id)
                     send_logs(f"Year {year} publication failed: {error}", "critical")
-                    await client.send_message(event.sender_id, f"Year {year}: publication failed; inspect rollback files and logs.")
+                    for recipient in {event.sender_id, int(main_admin[1:])}:
+                        try:
+                            await client.send_message(recipient, f"Year {year}: publication failed. {error}. Start a fresh upload/review.")
+                        except Exception as alert_error:
+                            send_logs(f"Publication failure alert failed: {alert_error}", "error")
 
     @client.on(events.NewMessage)
     async def receive_dean_upload(event):
@@ -1247,14 +1319,17 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
         async with state["lock"]:
             if active_uploads.get(sender_id) is not state:
                 return
-            if datetime.datetime.now().timestamp() - state["started"] > 1800:
-                clear_upload(sender_id)
+            if expired(sender_id, state):
                 await event.reply("Schedule batch expired. Start /update_schedule again.")
                 return
-            if state["phase"] == "versions":
-                import re
+            if state["phase"] not in {"collect", "versions"}:
+                await event.reply("Batch under review; use its Publish or Cancel buttons.")
+                return
+            suffix = Path(event.file.name).suffix.casefold() if event.file and event.file.name else ""
+            if not event.file:
                 match = re.fullmatch(r"([1-4])\s*=\s*(\d{1,2}|final)", (event.raw_text or "").strip(), re.I)
-                if not match or not state["years"].get(int(match.group(1)), {}).get("xlsx"):
+                if (not match or not state["years"].get(int(match.group(1)), {}).get("xlsx")
+                        or not can_update(sender_id, int(match.group(1)))):
                     await event.reply("Send YEAR=NUMBER (1–99) or YEAR=final, for a received XLSX.")
                     return
                 try:
@@ -1262,20 +1337,24 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
                 except UploadReject as error:
                     await event.reply(str(error))
                     return
-                state["years"][int(match.group(1))]["version"] = version
-                await event.reply(f"Year {match.group(1)} version set. Tap Review uploads again when ready.",
-                                  buttons=[[Button.inline("Review uploads", f"upload_review_{state['token']}".encode())]])
+                item = state["years"][int(match.group(1))]
+                item.update(version=version, version_source="manual")
+                guess = item.get("pdf_version")
+                item["version_advisory"] = (f"Warning: manual version {version} overrides PDF version {guess}. "
+                                            if guess is not None and guess != version else "")
+                touch_upload(state)
+                await update_batch_status(client, state, sender_id,
+                    f"Year {match.group(1)} version set. {item['version_advisory']}"
+                    f"Staged: {batch_progress_line(state)}. Tap Review uploads when ready.")
                 return
-            if state["phase"] != "collect":
-                await event.reply("Batch under review; use its Publish or Cancel buttons.")
-                return
-            suffix = Path(event.file.name).suffix.casefold() if event.file and event.file.name else ""
-            if suffix not in {".xlsx", ".pdf"} or (event.file.size or 0) > (20 if suffix == ".xlsx" else 30) * 1024 * 1024:
+            if suffix not in {".xlsx", ".pdf"} or (event.file.size or 0) > (MAX_XLSX_BYTES if suffix == ".xlsx" else MAX_PDF_BYTES):
                 await event.reply("Send dean XLSX (≤20 MiB) or matching PDF (≤30 MiB), then tap Review uploads.")
                 return
             temporary = state["stage"] / f"incoming-{event.id}{suffix}"
             try:
                 await event.download_media(str(temporary))
+                if temporary.stat().st_size > (MAX_XLSX_BYTES if suffix == ".xlsx" else MAX_PDF_BYTES):
+                    raise UploadReject("file exceeds upload size limit")
                 metadata = await asyncio.to_thread(inspect_xlsx if suffix == ".xlsx" else inspect_pdf, temporary)
                 year = metadata.study_year
                 if not can_update(sender_id, year):
@@ -1293,11 +1372,18 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
                 item[key] = destination
                 item["metadata" if suffix == ".xlsx" else "pdf_metadata"] = metadata
                 if suffix == ".pdf":
-                    item["version"] = pdf_version(Path(event.file.name))
+                    guess = pdf_version(Path(event.file.name))
+                    item["pdf_version"] = guess
+                    if item.get("version_source") == "manual":
+                        item["version_advisory"] = (f"Warning: manual version {item['version']} overrides PDF version {guess}. "
+                                                    if guess is not None and guess != item["version"] else "")
+                    else:
+                        item.update(version=guess, version_source="pdf")
+                touch_upload(state)
                 await update_batch_status(
                     client, state, sender_id,
                     f"📥 Year {year} {suffix} staged. Staged: {batch_progress_line(state)}.\n"
-                    f"Send more files or tap Review uploads.",
+                    f"{item.get('version_advisory', '')}Send more files or tap Review uploads.",
                 )
             except (UploadReject, ValueError) as error:
                 await update_batch_status(

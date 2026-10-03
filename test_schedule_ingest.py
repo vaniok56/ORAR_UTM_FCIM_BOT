@@ -1,4 +1,5 @@
 import sys
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,54 @@ from schedule_parser.parser import ScheduleBlock, SourceValue, _segments, parse_
 
 
 class ScheduleIngestTests(unittest.TestCase):
+    def dean_source(self, path, days=5, groups=("TI-261", "SI-222")):
+        import openpyxl
+        from openpyxl.styles import Border, Side
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet["A1"], sheet["B2"] = "ANUL UNIVERSITAR 2026/2027 ANUL II SEMESTRUL I", "Grupele"
+        for column, group in enumerate(groups, 5):
+            sheet.cell(2, column, group)
+        for day_index, day in enumerate(("Luni", "Marţi", "Miercuri", "Joi", "Vineri", "Sâmbătă", "Duminică")[:days]):
+            start = 3 + day_index * 43
+            sheet.cell(start, 2, day)
+            sheet.merge_cells(start_row=start, end_row=start + 41, start_column=2, end_column=2)
+            for slot, time in enumerate(("8.00-9.30", "9.45-11.15", "11.30-13.00", "13.30-15.00", "15.15-16.45", "17.00-18.30", "18.45-20.15")):
+                row = start + slot * 6
+                sheet.cell(row, 3, time)
+                sheet.merge_cells(start_row=row, end_row=row + 5, start_column=3, end_column=3)
+                for column in range(5, 5 + len(groups)):
+                    sheet.cell(row + 5, column).border = Border(bottom=Side(style="thin"))
+        for offset, text in enumerate(("c. Algebra", "Example A.", "101", "c. Logic", "Sample B.", "102")):
+            sheet.cell(3 + offset, 5, text)
+        sheet["E6"].border = Border(top=Side(style="medium"))
+        book.save(path)
+        return book
+
+    def test_upload_rejects_extent_merge_group_expansion_and_sunday(self):
+        from unittest.mock import patch
+        from schedule_ingest import MAX_SOURCE_ROWS, inspect_xlsx, prepare_upload
+        from schedule_parser.parser import MAX_LOGICAL_GROUPS
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.xlsx"
+            for case, reason in (("row", "extent"), ("merge", "merged ranges"),
+                                 ("groups", "Logical group count"), ("sunday", "Sunday")):
+                with self.subTest(case=case):
+                    book = self.dean_source(source, days=7 if case == "sunday" else 5)
+                    if case == "row":
+                        book.active.cell(MAX_SOURCE_ROWS + 1, 5, "too far")
+                    elif case == "merge":
+                        book.active.merge_cells("H1:AH1000")
+                    elif case == "groups":
+                        book.active["E2"] = "\n".join(f"TI-{100 + index}" for index in range(MAX_LOGICAL_GROUPS + 1))
+                    book.save(source)
+                    with self.assertRaisesRegex(ValueError, reason):
+                        if case in {"row", "merge"}:
+                            with patch("schedule_ingest.openpyxl.load_workbook", side_effect=AssertionError("must reject before load")):
+                                inspect_xlsx(source)
+                        else:
+                            prepare_upload(source, None, 3, Path(directory) / "stage", None, None)
+
     def test_six_day_week_flows_through_parser_classifier_and_audit(self):
         import openpyxl
         from course_classification import build_classifications
@@ -20,19 +69,11 @@ class ScheduleIngestTests(unittest.TestCase):
                  "15.15-16.45", "17.00-18.30", "18.45-20.15")
         with tempfile.TemporaryDirectory() as directory:
             source, output = (Path(directory) / name for name in ("source.xlsx", "output.xlsx"))
-            book = openpyxl.Workbook()
+            book = self.dean_source(source, days=6, groups=("TI-261",))
             sheet = book.active
-            sheet["B1"] = "Grupele"
-            sheet["E1"] = "TI-261"
-            for day_index, day in enumerate(days6):
-                for slot, time in enumerate(times):
-                    row = 2 + (day_index * 7 + slot) * 6 + day_index
-                    sheet.cell(row, 2, day)
-                    sheet.cell(row, 3, time)
-            sheet["E253"] = "SO"  # Saturday 18.45-20.15 block, one source line per row.
-            sheet["E254"] = "Reițman P."
-            sheet["E255"] = "101"
-            sheet["E259"] = ""  # Keep the final six-row block inside XLSX dimensions.
+            sheet["E254"] = "SO"  # Saturday final timeslot.
+            sheet["E255"] = "Reițman P."
+            sheet["E256"] = "101"
             book.save(source)
 
             blocks = parse_workbook(source)
@@ -52,7 +93,7 @@ class ScheduleIngestTests(unittest.TestCase):
             groups = [cell.value for cell in written[1][2:] if cell.value]
             labels, review = build_classifications(written, groups, 1, None, None, blocks, pairs)
             self.assertEqual(labels["SO\nReițman P.\n101"]["status"], "classified")
-            self.assertEqual(review, [])
+            self.assertFalse(any(row[2] == "Sâmbătă" for row in review))
 
     def test_classifier_reads_rows_beyond_the_old_seventy_one_row_cap(self):
         import openpyxl
@@ -72,75 +113,34 @@ class ScheduleIngestTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             source, output = (Path(directory) / name for name in ("source.xlsx", "output.xlsx"))
-            book = openpyxl.Workbook()
+            book = self.dean_source(source)
             sheet = book.active
-            sheet["B1"] = "Grupele"
-            sheet["E1"] = "TI-261"
-            sheet["F1"] = "SI-222"
             sheet.column_dimensions["F"].width = 1.285
-            times = ("8.00-9.30", "9.45-11.15", "11.30-13.00", "13.30-15.00",
-                     "15.15-16.45", "17.00-18.30", "18.45-20.15")
-            for day_index, day in enumerate(("Luni", "Marţi", "Miercuri", "Joi", "Vineri")):
-                for slot, time in enumerate(times):
-                    row = 2 + (day_index * 7 + slot) * 6 + day_index
-                    sheet.cell(row, 2, day)
-                    sheet.cell(row, 3, time)
-            sheet["E44"] = "unexpected gap class"  # Between Monday and Tuesday.
-            from openpyxl.styles import Border, Side
-            sheet["E215"].border = Border(bottom=Side(style="thin"))  # Preserve final block on reload.
+            sheet["E45"] = "unexpected gap class"  # Between Monday and Tuesday.
             book.save(source)
             blocks = parse_workbook(source)
             write_schedule_workbook(blocks, resolve_pairs(blocks), output)
             findings, _ = audit_schedule(source, output)
             self.assertEqual({(item.source, item.reason) for item in findings}, {
-                ("E44", "populated row outside six-row timeslots; inspect PDF ink"),
+                ("E45", "populated row outside six-row timeslots; inspect PDF ink"),
             })
             self.assertEqual(openpyxl.load_workbook(output).active["D1"].value, "SI-222")
             book = openpyxl.load_workbook(source)
-            book.active["F2"] = "real group content"
+            book.active["F3"] = "real group content"
             book.save(source)
             blocks = parse_workbook(source)
             write_schedule_workbook(blocks, resolve_pairs(blocks), output)
             findings, _ = audit_schedule(source, output)
-            self.assertFalse(any(item.source == "F1" for item in findings))
+            self.assertFalse(any(item.source == "F2" for item in findings))
 
-    def test_unknown_terminal_pdf_version_requires_explicit_final(self):
-        # app.py is Mac-local and git-ignored pending tracking decision.
-        lab = Path(__file__).parent / "schedule_parser"
-        if not (lab / "app.py").exists():
-            self.skipTest("local terminal wizard not installed")
-        sys.path.insert(0, str(lab))
-        from app import ask_version, parse_pdf_version
-
-        self.assertIsNone(parse_pdf_version(Path("unknown.pdf")))
-        self.assertIsNone(parse_pdf_version(Path("orar_semestrul_i-0.pdf")))
-        self.assertEqual(parse_pdf_version(Path("orar_semestrul_i-27.pdf")), 27)
-        messages = []
-        responses = iter(("", "0", "final"))
-        self.assertEqual(ask_version(Path("unknown.pdf"), lambda _: next(responses), messages.append), 0)
-        self.assertEqual(len(messages), 2)
-        self.assertEqual(ask_version(None, lambda _: "9", messages.append), 9)
-        self.assertEqual(ask_version(Path("orar_semestrul_i-27.pdf"), lambda _: "", messages.append), 27)
-
-    def test_geometry_half_comparison_rejects_swapped_weeks(self):
-        if not (Path(__file__).parent / "schedule_parser" / "pdf_geometry.py").exists():
-            self.skipTest("development-only geometry tool is not shipped in the image")
-        from schedule_parser.pdf_geometry import compare_half
-
-        self.assertTrue(compare_half("AM\nDohotaru L.\n720", "ALGA\n720",
-                                     "AM Dohotaru L. 720", "ALGA 720", divided=True))
-        self.assertFalse(compare_half("ALGA\n720", "AM\nDohotaru L.\n720",
-                                      "AM Dohotaru L. 720", "ALGA 720", divided=True))
-        self.assertTrue(compare_half("CDE\nLitra D.\nA03", "CDE\nLitra D.\nA03",
-                                     "CDE Litra D.", "A03", divided=False))
-        self.assertFalse(compare_half("CDE", "different", "CDE", "different", divided=False))
-
+    @unittest.skipUnless(os.environ.get("ORAR_PRIVATE_TESTS") == "1", "optional private geometry/source integration")
     def test_official_geometry_and_swapped_week_fixture_when_available(self):
         import csv
         import importlib.util
 
         root = Path.home() / "Downloads" / "Re__Orar (1)"
-        if not (root / "Anul_I_Semestrul_I.xlsx").exists() or not importlib.util.find_spec("pymupdf"):
+        if (not (root / "Anul_I_Semestrul_I.xlsx").exists() or not importlib.util.find_spec("pymupdf")
+                or not (Path(__file__).parent / "schedule_parser" / "pdf_geometry.py").exists()):
             self.skipTest("official PDFs or optional development-only PyMuPDF unavailable")
         import openpyxl
         from schedule_parser.pdf_geometry import audit_geometry

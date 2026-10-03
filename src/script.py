@@ -338,7 +338,8 @@ async def mainee(event):
         else: 
             temp_is_even = (datetime.datetime.now(moldova_tz) + datetime.timedelta(days=1)).isocalendar().week % 2
             #send the schedule
-            day_sch = print_day(week_day, cur_group, temp_is_even, subgrupa, lang)
+            day_sch = print_day(week_day, cur_group, temp_is_even, subgrupa, lang,
+                                study_year=db.locate_field(format_id(SENDER), 'year_s'))
             if day_sch != "":
                 text = "\n\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_tomorrow", day=lang_week_days[week_day]) + day_sch
             else: 
@@ -371,7 +372,8 @@ async def azii(event):
         else: 
             week_day = int((datetime.datetime.now(moldova_tz)).weekday()) #weekday today(0-6)
             is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
-            day_sch = print_day(week_day, cur_group, is_even, subgrupa, lang, current_pair_index())
+            day_sch = print_day(week_day, cur_group, is_even, subgrupa, lang, current_pair_index(),
+                                study_year=db.locate_field(format_id(SENDER), 'year_s'))
             if day_sch != "":
                 text = "\n\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_today", day=lang_week_days[week_day]) + day_sch
             else: 
@@ -402,7 +404,7 @@ async def sapt_curr(event):
             raise ValueError(str(SENDER) + 'no gr')
         else: 
             is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
-            text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_current_week") + print_sapt(is_even, cur_group, subgrupa, lang)
+            text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_current_week") + print_sapt(is_even, cur_group, subgrupa, lang, study_year=db.locate_field(format_id(SENDER), 'year_s'))
             await client.send_message(SENDER, text, parse_mode="HTML")
             send_logs(format_id(SENDER) + " - /curr_week", 'info')
     except Exception as e:
@@ -430,7 +432,7 @@ async def sapt_viit(event):
         else: 
             is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
             is_even = not is_even
-            text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_next_week") + print_sapt(is_even, cur_group, subgrupa, lang)
+            text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_next_week") + print_sapt(is_even, cur_group, subgrupa, lang, study_year=db.locate_field(format_id(SENDER), 'year_s'))
             await client.send_message(SENDER, text, parse_mode="HTML")
             send_logs(format_id(SENDER) + " - /next_week", 'info')
     except Exception as e:
@@ -509,11 +511,12 @@ def prepare_next_courses(week_day, is_even, course_index):
                 if pd.isna(csv_gr) or csv_gr == '' or csv_gr == 'none':
                     continue
                 
-                next_course = print_next_course(week_day, csv_gr, is_even, course_index, subgrupa, user_lang)
+                next_course = print_next_course(week_day, csv_gr, is_even, course_index, subgrupa, user_lang,
+                                                study_year=row.get('year_s'))
                 if next_course:
                     next_courses[sender] = (next_course, user_lang)
             except Exception as e:
-                #send_logs(f"Error preparing next course to {sender}: {e}", 'error')
+                send_logs(f"Error preparing next course to {row['SENDER']}: {e}", 'error')
                 error_count += 1
         if error_count > 0:
             send_logs(f"Total errors preparing next courses: {error_count}", 'error')
@@ -644,7 +647,8 @@ async def send_schedule_tomorrow():
                         continue
                         
                     # Get schedule and send if not empty
-                    day_sch = print_day(week_day, csv_gr, temp_is_even, subgrupa, user_lang)
+                    day_sch = print_day(week_day, csv_gr, temp_is_even, subgrupa, user_lang,
+                                        study_year=row.get('year_s'))
                     if day_sch:
                         text = get_text(user_lang, "notif_tomorrow_schedule", day=lang_week_days[week_day], schedule=day_sch)
                         await client.send_message(sender, text, parse_mode="HTML")

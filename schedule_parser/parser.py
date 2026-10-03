@@ -27,6 +27,7 @@ DAY_CANONICAL = {"Marți": "Marţi"}
 TIME_RE = re.compile(r"^\d{1,2}\.\d{2}-\d{1,2}\.\d{2}$")
 GROUP_RE = re.compile(r"^[A-ZĂÂÎȘŢȚ]{1,5}-\d{3}$")
 BLOCK_ROWS = 6
+MAX_LOGICAL_GROUPS = 100  # Owner-approved source/output expansion cap, 2026-10-03.
 
 DAY_COLORS = {
     "Luni": "DDEEFF",
@@ -127,8 +128,18 @@ def _layout(ws):
         groups = []
         for column in range(group_label_col + 3, ws.max_column + 1):
             value = ws.cell(header_row, column).value
-            identifiers = [part.strip() for part in str(value or "").splitlines() if part.strip()]
-            if identifiers and all(GROUP_RE.fullmatch(identifier) for identifier in identifiers):
+            identifiers = []
+            for line in re.finditer(r"[^\r\n\v\f\x1c-\x1e\x85\u2028\u2029]+", str(value or "")):
+                identifier = line.group().strip()
+                if not identifier:
+                    continue
+                if not GROUP_RE.fullmatch(identifier):
+                    identifiers = []
+                    break
+                if len(groups) + len(identifiers) >= MAX_LOGICAL_GROUPS:
+                    raise LayoutError("Logical group count exceeds safe limit (100)")
+                identifiers.append(identifier)
+            if identifiers:
                 groups.extend((column, identifier) for identifier in identifiers)
             elif groups:
                 break
@@ -531,7 +542,7 @@ def write_candidate_review_workbook(blocks, reference_path: str | Path | None, p
     ws.title = "Review candidates"
     ws.append([
         "group", "day", "time", "source", "row 1", "row 2", "row 3", "row 4", "row 5", "row 6",
-        "resolution status", "resolved odd", "resolved even", "old odd candidate", "old even candidate", "parser flags",
+        "resolution status", "resolved ISO-even", "resolved ISO-odd", "old ISO-even candidate", "old ISO-odd candidate", "parser flags",
     ])
     for block, pair in zip(blocks, pairs):
         if pair.status != "review" and not pair.review_flags:

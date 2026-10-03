@@ -7,6 +7,8 @@ import hashlib
 import re
 import subprocess
 import zipfile
+from xml.parsers import expat
+from openpyxl.utils import coordinate_to_tuple, range_boundaries
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -15,7 +17,7 @@ import openpyxl
 
 from course_classification import build_classifications, review_csv, save_classifications
 from schedule_groups import normalize_schedule_version
-from schedule_parser.audit_outputs import audit_schedule
+from schedule_parser.audit_outputs import audit_schedule, csv_cell, write_csv
 from schedule_parser.parser import _displayed_value as displayed, parse_workbook, resolve_pairs, write_schedule_workbook
 
 
@@ -27,7 +29,14 @@ PDF_VERSION_RE = re.compile(r"semestrul[_ -]*[ivx]+-(\d{1,2})(?:-|$)", re.IGNORE
 ROMAN_YEAR = {"I": 1, "II": 2, "III": 3, "IV": 4}
 PDF_MISSING_REASON = "source value not found by PDF text extraction"
 MAX_XLSX_BYTES = 20 * 1024 * 1024
+MAX_PDF_BYTES = 30 * 1024 * 1024
 MAX_XLSX_UNCOMPRESSED_BYTES = 80 * 1024 * 1024
+# Owner-approved from source XML measurements, 2026-10-03.
+MAX_SOURCE_ROWS = 2000
+MAX_SOURCE_COLUMNS = 1024
+MAX_SOURCE_CELLS = 100_000
+MAX_SOURCE_MERGES = 2000
+MAX_SOURCE_MERGE_AREA = 20_000
 
 
 class UploadReject(ValueError):
@@ -96,20 +105,130 @@ def validate_xlsx(path: Path) -> None:
                 raise UploadReject("XLSX archive exceeds safe limits")
             if "[Content_Types].xml" not in archive.namelist():
                 raise UploadReject("file is not an XLSX workbook")
+            if len({item.filename for item in entries}) != len(entries):
+                raise UploadReject("duplicate XLSX archive part")
+            worksheets = set()
+            referenced = set()
+
+            def reject_dtd(*args):
+                raise UploadReject("XML DTD/entities are unsupported")
+
+            def stream(name, start, end=None):
+                parser = expat.ParserCreate(namespace_separator="}")
+                parser.StartElementHandler = start
+                parser.EndElementHandler = end
+                parser.StartDoctypeDeclHandler = reject_dtd
+                parser.EntityDeclHandler = reject_dtd
+                parser.ExternalEntityRefHandler = reject_dtd
+                with archive.open(name) as source:
+                    while chunk := source.read(64 * 1024):
+                        parser.Parse(chunk, False)
+                    parser.Parse(b"", True)
+
+            def content_type(tag, attrs):
+                if tag.endswith("}Override") and attrs.get("ContentType", "").endswith("worksheet+xml"):
+                    worksheets.add(attrs["PartName"].lstrip("/"))
+
+            stream("[Content_Types].xml", content_type)
+            sheet_count = 0
+
+            def workbook_sheet(tag, attrs):
+                nonlocal sheet_count
+                if tag.endswith("}sheet"):
+                    sheet_count += 1
+                    if sheet_count > 1:
+                        raise UploadReject("dean XLSX must contain exactly one worksheet")
+
+            stream("xl/workbook.xml", workbook_sheet)
+            if sheet_count != 1:
+                raise UploadReject("dean XLSX must contain exactly one worksheet")
+            # Check relationships too: worksheet parts need not be sheet1.xml or in xl/worksheets.
+            import posixpath
+
+            def relationship(tag, attrs):
+                if tag.endswith("}Relationship") and attrs.get("Type", "").endswith("/worksheet"):
+                    if attrs.get("TargetMode") == "External":
+                        raise UploadReject("external worksheet is unsupported")
+                    target = attrs["Target"]
+                    referenced.add(posixpath.normpath(target.lstrip("/") if target.startswith("/") else "xl/" + target))
+
+            stream("xl/_rels/workbook.xml.rels", relationship)
+            if not referenced or not referenced <= worksheets or not worksheets <= set(archive.namelist()):
+                raise UploadReject("missing or unsupported worksheet parts")
+            if len(referenced) != 1:
+                raise UploadReject("dean XLSX must contain exactly one worksheet")
+            for name in worksheets:
+                counts = {"cells": 0, "merges": 0, "area": 0}
+                current_row = 0
+
+                def extent(row, column):
+                    if not 1 <= row <= MAX_SOURCE_ROWS or not 1 <= column <= MAX_SOURCE_COLUMNS:
+                        raise UploadReject("worksheet row/column extent exceeds safe limits")
+
+                def structure(tag, attrs):
+                    nonlocal current_row
+                    local = tag.rsplit("}", 1)[-1]
+                    if local == "row":
+                        if "r" not in attrs:
+                            raise UploadReject("implicit row coordinates are unsupported")
+                        current_row = int(attrs["r"])
+                        extent(current_row, 1)
+                    elif local == "c":
+                        if not re.fullmatch(r"[A-Z]+[1-9]\d*", attrs.get("r", "")):
+                            raise UploadReject("missing or invalid cell coordinates")
+                        row, column = coordinate_to_tuple(attrs["r"])
+                        extent(row, column)
+                        if row != current_row:
+                            raise UploadReject("cell coordinate differs from containing row")
+                        counts["cells"] += 1
+                        if counts["cells"] > MAX_SOURCE_CELLS:
+                            raise UploadReject("worksheet cell count exceeds safe limits")
+                    elif local == "mergeCell":
+                        ref = attrs.get("ref", "")
+                        if not re.fullmatch(r"[A-Z]+[1-9]\d*:[A-Z]+[1-9]\d*", ref):
+                            raise UploadReject("unsupported merged range")
+                        c1, r1, c2, r2 = range_boundaries(ref)
+                        extent(r1, c1)
+                        extent(r2, c2)
+                        if r2 < r1 or c2 < c1:
+                            raise UploadReject("invalid merged range")
+                        counts["merges"] += 1
+                        counts["area"] += (r2 - r1 + 1) * (c2 - c1 + 1)
+                        if counts["merges"] > MAX_SOURCE_MERGES or counts["area"] > MAX_SOURCE_MERGE_AREA:
+                            raise UploadReject("worksheet merged ranges exceed safe limits")
+
+                def end_structure(tag):
+                    nonlocal current_row
+                    if tag.rsplit("}", 1)[-1] == "row":
+                        current_row = 0
+
+                stream(name, structure, end_structure)
+            # Other XML parts (notably shared strings/styles) also must not expand entities.
+            for name in archive.namelist():
+                if name.endswith((".xml", ".rels")) and name not in worksheets:
+                    stream(name, lambda tag, attrs: None)
     except zipfile.BadZipFile as error:
         raise UploadReject("file is not an XLSX workbook") from error
+    except (expat.ExpatError, KeyError, TypeError, ValueError) as error:
+        if isinstance(error, UploadReject):
+            raise
+        raise UploadReject("malformed or unsupported XLSX structure") from error
 
 
 def inspect_pdf(path: Path) -> Metadata:
+    if path.stat().st_size > MAX_PDF_BYTES:
+        raise UploadReject("PDF exceeds 30 MiB")
     try:
         result = subprocess.run(
             ["pdftotext", "-enc", "UTF-8", "-raw", "-nopgbrk", str(path), "-"],
-            check=True, capture_output=True, text=True,
+            check=True, capture_output=True, text=True, timeout=30,
         )
     except FileNotFoundError as error:
         raise UploadReject("PDF support unavailable: install pdftotext") from error
     except subprocess.CalledProcessError as error:
         raise UploadReject("cannot extract PDF text") from error
+    except subprocess.TimeoutExpired as error:
+        raise UploadReject("PDF text extraction exceeded 30 seconds") from error
     return parse_title(result.stdout)
 
 
@@ -127,28 +246,14 @@ def parse_version(value: str) -> int | str:
     raise UploadReject("version must be 1-99 or final")
 
 
-def same_metadata(xlsx: Metadata, pdf: Metadata) -> bool:
-    return xlsx == pdf
-
-
-def _write_audit_csv(findings, path: Path) -> None:
-    fields = ("status", "group", "day", "time", "parity", "source", "source_text", "output_text", "reason")
-    with path.open("w", newline="", encoding="utf-8") as output:
-        writer = csv.writer(output)
-        writer.writerow(fields)
-        writer.writerows(tuple(_csv_cell(getattr(item, field)) for field in fields) for item in findings)
-
-
-def _csv_cell(value):
-    return "'" + value if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")) else value
-
-
 def prepare_upload(source: Path, pdf: Path | None, version: int | str, stage: Path, days, times) -> PreparedUpload:
     """Produce auditable staged files. Never touches active schedules."""
     metadata = inspect_xlsx(source)
-    if pdf and not same_metadata(metadata, inspect_pdf(pdf)):
+    if pdf and metadata != inspect_pdf(pdf):
         raise UploadReject("PDF academic year, study year, or semester differs from dean XLSX")
     blocks = parse_workbook(source)
+    if any(block.day == "Duminică" for block in blocks) or len({block.day for block in blocks}) > 6:
+        raise UploadReject("Sunday/seven-day uploads are unsupported; runtime supports six days")
     pairs = resolve_pairs(blocks)
     if any(pair.status != "auto" for pair in pairs):
         raise UploadReject("parser could not determine every odd/even boundary")
@@ -156,9 +261,12 @@ def prepare_upload(source: Path, pdf: Path | None, version: int | str, stage: Pa
     stage.mkdir(parents=True, exist_ok=True)
     output = stage / "schedule.xlsx"
     write_schedule_workbook(blocks, pairs, output, version=None if version == "final" else version, generated_date=date.today())
-    findings, _ = audit_schedule(source, output, pdf)
+    try:
+        findings, _ = audit_schedule(source, output, pdf)
+    except ValueError as error:
+        raise UploadReject(str(error)) from error
     audit_csv = stage / "audit.csv"
-    _write_audit_csv(findings, audit_csv)
+    write_csv(findings, audit_csv)
     hard_errors = [item for item in findings if item.status != "approved" and item.reason != PDF_MISSING_REASON]
     if hard_errors:
         raise UploadReject("source/output audit failed")
@@ -228,4 +336,4 @@ def write_diff_csv(differences, path: Path) -> None:
     with path.open("w", newline="", encoding="utf-8-sig") as output:
         writer = csv.writer(output)
         writer.writerow(("status", "day", "time", "group", "week", "active", "staged"))
-        writer.writerows(tuple(_csv_cell(value) for value in row) for row in differences)
+        writer.writerows(tuple(csv_cell(value) for value in row) for row in differences)

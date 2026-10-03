@@ -171,7 +171,7 @@ for i in range(1, 5):
         globals()[f"groups{i}"] = extract_schedule_groups(
             globals()[f"schedule{i}"], schedule_column_start
         )
-        send_logs(f"Extracted {len(globals()[f"groups{i}"])} groups from schedule{i}", 'info')
+        send_logs(f"Extracted {len(globals()[f'groups{i}'])} groups from schedule{i}", 'info')
     except Exception as e:
         send_logs(f"Error extracting groups from schedule{i}: {e}", 'error')
         globals()[f"groups{i}"] = []
@@ -265,30 +265,23 @@ def get_online_schedule_versions():
         send_logs(f"Error fetching online schedule versions: {e}", 'error')
         return {}
 
-def get_schedule_and_groups(cur_group):
-    if cur_group in schedule_groups_cache:
-        #send_logs(f"Cache hit get_schedule_and_groups for {cur_group}", 'info')
-        return schedule_groups_cache[cur_group]
-
-    # Check loaded group lists directly first
-    for i in range(1, 5):
-        gr_list = globals().get(f"groups{i}", [])
-        if cur_group in gr_list:
-            result = globals()[f"schedule{i}"], gr_list
-            schedule_groups_cache[cur_group] = result
-            return result
-
+def get_schedule_and_groups(cur_group, study_year=None):
+    matches = [year for year in range(1, 5)
+               if cur_group and cur_group in globals().get(f"groups{year}", [])]
     try:
-        group_year = int(cur_group[-3:-1]) # from TI-241 to 24
-        sch_nr = db.get_current_year() - group_year # from 24 to 2
-        if 1 <= sch_nr <= 4:
-            result = globals()[f"schedule{sch_nr}"], globals()[f"groups{sch_nr}"]
-            schedule_groups_cache[cur_group] = result
-            return result
-    except (ValueError, IndexError, KeyError):
-        pass
-
-    raise ValueError(f"Invalid group number: {cur_group}")
+        selected = int(study_year) if study_year is not None else None
+    except (TypeError, ValueError, OverflowError):
+        selected = None
+    if selected in matches:
+        year = selected
+    elif len(matches) == 1:
+        year = matches[0]
+    else:
+        raise ValueError("Select your year and group again")
+    key = (year, cur_group)
+    if key not in schedule_groups_cache:
+        schedule_groups_cache[key] = globals()[f"schedule{year}"], globals()[f"groups{year}"]
+    return schedule_groups_cache[key]
 
 #get value from a cell even if it's a merged cell
 merged_cell_ranges = {}  # cache merged cell ranges
@@ -318,7 +311,7 @@ def getMergedCellVal(sheet, cell):
     return value
 
 # Needs Telethon 1.45.0 or newer. Production pins 1.44.0, where types.ButtonTypeSimpleWebView
-# does not exist, so ship requirements.txt with this code when promoting to reactor.
+# does not exist, so ship requirements.txt with this code when promoting to target host.
 def simu_button():
     return types.KeyboardButton("SIMU📚", types.ButtonTypeSimpleWebView("https://simu.utm.md/students/"))
 
@@ -341,8 +334,8 @@ def button_grid(buttons, butoane_rand):
     return grid
 
 #get daily schedule
-def print_day(week_day, cur_group, is_even, subgrupa, lang=DEFAULT_LANG, now_pair=None):
-    schedule, groups = get_schedule_and_groups(cur_group)[0:2]
+def print_day(week_day, cur_group, is_even, subgrupa, lang=DEFAULT_LANG, now_pair=None, *, study_year=None):
+    schedule, groups = get_schedule_and_groups(cur_group, study_year)
     if cur_group not in groups:
         return ""
     col_gr = groups.index(cur_group) + schedule_column_start  # column with the selected group
@@ -430,13 +423,13 @@ def print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang=DEFAULT_LANG
     daily_schedule_cache[cache_key] = result
     return result
 
-def print_next_course(week_day, cur_group, is_even, course_index, subgrupa, lang=DEFAULT_LANG):
-    cache_key = (week_day, cur_group, is_even, course_index, subgrupa, lang)
+def print_next_course(week_day, cur_group, is_even, course_index, subgrupa, lang=DEFAULT_LANG, *, study_year=None):
+    schedule, groups = get_schedule_and_groups(cur_group, study_year)
+    cache_key = (id(schedule), week_day, cur_group, is_even, course_index, subgrupa, lang)
     if cache_key in next_course_cache:
         #send_logs(f"Cache hit next_course for {cache_key}", 'info')
         return next_course_cache[cache_key]
     
-    schedule, groups = get_schedule_and_groups(cur_group)
     if cur_group in groups:
         col_gr = groups.index(cur_group) + schedule_column_start
         for index, course in get_daily_courses(schedule, is_even, col_gr, week_day, subgrupa):
@@ -451,12 +444,12 @@ def print_next_course(week_day, cur_group, is_even, course_index, subgrupa, lang
     return ""
 
 #get weekly schedule
-def print_sapt(is_even, cur_group, subgrupa, lang=DEFAULT_LANG):
-    cache_key = (cur_group, is_even, subgrupa, lang)
+def print_sapt(is_even, cur_group, subgrupa, lang=DEFAULT_LANG, *, study_year=None):
+    schedule, groups = get_schedule_and_groups(cur_group, study_year)
+    cache_key = (id(schedule), cur_group, is_even, subgrupa, lang)
     if cache_key in weekly_schedule_cache:
         #send_logs(f"Cache hit print_sapt for {cache_key}", 'info')
         return weekly_schedule_cache[cache_key]
-    schedule, groups = get_schedule_and_groups(cur_group)[0:2]
     if cur_group not in groups:
         return ""
     col_gr = groups.index(cur_group) + 3 #column with the selected group
@@ -680,18 +673,17 @@ def load_schedule_file(file_path):
     return schedule, groups
 
 
+def clear_schedule_caches():
+    for cache in (day_row_start_cache, daily_schedule_cache, cell_value_cache,
+                  weekly_schedule_cache, next_course_cache, orele_cache,
+                  schedule_groups_cache, daily_courses_cache, merged_cell_ranges):
+        cache.clear()
+
+
 def activate_schedule(schedule, groups, schedule_number):
     globals()[f"schedule{schedule_number}"] = schedule
     globals()[f"groups{schedule_number}"] = groups
-
-    day_row_start_cache.clear()
-    daily_schedule_cache.clear()
-    cell_value_cache.clear()
-    weekly_schedule_cache.clear()
-    next_course_cache.clear()
-    orele_cache.clear()
-    schedule_groups_cache.clear()
-    daily_courses_cache.clear()
+    clear_schedule_caches()
     classifications_by_schedule.clear()
     for i in range(1, 5):
         classifications_by_schedule[id(globals()[f"schedule{i}"])] = load_classifications(f"schedules/orar{i}.xlsx")

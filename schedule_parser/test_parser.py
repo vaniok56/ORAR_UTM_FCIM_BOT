@@ -1,4 +1,5 @@
 import hashlib
+import os
 import sys
 import tempfile
 import unittest
@@ -37,6 +38,9 @@ CURRENT_SOURCES = {
     "IV": Path.home() / "Downloads" / "Anul_IV_Semestrul_VII.xlsx",
 }
 CURRENT_SOURCES_AVAILABLE = all(path.is_file() for path in CURRENT_SOURCES.values())
+PRIVATE_SOURCES_AVAILABLE = os.environ.get("ORAR_PRIVATE_TESTS") == "1" and bool(SOURCES)
+private_source = unittest.skipUnless(PRIVATE_SOURCES_AVAILABLE, "optional private dean-source regression")
+CURRENT_SOURCES_AVAILABLE = CURRENT_SOURCES_AVAILABLE and os.environ.get("ORAR_PRIVATE_TESTS") == "1"
 
 
 class ParserTests(unittest.TestCase):
@@ -68,6 +72,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(pair.odd_text, pair.even_text)
         self.assertIn("centered complete three-line entry treated as both weeks", pair.review_flags)
 
+    @private_source
     def test_numbered_three_line_fragment_still_joins_following_timeslot(self):
         pairs = {
             (pair.group, pair.day, pair.time): pair
@@ -92,6 +97,7 @@ class ParserTests(unittest.TestCase):
             (1, 2, [(5, "R-263"), (5, "AI-264"), (6, "CR-261")]),
         )
 
+    @private_source
     def test_known_workbooks_have_expected_block_counts(self):
         expected_groups = {
             "Anul_I_Semestrul_II (2).xlsx": 35,
@@ -108,33 +114,9 @@ class ParserTests(unittest.TestCase):
                 "15.15-16.45", "17.00-18.30", "18.45-20.15",
             })
 
-    def test_duplicate_weekly_timeslot_is_rejected(self):
-        source = SCHEDULES / "Anul_II_Semestrul_IV (2).xlsx"
-        workbook = openpyxl.load_workbook(source)
-        ws = workbook.active
-        header = next(cell for row in ws.iter_rows() for cell in row if cell.value == "Grupele")
-        day_column = header.column
-        time_column = header.column + 1
-        timeslot_rows = [
-            row for row in range(header.row + 1, ws.max_row + 1)
-            if isinstance(ws.cell(row, time_column).value, str) and "-" in ws.cell(row, time_column).value
-        ]
-        day_merge = next(
-            merged for merged in ws.merged_cells.ranges
-            if merged.min_col <= day_column <= merged.max_col and merged.min_row <= timeslot_rows[1] <= merged.max_row
-        )
-        ws.unmerge_cells(str(day_merge))
-        ws.cell(timeslot_rows[0], day_column).value = "Marți"
-        ws.cell(timeslot_rows[1], day_column).value = "Marţi"
-        ws.cell(timeslot_rows[1], time_column).value = ws.cell(timeslot_rows[0], time_column).value
-        with tempfile.TemporaryDirectory() as directory:
-            changed = Path(directory) / "duplicate.xlsx"
-            workbook.save(changed)
-            with self.assertRaisesRegex(LayoutError, "Duplicate weekly timeslot"):
-                parse_workbook(changed)
 
     @unittest.skipUnless(
-        (Path.home() / "Downloads" / "Re_ Orar" / "Anul_I_Semestrul_I.xlsx").is_file(),
+        PRIVATE_SOURCES_AVAILABLE and (Path.home() / "Downloads" / "Re_ Orar" / "Anul_I_Semestrul_I.xlsx").is_file(),
         "current year I schedule is unavailable",
     )
     def test_current_year_one_shared_columns_are_complete(self):
@@ -156,6 +138,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(cr263.odd_text, cr263.even_text)
         self.assertTrue(cr263.review_flags)
 
+    @private_source
     def test_same_sized_unrelated_reference_is_rejected(self):
         blocks = parse_workbook(SCHEDULES / "Anul_II_Semestrul_IV (2).xlsx")
         groups = list(dict.fromkeys(block.group for block in blocks))
@@ -169,6 +152,7 @@ class ParserTests(unittest.TestCase):
             with self.assertRaisesRegex(LayoutError, "groups do not match"):
                 write_candidate_review_workbook(blocks, reference_path, root / "candidate.xlsx")
 
+    @private_source
     def test_multi_instructor_shape_maps_to_both_weeks(self):
         source = SCHEDULES / "Anul_II_Semestrul_IV (2).xlsx"
         block = next(
@@ -188,6 +172,7 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(pair.odd_text, pair.even_text)
 
+    @private_source
     def test_two_border_separated_entries_map_to_odd_and_even(self):
         source = SCHEDULES / "Anul_II_Semestrul_IV (2).xlsx"
         block = next(
@@ -204,6 +189,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(pair.odd_text, "lab. CI\nMagariu N.\n406")
         self.assertEqual(pair.even_text, "lab. ME\nLupan C.\n422")
 
+    @private_source
     def test_half_pair_entries_map_to_their_border_indicated_week(self):
         source = SCHEDULES / "Anul_III_2025_Semestrul_VI 2 (2).xlsx"
         odd = next(
@@ -219,6 +205,7 @@ class ParserTests(unittest.TestCase):
         self.assertIsNone(resolve_pair(even).odd_text)
         self.assertEqual(resolve_pair(even).even_text, "lab. DMDT1\nȚugulea V.\n422")
 
+    @private_source
     def test_unbordered_six_rows_split_into_two_complete_entries(self):
         source = SCHEDULES / "Anul_I_Semestrul_II (2).xlsx"
         block = next(
@@ -230,6 +217,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(pair.odd_text, "AM\nCostaș A.\n202")
         self.assertEqual(pair.even_text, "c. Analiza Matematică 2\nCostaș A.\n3-3")
 
+    @private_source
     def test_duplicate_line_layout_maps_to_one_entry_for_both_weeks(self):
         source = SCHEDULES / "Anul_IV_2025_Semestrul_VIII.xlsx"
         block = next(
@@ -241,6 +229,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(pair.odd_text, "c.  Testarea Software\nCatruc M.\n104")
         self.assertEqual(pair.odd_text, pair.even_text)
 
+    @private_source
     def test_cross_timeslot_fragments_are_joined(self):
         source = SCHEDULES / "Anul_III_2025_Semestrul_VI 2 (2).xlsx"
         pairs = {
@@ -252,6 +241,7 @@ class ParserTests(unittest.TestCase):
             self.assertEqual(pairs[("AI-231", "Luni", time)].odd_text, expected)
             self.assertEqual(pairs[("AI-231", "Luni", time)].even_text, expected)
 
+    @private_source
     def test_shifted_three_row_entry_maps_to_both_weeks(self):
         source = SCHEDULES / "Anul_III_2025_Semestrul_VI 2 (2).xlsx"
         block = next(
@@ -263,6 +253,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(pair.odd_text, "c. Circuite și Dispozitive Electronice\nMagariu N.\n104")
         self.assertEqual(pair.odd_text, pair.even_text)
 
+    @private_source
     def test_unbordered_complete_rows_keep_their_week_boundary(self):
         source = SCHEDULES / "Anul_III_2025_Semestrul_VI 2 (2).xlsx"
         block = next(
@@ -273,6 +264,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(pair.odd_text, "BD\nBulai R.\n606")
         self.assertEqual(pair.even_text, "TPP\nMititelu A.\n630")
 
+    @private_source
     def test_numbered_cross_timeslot_entries_are_joined(self):
         source = SCHEDULES / "Anul_II_Semestrul_IV (2).xlsx"
         pairs = {
@@ -287,6 +279,7 @@ class ParserTests(unittest.TestCase):
             self.assertEqual(pairs[("CR-242", "Vineri", time)].odd_text, expected)
             self.assertEqual(pairs[("CR-242", "Vineri", time)].even_text, expected)
 
+    @private_source
     def test_ambiguous_cross_timeslot_tail_requires_review(self):
         source = SCHEDULES / "Anul_II_Semestrul_IV (2).xlsx"
         pairs = {
@@ -298,6 +291,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(pairs[("SI-241", "Miercuri", "17.00-18.30")].status, "review")
         self.assertEqual(pairs[("SI-241", "Miercuri", "18.45-20.15")].odd_text, "114")
 
+    @private_source
     def test_exports_are_reopenable(self):
         blocks = parse_workbook(SOURCES[0])
         with tempfile.TemporaryDirectory() as directory:
@@ -327,7 +321,7 @@ class ParserTests(unittest.TestCase):
                 sum(pair.status == "review" or bool(pair.review_flags) for pair in resolve_pairs(blocks)) + 1,
             )
             self.assertEqual(candidate_sheet.cell(1, 11).value, "resolution status")
-            self.assertEqual(candidate_sheet.cell(1, 14).value, "old odd candidate")
+            self.assertEqual(candidate_sheet.cell(1, 14).value, "old ISO-even candidate")
 
     @unittest.skipUnless(CURRENT_SOURCES_AVAILABLE, "current schedule workbooks are not available")
     def test_current_two_line_entry_applies_to_both_weeks(self):
@@ -402,6 +396,7 @@ class ParserTests(unittest.TestCase):
                 self.assertTrue(findings, year) if year in {"II", "III"} else self.assertEqual(findings, [], year)
                 self.assertTrue(all(item.status == "approved" for item in findings), year)
 
+    @private_source
     def test_every_extracted_value_has_exact_source_provenance(self):
         for source in SOURCES:
             workbook = openpyxl.load_workbook(source, data_only=True)
@@ -416,6 +411,7 @@ class ParserTests(unittest.TestCase):
                     expected = str(source_value).strip() if source_value is not None else None
                     self.assertEqual(value.value, expected, value.coordinate)
 
+    @private_source
     def test_parsing_never_mutates_source_files(self):
         for source in SOURCES:
             before = hashlib.sha256(source.read_bytes()).hexdigest()

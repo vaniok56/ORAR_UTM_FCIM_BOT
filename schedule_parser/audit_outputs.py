@@ -119,7 +119,7 @@ def finding(block, status, parity, source_text, output_text, reason):
         group=block.group,
         day=block.day,
         time=block.time,
-        parity=parity,
+        parity={"odd": "ISO-even", "even": "ISO-odd"}.get(parity, parity),
         source=f"{block.values[0].coordinate}:{block.values[-1].coordinate}",
         source_text=source_text,
         output_text=output_text,
@@ -192,9 +192,9 @@ def audit_schedule(source_path, output_path, official_pdf=None):
             expected_odd = normalize(pair.odd_text)
             expected_even = normalize(pair.even_text)
             if odd != expected_odd:
-                findings.append(finding(block, "wrong", "odd", expected_odd, odd, "output differs from resolved odd value"))
+                findings.append(finding(block, "wrong", "odd", expected_odd, odd, "output differs from resolved upper value"))
             if even != expected_even:
-                findings.append(finding(block, "wrong", "even", expected_even, even, "output differs from resolved even value"))
+                findings.append(finding(block, "wrong", "even", expected_even, even, "output differs from resolved lower value"))
 
             # Independent source-border check: an upper/lower divider can be
             # encoded only as the lower cell's top border (no upper bottom).
@@ -206,9 +206,9 @@ def audit_schedule(source_path, output_path, official_pdf=None):
                 lower = segment_text(SourceSegment(3, 5, block.values[3:]))
                 if upper and lower:
                     if odd != upper:
-                        findings.append(finding(block, "wrong", "odd", upper, odd, "top-only parity divider disagrees with odd output"))
+                        findings.append(finding(block, "wrong", "odd", upper, odd, "top-only parity divider disagrees with upper output"))
                     if even != lower:
-                        findings.append(finding(block, "wrong", "even", lower, even, "top-only parity divider disagrees with even output"))
+                        findings.append(finding(block, "wrong", "even", lower, even, "top-only parity divider disagrees with lower output"))
 
             if "[REVIEW REQUIRED]" in {odd, even}:
                 findings.append(finding(block, "wrong", "both", source_text, f"{odd}\n---\n{even}", "placeholder in final output"))
@@ -248,13 +248,13 @@ def audit_schedule(source_path, output_path, official_pdf=None):
                 expected_odd = segment_text(segments[0])
                 expected_even = segment_text(segments[1])
                 if odd != expected_odd:
-                    findings.append(finding(block, "wrong", "odd", expected_odd, odd, "odd output disagrees with explicit source border"))
+                    findings.append(finding(block, "wrong", "odd", expected_odd, odd, "upper output disagrees with explicit source border"))
                 if even != expected_even:
-                    findings.append(finding(block, "wrong", "even", expected_even, even, "even output disagrees with explicit source border"))
+                    findings.append(finding(block, "wrong", "even", expected_even, even, "lower output disagrees with explicit source border"))
             elif shape == ((0, 2),) and not joined and odd != segment_text(segments[0]):
-                findings.append(finding(block, "wrong", "odd", segment_text(segments[0]), odd, "odd output disagrees with upper source segment"))
+                findings.append(finding(block, "wrong", "odd", segment_text(segments[0]), odd, "upper output disagrees with upper source segment"))
             elif shape == ((3, 5),) and not joined and even != segment_text(segments[0]):
-                findings.append(finding(block, "wrong", "even", segment_text(segments[0]), even, "even output disagrees with lower source segment"))
+                findings.append(finding(block, "wrong", "even", segment_text(segments[0]), even, "lower output disagrees with lower source segment"))
 
             for parity, offsets, output_row, output_text in (
                 ("odd", range(3), top_row, odd),
@@ -282,11 +282,13 @@ def audit_schedule(source_path, output_path, official_pdf=None):
 
     if official_pdf:
         with tempfile.NamedTemporaryFile(suffix=".txt") as extracted:
-            subprocess.run(
-                ["pdftotext", "-enc", "UTF-8", "-raw", "-nopgbrk", str(official_pdf), extracted.name],
-                check=True,
-                capture_output=True,
-            )
+            try:
+                subprocess.run(
+                    ["pdftotext", "-enc", "UTF-8", "-raw", "-nopgbrk", str(official_pdf), extracted.name],
+                    check=True, capture_output=True, timeout=30,
+                )
+            except subprocess.TimeoutExpired as error:
+                raise ValueError("PDF text extraction exceeded 30 seconds") from error
             pdf_text = compact(Path(extracted.name).read_text(encoding="utf-8", errors="replace"))
         unique_values = list(dict.fromkeys(value for block in blocks for value in block_values(block)))
         for value in unique_values:
@@ -311,18 +313,22 @@ def write_csv(findings, path):
     with Path(path).open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=AuditFinding.__dataclass_fields__)
         writer.writeheader()
-        writer.writerows(asdict(item) for item in findings)
+        writer.writerows({key: csv_cell(value) for key, value in asdict(item).items()} for item in findings)
+
+
+def csv_cell(value):
+    return "'" + value if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r", "\n", "＝", "＋", "－", "＠")) else value
 
 
 def write_report(findings, stats, path):
     counts = Counter(item.status for item in findings)
     failed_positions = set()
     for item in findings:
-        if item.parity in {"odd", "even"}:
+        if item.parity in {"ISO-even", "ISO-odd"}:
             failed_positions.add((item.group, item.day, item.time, item.parity))
         elif item.parity == "both":
-            failed_positions.add((item.group, item.day, item.time, "odd"))
-            failed_positions.add((item.group, item.day, item.time, "even"))
+            failed_positions.add((item.group, item.day, item.time, "ISO-even"))
+            failed_positions.add((item.group, item.day, item.time, "ISO-odd"))
     passed = max(0, stats["output_parity_cells"] - len(failed_positions))
     report = [
         "# Schedule audit",
