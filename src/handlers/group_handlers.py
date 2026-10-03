@@ -5,7 +5,7 @@ from telethon import TelegramClient, events, functions, types
 from telethon.tl.custom import Button
 
 import handlers.db as db
-from functions import button_grid, send_logs, is_rate_limited, format_id
+from functions import button_grid, simu_button, send_logs, is_rate_limited, format_id
 from localization import get_text, get_user_lang, SUPPORTED_LANGS, DEFAULT_LANG
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
@@ -25,6 +25,19 @@ async def _get_sender_id_and_lang(event):
 
 def register_group_handlers(client, years, specialties, group_list):
 
+    def menu_context(event, phase):
+        context = temp_selection.get(event.sender_id)
+        if context and context.get("message_id") == event.message_id and context.get("phase") == phase:
+            return context
+        return None
+
+    async def reset_menu(event, lang):
+        context = temp_selection.get(event.sender_id)
+        if context and context.get("message_id") == event.message_id:
+            temp_selection.pop(event.sender_id, None)
+        await event.answer(get_text(lang, "group_error_missing"), alert=True)
+        await client.send_message(event.sender_id, get_text(lang, "error_no_group"))
+
     #choose_gr button
     @client.on(events.CallbackQuery(data=b"select_group"))
     async def select_group_callback(event):
@@ -37,6 +50,7 @@ def register_group_handlers(client, years, specialties, group_list):
     @client.on(events.NewMessage(pattern='/choose_gr|Alege grupa 🎓|Choose group 🎓|Выбрать группу 🎓')) 
     async def alege_grupaa(event):
         SENDER, lang = await _get_sender_id_and_lang(event)
+        temp_selection.pop(SENDER, None)
         if is_rate_limited(SENDER):
             send_logs(f"Rate limited user: {SENDER}", 'warning')
             return
@@ -50,7 +64,7 @@ def register_group_handlers(client, years, specialties, group_list):
         ))
         text = get_text(lang, "group_choose_year")
         year_butt = [
-            Button.inline("  " + year + "  ", data=data)
+            Button.inline("  " + year + "  ", data=b"group_year_" + data)
             for data, year in years.items()
             if group_list.get(year.strip())
         ]
@@ -67,29 +81,36 @@ def register_group_handlers(client, years, specialties, group_list):
                 send_logs("Failed to add new user! - " + format_id(SENDER), 'error')
                 await client.send_message(SENDER, get_text(lang, "group_add_error"), parse_mode="HTML")
                 return
-        await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows_year)
+        if year_butt:
+            message = await client.send_message(SENDER, text, parse_mode="HTML", buttons=button_rows_year)
+            temp_selection[SENDER] = {"message_id": message.id, "phase": "year"}
+        else:
+            await client.send_message(SENDER, get_text(lang, "group_year_unavailable"), parse_mode="HTML")
         
         
     #year click event handle
-    @client.on(events.CallbackQuery(pattern=lambda x: x in years))
+    @client.on(events.CallbackQuery(pattern=rb"^group_year_"))
     async def year_callback(event):
         SENDER, lang = await _get_sender_id_and_lang(event)
-        cur_year = years.get(event.data).replace(" ", "")
+        context = menu_context(event, "year")
+        value = years.get(event.data.removeprefix(b"group_year_"))
+        if not context or not isinstance(value, str):
+            await reset_menu(event, lang)
+            return
+        cur_year = value.strip()
 
         if cur_year:
             text = get_text(lang, "group_choose_spec", year=cur_year)
             spec_items = specialties.get(cur_year, {})
             if not spec_items:
-                await event.answer(get_text(lang, "group_year_unavailable"))
+                await reset_menu(event, lang)
                 return
-            spec_butt = [Button.inline(spec, data=data) for data, spec in spec_items.items()]
+            spec_butt = [Button.inline(spec, data=b"group_spec_" + data) for data, spec in spec_items.items()]
             button_per_r = 4
             button_rows = button_grid(spec_butt, button_per_r)
             try:
                 await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
-                if SENDER not in temp_selection:
-                    temp_selection[SENDER] = {}
-                temp_selection[SENDER]['year'] = cur_year
+                context.update(year=cur_year, phase="specialty")
                 await event.answer(get_text(lang, "group_year_selected"))
                 send_logs(format_id(SENDER) + " - /choose_gr year - " + cur_year, "info")
             except Exception as e:
@@ -97,21 +118,27 @@ def register_group_handlers(client, years, specialties, group_list):
                 send_logs(f"Error editing message for {SENDER} selecting year {cur_year}: {e}", "error")
 
     #speciality click event handle
-    @client.on(events.CallbackQuery(pattern=lambda data: any(
-        data in year_specialties for year_specialties in specialties.values()
-    )))
+    @client.on(events.CallbackQuery(pattern=rb"^group_spec_"))
     async def speciality_callback(event):
         SENDER, lang = await _get_sender_id_and_lang(event)
-        year = temp_selection.get(SENDER, {}).get('year')
+        context = menu_context(event, "specialty")
+        year = context.get('year') if context else None
         spec_items = specialties.get(str(year), {})
-        cur_speciality = spec_items.get(event.data).replace(" ", "")
+        value = spec_items.get(event.data.removeprefix(b"group_spec_"))
+        if not isinstance(value, str):
+            await reset_menu(event, lang)
+            return
+        cur_speciality = value.strip()
         
         if cur_speciality:
             text = get_text(lang, "group_choose_group", spec=cur_speciality)
             group_items = group_list.get(str(year), {})
             group_items = group_items.get(cur_speciality + str(year), {})
-            temp_selection[SENDER]['speciality'] = cur_speciality
-            group_butt = [Button.inline(group, data=data) for data, group in group_items.items()]
+            if not group_items:
+                await reset_menu(event, lang)
+                return
+            context.update(speciality=cur_speciality, phase="group")
+            group_butt = [Button.inline(group, data=b"group_pick_" + data) for data, group in group_items.items()]
             button_per_r = 4
             button_rows = button_grid(group_butt, button_per_r)
             await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML", buttons=button_rows)
@@ -119,29 +146,30 @@ def register_group_handlers(client, years, specialties, group_list):
             send_logs(format_id(SENDER) + " - /choose_gr spec - " + cur_speciality, "info")
 
     #group click event handle
-    @client.on(events.CallbackQuery(pattern=lambda data: any(
-        data in groups
-        for year_groups in group_list.values()
-        for groups in year_groups.values()
-    )))
+    @client.on(events.CallbackQuery(pattern=rb"^group_pick_"))
     async def group_callback(event):
         SENDER, lang = await _get_sender_id_and_lang(event)
-        user_context = temp_selection.get(SENDER, {})
+        user_context = menu_context(event, "group") or {}
         cur_speciality = user_context.get('speciality')
         year = user_context.get('year')
         
         # Check if cur_speciality and year are valid
         if not cur_speciality or not year or cur_speciality == 'none':
-            await event.answer(get_text(lang, "group_error_missing"))
+            await reset_menu(event, lang)
             send_logs(f"U{SENDER} - group selection failed - Missing specialty or year", "warning")
             return
             
         group_items = group_list.get(str(year), {})
         key = cur_speciality + str(year)
         group_items = group_items.get(key, {})
-        cur_group = group_items.get(event.data).replace(" ", "")
+        value = group_items.get(event.data.removeprefix(b"group_pick_"))
+        if not isinstance(value, str) or not specialties.get(str(year), {}).get(f"{cur_speciality.lower()}{year}".encode()):
+            await reset_menu(event, lang)
+            return
+        cur_group = value.strip()
         
         if cur_group:
+            temp_selection.pop(SENDER, None)
             #updates all fields in db
             db.update_user_field(format_id(SENDER), 'group_n', cur_group)
             db.update_user_field(format_id(SENDER), 'year_s', int(year))
@@ -157,7 +185,7 @@ def register_group_handlers(client, years, specialties, group_list):
                 Button.text(get_text(lang, 'btn_tomorrow'), resize=True),
                 Button.text(get_text(lang, 'btn_current_week'), resize=True),
                 Button.text(get_text(lang, 'btn_next_week'), resize=True),
-                types.KeyboardButtonSimpleWebView("SIMU📚", "https://simu.utm.md/students/"),
+                simu_button(),
             ]
             buttons_kb = button_grid(bot_kb, 2)
 

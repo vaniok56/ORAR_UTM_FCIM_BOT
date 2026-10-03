@@ -7,9 +7,9 @@ import pytz
 import os
 
 import handlers.db as db
-from functions import print_day, print_sapt, print_next_course, button_grid, send_logs, get_next_course_time, is_rate_limited, format_id, get_version, write_groups_to_json, get_online_schedule_versions, get_local_schedule_versions
+from functions import print_day, print_sapt, print_next_course, button_grid, simu_button, send_logs, get_next_course_time, is_rate_limited, format_id, get_version, write_groups_to_json, get_online_schedule_versions, get_local_schedule_versions
 write_groups_to_json()
-from functions import cur_group, hours, week_days, is_even, bulk_send_shift_earlier
+from functions import cur_group, hours, week_days, is_even, bulk_send_shift_earlier, clock_face, current_pair_index
 from dynamic_group_lists import years, group_list, specialties
 
 import handlers.admin_handlers as admin_handlers
@@ -40,14 +40,16 @@ import asyncio
 
 #### Access credentials
 config = configparser.ConfigParser()
-config.read('configs/config2.ini') # read config.ini file
+config_path = os.environ.get("ORAR_CONFIG", "configs/config.ini")
+if not config.read(config_path):
+    raise RuntimeError(f"Configuration file unavailable: {config_path}")
 
 api_id = config.get('default','api_id') # get the api id
 api_hash = config.get('default','api_hash') # get the api hash
 BOT_TOKEN = config.get('default','BOT_TOKEN') # get the bot token
 
-# Create the client and the session called session_master.
-client = TelegramClient('sessions/session_master', api_id, api_hash)
+# Keep the local test bot session separate from the production session.
+client = TelegramClient(os.environ.get('ORAR_SESSION', 'sessions/session_master'), api_id, api_hash)
 
 #keyboard button factories (per-language)
 def build_bot_kb(lang):
@@ -56,7 +58,7 @@ def build_bot_kb(lang):
         Button.text(get_text(lang, 'btn_tomorrow'), resize=True),
         Button.text(get_text(lang, 'btn_current_week'), resize=True),
         Button.text(get_text(lang, 'btn_next_week'), resize=True),
-        types.KeyboardButtonSimpleWebView("SIMU📚", "https://simu.utm.md/students/"),
+        simu_button(),
     ]
 
 def build_start_kb(lang):
@@ -304,11 +306,11 @@ async def oree(event):
         ))
     text = get_text(lang, "hours_title")
     for i in range(len(hours)):
-        text += "\n" + get_text(lang, "pair_label", index=i+1) + "\n" + get_text(lang, "hour_label", time=''.join(hours[i])) + "\n"
+        text += "\n" + get_text(lang, "pair_label", index=i+1) + "\n" + get_text(lang, "hour_label", time=''.join(hours[i]), clock=clock_face(hours[i][0])) + "\n"
         if i == 2 :
-            text += get_text(lang, "break_label", duration=get_text(lang, "break_30")) + "\n"
+            text += get_text(lang, "break_label", duration="🍽️ " + get_text(lang, "break_30")) + "\n"
         else:
-            text += get_text(lang, "break_label", duration=get_text(lang, "break_15")) + "\n"
+            text += get_text(lang, "break_label", duration="☕ " + get_text(lang, "break_15")) + "\n"
     await client.send_message(SENDER, text, parse_mode="HTML")
     send_logs(format_id(SENDER) + " - /hours", 'info')
 
@@ -336,7 +338,8 @@ async def mainee(event):
         else: 
             temp_is_even = (datetime.datetime.now(moldova_tz) + datetime.timedelta(days=1)).isocalendar().week % 2
             #send the schedule
-            day_sch = print_day(week_day, cur_group, temp_is_even, subgrupa, lang)
+            day_sch = print_day(week_day, cur_group, temp_is_even, subgrupa, lang,
+                                study_year=db.locate_field(format_id(SENDER), 'year_s'))
             if day_sch != "":
                 text = "\n\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_tomorrow", day=lang_week_days[week_day]) + day_sch
             else: 
@@ -369,7 +372,8 @@ async def azii(event):
         else: 
             week_day = int((datetime.datetime.now(moldova_tz)).weekday()) #weekday today(0-6)
             is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
-            day_sch = print_day(week_day, cur_group, is_even, subgrupa, lang)
+            day_sch = print_day(week_day, cur_group, is_even, subgrupa, lang, current_pair_index(),
+                                study_year=db.locate_field(format_id(SENDER), 'year_s'))
             if day_sch != "":
                 text = "\n\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_today", day=lang_week_days[week_day]) + day_sch
             else: 
@@ -400,7 +404,7 @@ async def sapt_curr(event):
             raise ValueError(str(SENDER) + 'no gr')
         else: 
             is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
-            text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_current_week") + print_sapt(is_even, cur_group, subgrupa, lang)
+            text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_current_week") + print_sapt(is_even, cur_group, subgrupa, lang, study_year=db.locate_field(format_id(SENDER), 'year_s'))
             await client.send_message(SENDER, text, parse_mode="HTML")
             send_logs(format_id(SENDER) + " - /curr_week", 'info')
     except Exception as e:
@@ -428,7 +432,7 @@ async def sapt_viit(event):
         else: 
             is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
             is_even = not is_even
-            text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_next_week") + print_sapt(is_even, cur_group, subgrupa, lang)
+            text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_next_week") + print_sapt(is_even, cur_group, subgrupa, lang, study_year=db.locate_field(format_id(SENDER), 'year_s'))
             await client.send_message(SENDER, text, parse_mode="HTML")
             send_logs(format_id(SENDER) + " - /next_week", 'info')
     except Exception as e:
@@ -507,11 +511,12 @@ def prepare_next_courses(week_day, is_even, course_index):
                 if pd.isna(csv_gr) or csv_gr == '' or csv_gr == 'none':
                     continue
                 
-                next_course = print_next_course(week_day, csv_gr, is_even, course_index, subgrupa, user_lang)
+                next_course = print_next_course(week_day, csv_gr, is_even, course_index, subgrupa, user_lang,
+                                                study_year=row.get('year_s'))
                 if next_course:
                     next_courses[sender] = (next_course, user_lang)
             except Exception as e:
-                #send_logs(f"Error preparing next course to {sender}: {e}", 'error')
+                send_logs(f"Error preparing next course to {row['SENDER']}: {e}", 'error')
                 error_count += 1
         if error_count > 0:
             send_logs(f"Total errors preparing next courses: {error_count}", 'error')
@@ -642,7 +647,8 @@ async def send_schedule_tomorrow():
                         continue
                         
                     # Get schedule and send if not empty
-                    day_sch = print_day(week_day, csv_gr, temp_is_even, subgrupa, user_lang)
+                    day_sch = print_day(week_day, csv_gr, temp_is_even, subgrupa, user_lang,
+                                        study_year=row.get('year_s'))
                     if day_sch:
                         text = get_text(user_lang, "notif_tomorrow_schedule", day=lang_week_days[week_day], schedule=day_sch)
                         await client.send_message(sender, text, parse_mode="HTML")

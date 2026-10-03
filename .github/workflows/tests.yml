@@ -1,0 +1,32 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  behavior:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip check
+      - run: python -m compileall -q src
+      - run: python -m unittest test_schedule_ingest test_upload_status
+      - run: git diff --check
+  regular-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t orar-pr4-smoke .
+      - run: >-
+          docker run --rm --network none
+          --mount type=bind,source="$PWD/tests",target=/checks/tests,readonly
+          --mount type=bind,source="$PWD/test_schedule_ingest.py",target=/checks/test_schedule_ingest.py,readonly
+          orar-pr4-smoke python /checks/tests/image_smoke.py
