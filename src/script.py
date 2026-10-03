@@ -40,7 +40,9 @@ import asyncio
 
 #### Access credentials
 config = configparser.ConfigParser()
-config.read('configs/config2.ini') # read config.ini file
+config_path = os.environ.get("ORAR_CONFIG", "configs/config.ini")
+if not config.read(config_path):
+    raise RuntimeError(f"Configuration file unavailable: {config_path}")
 
 api_id = config.get('default','api_id') # get the api id
 api_hash = config.get('default','api_hash') # get the api hash
