@@ -2,6 +2,31 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.15.1] - 2026-10-07
+
+### TL;DR
+Follow-up to 0.15.0. Database restore now fails loudly and keeps the password out of the command line, `/logs` works, `/version` reads the release from the changelog, and repository metadata was cleaned up.
+
+### Added
+- CI runs `schedule_parser.test_parser`, which existed but was never executed. Three of its tests run without private fixtures and cover layout resolution.
+
+### Changed
+- Tests live in `tests/`. Run them with `python -m unittest discover -s tests -t tests -p 'test_*.py'`.
+- `/version` takes the newest release entry from `CHANGELOG.md`, locally or from GitHub, instead of guessing from a commit message. The image keeps `CHANGELOG.md` for this.
+- Ignore rules now cover `.env.*`, `*.session-wal`, `*.session-shm`, and the private parser knowledge doc. Removed a duplicate dockerignore entry.
+- `requirements.txt` drops the unused `DateTime` pin and pins `numpy`, which is imported directly.
+- `/admin_help` and the README admin list match the registered commands.
+
+### Fixed
+- `restore_backup` passed the database password on a shell command line and ignored the client exit status, so `/use_backup` reported success after a failed restore. It now runs the MySQL client with `MYSQL_PWD` and the dump on standard input, and reports failure.
+- `/logs` opened a file the logger never wrote. It now sends the newest `logs/orarbot_*.log`.
+- Emoji migration wording now matches behaviour: existing users stay OFF, new users start ON.
+
+### Removed
+- `init/migrate_current_year_activity.sql`, an already-applied one-time script that was unsafe to rerun. Recoverable with `git show 65ae1eb:init/migrate_current_year_activity.sql`.
+- The tracked VS Code workspace file.
+- Unused imports, commented-out debug lines, and unused GROQ keys in the config template.
+
 ## [0.15.0] - 2026-10-07
 
 ### TL;DR

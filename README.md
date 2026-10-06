@@ -5,8 +5,8 @@
 
 ORAR_UTM_FCIM_BOT is a Telegram bot made for UTM students to simplify access to their class schedules.
 
-Supports Romanian, Russian, and English. See [0.15.0 release notes](CHANGELOG.md)
-for latest changes and [RUN.md](RUN.md) for installation and upgrades.
+Supports Romanian, Russian, and English. See the [release notes](CHANGELOG.md)
+for the latest changes and [RUN.md](RUN.md) for installation and upgrades.
 
 ## 📋 Table of Contents
 - [✨ Features](#-features)
