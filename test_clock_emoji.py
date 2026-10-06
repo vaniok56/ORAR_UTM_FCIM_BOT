@@ -60,8 +60,8 @@ class ClockLocaleTests(unittest.TestCase):
                 data = json.loads(path.read_text(encoding="utf-8"))
                 for key in ("hour_label", "pair_format"):
                     self.assertIn("{clock}", data[key], f"{path.name}:{key} lacks {{clock}}")
-                label = data["hour_label"].format(clock=clock_face("8.00-9.30"), time="8.00-9.30")
+                label = data["hour_label"].format(clock=clock_face("8.00-9.30") + " ", time="8.00-9.30")
                 self.assertTrue(label.startswith("🕗 "), label)
                 block = data["pair_format"].format(index=1, course="X", time="8.00-9.30",
-                                                   clock=clock_face("8.00-9.30"))
+                                                   clock=clock_face("8.00-9.30") + " ")
                 self.assertIn("\n🕗 ", block)

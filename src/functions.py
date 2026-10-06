@@ -334,12 +334,12 @@ def button_grid(buttons, butoane_rand):
     return grid
 
 #get daily schedule
-def print_day(week_day, cur_group, is_even, subgrupa, lang=DEFAULT_LANG, now_pair=None, *, study_year=None):
+def print_day(week_day, cur_group, is_even, subgrupa, lang=DEFAULT_LANG, now_pair=None, *, study_year=None, emoji=True):
     schedule, groups = get_schedule_and_groups(cur_group, study_year)
     if cur_group not in groups:
         return ""
     col_gr = groups.index(cur_group) + schedule_column_start  # column with the selected group
-    return print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang, now_pair)
+    return print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang, now_pair, emoji=emoji)
 
 def get_daily_courses(schedule, is_even, col_gr, week_day, subgrupa):
     #subgrupa - 0/1/2
@@ -410,22 +410,59 @@ def get_daily_courses(schedule, is_even, col_gr, week_day, subgrupa):
     return courses
 
 
-def print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang=DEFAULT_LANG, now_pair=None):
+def format_pair(index, course, classified, subgrupa, is_even, lang=DEFAULT_LANG, now_pair=None, *, emoji=True):
+    return get_text(
+        lang, "pair_format", index=pair_index_label(index, now_pair if emoji else None),
+        course=format_course(course, classified, subgrupa, is_even, emoji=emoji),
+        time=hours[index - 1][0].replace('.', ':'),
+        clock=(clock_face(hours[index - 1][0]) + " ") if emoji else "",
+    )
+
+
+def emoji_preview(lang, enabled):
+    from course_classification import classify
+    # Fixed illustrative subjects, never drawn from a user's selected group.
+    samples = ((1, "c. Algebra liniară și geometria analitică\nExemplu A.\n3-3"),
+               (2, "sem. ALGA\nExemplu A.\n101"),
+               (3, "2) lab. CDE 0.5 gr.\nExemplu B.\n202"))
+    text = get_text(lang, "emoji_on" if enabled else "emoji_off")
+    text += "\n\n" + get_text(lang, "emoji_description")
+    text += "\n" + get_text(lang, "emoji_example") + "\n"
+    for index, raw in samples:
+        text += format_pair(index, raw, {raw: classify(raw)}, 2,
+                            0, lang, 2, emoji=enabled)
+    return text
+
+
+def format_hours(lang=DEFAULT_LANG, *, emoji=True):
+    text = get_text(lang, "hours_title")
+    for i, hour in enumerate(hours):
+        clock = (clock_face(hour[0]) + " ") if emoji else ""
+        text += "\n" + get_text(lang, "pair_label", index=i+1) + "\n"
+        text += get_text(lang, "hour_label", time=hour[0], clock=clock) + "\n"
+        duration = get_text(lang, "break_30" if i == 2 else "break_15")
+        if emoji:
+            duration = ("🍽️ " if i == 2 else "☕ ") + duration
+        text += get_text(lang, "break_label", duration=duration) + "\n"
+    return text
+
+
+def print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang=DEFAULT_LANG, now_pair=None, *, emoji=True):
     # now_pair in the key keeps /today's hourglass out of the cached weekly text.
-    cache_key = (id(schedule), is_even, col_gr, week_day, subgrupa, lang, now_pair)
+    cache_key = (id(schedule), is_even, col_gr, week_day, subgrupa, lang, now_pair, emoji)
     if cache_key in daily_schedule_cache:
         return daily_schedule_cache[cache_key]
     classified = classifications_by_schedule.get(id(schedule), {})
     result = "".join(
-        get_text(lang, "pair_format", index=pair_index_label(index, now_pair), course=format_course(course, classified, subgrupa, is_even), time=hours[index - 1][0].replace('.', ':'), clock=clock_face(hours[index - 1][0]))
+        format_pair(index, course, classified, subgrupa, is_even, lang, now_pair, emoji=emoji)
         for index, course in get_daily_courses(schedule, is_even, col_gr, week_day, subgrupa)
     )
     daily_schedule_cache[cache_key] = result
     return result
 
-def print_next_course(week_day, cur_group, is_even, course_index, subgrupa, lang=DEFAULT_LANG, *, study_year=None):
+def print_next_course(week_day, cur_group, is_even, course_index, subgrupa, lang=DEFAULT_LANG, *, study_year=None, emoji=True):
     schedule, groups = get_schedule_and_groups(cur_group, study_year)
-    cache_key = (id(schedule), week_day, cur_group, is_even, course_index, subgrupa, lang)
+    cache_key = (id(schedule), week_day, cur_group, is_even, course_index, subgrupa, lang, emoji)
     if cache_key in next_course_cache:
         #send_logs(f"Cache hit next_course for {cache_key}", 'info')
         return next_course_cache[cache_key]
@@ -435,8 +472,9 @@ def print_next_course(week_day, cur_group, is_even, course_index, subgrupa, lang
         for index, course in get_daily_courses(schedule, is_even, col_gr, week_day, subgrupa):
             if index == course_index:
                 body = format_course(course, classifications_by_schedule.get(id(schedule), {}),
-                                     subgrupa, is_even)
-                result = f"\n<b>{body}</b>\n{get_text(lang, 'hour_label', time=hours[index - 1][0].replace('.', ':'), clock=clock_face(hours[index - 1][0]))}"
+                                     subgrupa, is_even, emoji=emoji)
+                clock = (clock_face(hours[index - 1][0]) + " ") if emoji else ""
+                result = f"\n<b>{body}</b>\n{get_text(lang, 'hour_label', time=hours[index - 1][0].replace('.', ':'), clock=clock)}"
                 next_course_cache[cache_key] = result
                 return result
     
@@ -444,9 +482,9 @@ def print_next_course(week_day, cur_group, is_even, course_index, subgrupa, lang
     return ""
 
 #get weekly schedule
-def print_sapt(is_even, cur_group, subgrupa, lang=DEFAULT_LANG, *, study_year=None):
+def print_sapt(is_even, cur_group, subgrupa, lang=DEFAULT_LANG, *, study_year=None, emoji=True):
     schedule, groups = get_schedule_and_groups(cur_group, study_year)
-    cache_key = (id(schedule), cur_group, is_even, subgrupa, lang)
+    cache_key = (id(schedule), cur_group, is_even, subgrupa, lang, emoji)
     if cache_key in weekly_schedule_cache:
         #send_logs(f"Cache hit print_sapt for {cache_key}", 'info')
         return weekly_schedule_cache[cache_key]
@@ -457,7 +495,7 @@ def print_sapt(is_even, cur_group, subgrupa, lang=DEFAULT_LANG, *, study_year=No
     lang_week_days = get_week_days(lang)
     week_sch = ""
     for j in range(1, 7):
-        daily = print_daily(schedule, is_even, col_gr, j-1, subgrupa, lang)
+        daily = print_daily(schedule, is_even, col_gr, j-1, subgrupa, lang, emoji=emoji)
         #do not print an empty weekday
         if str(daily) == "":
             continue

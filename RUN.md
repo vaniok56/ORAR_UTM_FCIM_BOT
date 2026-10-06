@@ -314,6 +314,19 @@ must not show a published host address.
 
 ## Runtime configuration and checks
 
+`/emoji` saves a per-user preference for schedule content, `/hours`, and both
+reminder types. Existing users default OFF when the bot first adds the
+`settings.emoji` column; future users default ON. Restarting does not reset
+choices. OFF uses the original raw course text (HTML-escaped); menus and status
+emojis are unchanged. The settings message contains a fixed illustrative sample
+unrelated to any date or user schedule: three pairs covering
+lecture, seminar, and a single subgroup-2 lab. With emojis ON, `c.` subjects use
+🎙️; `sem.` and unprefixed subjects use 📖. Prefixes remain visible and lab markers
+preserve the source's `lab` spelling and case.
+Whole-group labs use one line (`🌕 lab. BD1`), without a book icon; half-group
+labs keep their marker and book-prefixed subject on separate lines.
+Its inline button shows the current state and switches the saved preference and preview in place.
+
 Production uses read-only `/configs/config.ini`; Mac/stage set
 `ORAR_CONFIG=configs/config2.ini`. Production base pins Python 3.14.8 bookworm.
 

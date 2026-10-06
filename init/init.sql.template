@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS orar_bot.settings (
     ban_time VARCHAR(50) DEFAULT 'none',
     last_interaction_at DATETIME DEFAULT NULL,
     lang VARCHAR(5) DEFAULT 'none',
+    emoji BOOLEAN NOT NULL DEFAULT 1,
     INDEX idx_settings_last_interaction_at (last_interaction_at)
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

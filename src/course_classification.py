@@ -247,7 +247,9 @@ def classify(raw):
     return mark_review_teacher_candidates(result, lines)
 
 
-def format_course(raw, classifications, subgroup=None, is_even=None):
+def format_course(raw, classifications, subgroup=None, is_even=None, *, emoji=True):
+    if not emoji:
+        return escape(str(raw))
     item = classifications.get(str(raw))
     if not item or item["status"] != "classified":
         return escape(str(raw))
@@ -267,11 +269,17 @@ def format_course(raw, classifications, subgroup=None, is_even=None):
 
     def render(entry, entry_index):
         lines = []
+        marker = re.search(r"(?im)^\s*(?:[12]\)\s*)?(lab\.|lab(?=\s|$))",
+                           entry.get("lab_source_line", str(raw)))
+        lab_label = marker.group(1) if marker else "Lab."
         if entry.get("lab") == "0.5":
-            lines.append(f"{half_glyph(entry_index)} Lab. 0.5 gr.")
+            lines.append(f"{half_glyph(entry_index)} {lab_label} 0.5 gr.")
         elif entry.get("lab"):
-            lines.append("🌕 Lab.")
-        lines.append("📖 " + escape(entry["subject"]))
+            lines.append("🌕 " + lab_label + " " + escape(entry["subject"]))
+        # Lab markers stay unchanged; only explicit lecture prefixes use a mic.
+        lecture = not entry.get("lab") and re.match(r"(?i)^(?:[12]\)\s*)?c\.(?:\s|$)", entry["subject"])
+        if entry.get("lab") != "whole":
+            lines.append(("🎙️ " if lecture else "📖 ") + escape(entry["subject"]))
         lines += ["🧑‍🏫 " + escape(name) for name in entry["teachers"]]
         lines += ["🏫 " + escape(room) for room in entry["rooms"]]
         return "\n".join(lines)

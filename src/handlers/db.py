@@ -78,6 +78,14 @@ def initialize_mysql_connection():
                 """)
                 conn.commit()
 
+            # Preserve historical output for existing users; new rows opt in.
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SHOW COLUMNS FROM settings LIKE 'emoji'")
+                if cursor.fetchone() is None:
+                    cursor.execute("ALTER TABLE settings ADD COLUMN emoji BOOLEAN NOT NULL DEFAULT 0")
+                cursor.execute("ALTER TABLE settings ALTER COLUMN emoji SET DEFAULT 1")
+
             # refresh cache with new data if possible
             try:
                 # clear cache and reload
@@ -699,6 +707,28 @@ def restore_backup(backup_path):
         except Exception as e:
             send_logs(f"Failed to restore MySQL database: {str(e)}", "error")
             return False        
+
+def get_user_emoji(sender_id):
+    """Read the persisted preference, including changes made after reminder preparation."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT s.emoji FROM settings s JOIN users u ON u.id=s.id WHERE u.SENDER=%s",
+            (sender_id,),
+        )
+        row = cursor.fetchone()
+        return bool(row[0]) if row else False
+
+
+def set_user_emoji(sender_id, enabled):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE settings s JOIN users u ON u.id=s.id SET s.emoji=%s WHERE u.SENDER=%s",
+            (int(enabled), sender_id),
+        )
+        conn.commit()
+
 
 def get_app_setting(name: str, default: str = '0') -> str:
     """Get a global app setting value by name"""

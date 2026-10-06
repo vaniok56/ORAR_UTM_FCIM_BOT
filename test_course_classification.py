@@ -24,6 +24,29 @@ from course_classification import (
 
 
 class CourseClassificationTests(unittest.TestCase):
+    def test_lecture_uses_microphone_and_keeps_prefix_other_classes_keep_books(self):
+        from html import escape
+        for subject, glyph in (("c. Matematică", "🎙️"), ("sem. Matematică", "📖"),
+                               ("AM", "📖"), ("lab. AM", "🌕")):
+            raw = f"{subject}\nExemplu A.\n101"
+            item = classify(raw)
+            self.assertEqual(item["status"], "classified")
+            output = format_course(raw, {raw: item})
+            self.assertIn(glyph, output)
+            if not subject.startswith("lab."):
+                self.assertIn(subject, output)
+            else:
+                self.assertIn("🌕 lab. AM", output)
+                self.assertNotIn("📖", output)
+                self.assertNotIn("🎙️", output)
+            self.assertEqual(format_course(raw, {raw: item}, emoji=False), escape(raw))
+        combined = "1) c. AM\nExemplu A.\n101\n2) sem. AM\nExemplu B.\n102"
+        output = format_course(combined, {combined: classify(combined)})
+        self.assertIn("🎙️ 1) c. AM", output)
+        self.assertIn("📖 2) sem. AM", output)
+        unknown = "c. ambiguous"
+        self.assertEqual(format_course(unknown, {unknown: classify(unknown)}), unknown)
+
     def test_sidecar_schema_rejects_whole_map_including_raw_and_nested_entries(self):
         import copy
         with tempfile.TemporaryDirectory() as directory:
@@ -349,10 +372,10 @@ class HalfLabTests(unittest.TestCase):
         labels = {raw: classify(raw)}
         odd = format_course(raw, labels, 0, False)
         even = format_course(raw, labels, 0, True)
-        self.assertIn("🌗 Lab. 0.5 gr.\n📖 1) ASR", odd)
-        self.assertIn("🌓 Lab. 0.5 gr.\n📖 2) IP", odd)
-        self.assertIn("🌓 Lab. 0.5 gr.\n📖 1) ASR", even)
-        self.assertIn("🌗 Lab. 0.5 gr.\n📖 2) IP", even)
+        self.assertIn("🌗 lab. 0.5 gr.\n📖 1) ASR", odd)
+        self.assertIn("🌓 lab. 0.5 gr.\n📖 2) IP", odd)
+        self.assertIn("🌓 lab. 0.5 gr.\n📖 1) ASR", even)
+        self.assertIn("🌗 lab. 0.5 gr.\n📖 2) IP", even)
 
     def test_attending_half_alternates_on_odd_iso_weeks(self):
         self.assertEqual(viewer_subgroup(1, False), 1)
@@ -373,7 +396,7 @@ class HalfLabTests(unittest.TestCase):
                 self.assertEqual([entry["subject"] for entry in item["entries"]], subjects)
                 self.assertTrue(all(entry.get("lab") == "0.5" for entry in item["entries"]))
                 rendered = format_course(raw, {raw: item}, 1, False)
-                self.assertEqual(rendered.count("🌗 Lab. 0.5 gr."), 2)
+                self.assertEqual(rendered.count("🌗 lab. 0.5 gr."), 2)
 
     def test_marker_without_a_class_stays_raw(self):
         for raw in ("lab. 0.5 gr.", "1) lab. 0.5 gr."):
@@ -405,7 +428,9 @@ class WholeLabTests(unittest.TestCase):
                 self.assertEqual(item["subject"], subject)
                 self.assertNotIn("lab", item["subject"].casefold())
                 rendered = format_course(raw, {raw: item}, 1, False)
-                self.assertTrue(rendered.startswith("🌕 Lab.\n📖 "), rendered)
+                marker = "Lab." if raw.startswith("Lab.") else "lab."
+                self.assertTrue(rendered.startswith(f"🌕 {marker} {subject}\n"), rendered)
+                self.assertNotIn("📖", rendered)
                 self.assertEqual(rendered.count("🌕"), 1)
 
     def test_half_labs_keep_their_marker_and_phase(self):
@@ -413,7 +438,25 @@ class WholeLabTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 item = classify(raw)
                 self.assertEqual(item["lab"], "0.5")
-                self.assertTrue(format_course(raw, {raw: item}, 1, False).startswith("🌗 Lab. 0.5 gr."))
+                marker = raw.split()[0]
+                self.assertTrue(format_course(raw, {raw: item}, 1, False).startswith(f"🌗 {marker} 0.5 gr."))
+
+    def test_lab_spelling_and_case_are_preserved(self):
+        for marker in ("lab.", "Lab.", "LAB.", "lab"):
+            for half in ("", " 0.5 gr."):
+                raw = f"2) {marker} IP{half}\nExemplu A.\n101"
+                item = classify(raw)
+                self.assertEqual(item["status"], "classified")
+                rendered = format_course(raw, {raw: item}, 2, False)
+                expected = f"🌓 {marker} 0.5 gr.\n📖 2) IP" if half else f"🌕 {marker} 2) IP"
+                self.assertTrue(rendered.startswith(expected + "\n"), rendered)
+
+    def test_compact_source_marker_keeps_case_and_subject_is_html_escaped(self):
+        for marker in ("lab.", "Lab.", "LAB."):
+            raw = f"{marker}PAE\nExemplu A.\n101"
+            self.assertTrue(format_course(raw, {raw: classify(raw)}).startswith(f"🌕 {marker} PAE\n"))
+        raw = "lab. A&B\nExemplu A.\n101"
+        self.assertIn("🌕 lab. A&amp;B", format_course(raw, {raw: classify(raw)}))
 
     def test_non_lab_subjects_get_no_moon(self):
         for raw in ("c. Programarea declarativă\nBumbu T.\n104",
