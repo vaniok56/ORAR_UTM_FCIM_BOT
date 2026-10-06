@@ -1,12 +1,11 @@
-import pandas as pd
 import pytz
 
-from telethon import TelegramClient, events, functions, types
+from telethon import events, functions, types
 from telethon.tl.custom import Button
 
 import handlers.db as db
 from functions import button_grid, simu_button, send_logs, is_rate_limited, format_id
-from localization import get_text, get_user_lang, SUPPORTED_LANGS, DEFAULT_LANG
+from localization import get_text, get_user_lang
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
 

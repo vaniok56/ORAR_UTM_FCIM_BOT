@@ -12,6 +12,7 @@ __pycache__/
 # Configuration & sensitive files
 config*.ini
 *.env
+.env.*
 
 # Database files
 mysql/
@@ -22,6 +23,8 @@ backups/
 # Project directories
 *.session
 *.session-journal
+*.session-wal
+*.session-shm
 temp/
 
 # Backup files
@@ -57,3 +60,4 @@ UTM_SCHEDULE_TUTORIAL.md
 DEAN_UPLOAD_PLAN.md
 ORAR_FCIM_WEB_IMPLEMENTATION_PLAN.md
 RUN_PRIVATE.md
+PROJECT_KNOWLEDGE.md

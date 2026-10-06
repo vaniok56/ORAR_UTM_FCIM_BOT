@@ -34,12 +34,12 @@ temp/
 
 # Documentation
 **.md
+!CHANGELOG.md
 LICENSE
 imgs/
 **.template
 
 # Docker files
-docker-compose.yml
 .dockerignore
 **Dockerfile*
 

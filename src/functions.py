@@ -293,7 +293,6 @@ def get_merged_cell_ranges(sheet):
 def getMergedCellVal(sheet, cell):
     cell_key = (id(sheet), cell.row, cell.column)
     if cell_key in cell_value_cache:
-        #send_logs(f"Cache hit getMergedCellVal for {cell_key}", 'info')
         return cell_value_cache[cell_key]
     
     merged_ranges = get_merged_cell_ranges(sheet)
@@ -363,7 +362,6 @@ def get_daily_courses(schedule, is_even, col_gr, week_day, subgrupa):
     #find row start in cache
     schedule_day_key = (id(schedule), day_name, is_even)
     if schedule_day_key in day_row_start_cache:
-        #send_logs(f"Cache hit row_start for {schedule_day_key}", 'info')
         row_start = day_row_start_cache[schedule_day_key]
     else:
         for i in range(1, schedule.max_row + 1):
@@ -380,7 +378,6 @@ def get_daily_courses(schedule, is_even, col_gr, week_day, subgrupa):
     
     orele_key = (id(schedule), row_start)
     if orele_key in orele_cache:
-        #send_logs(f"Cache hit orele for {orele_key}", 'info')
         orele = orele_cache[orele_key]
     else:
         orele = {i: getMergedCellVal(schedule, schedule.cell(row=i, column=2)) 
@@ -464,7 +461,6 @@ def print_next_course(week_day, cur_group, is_even, course_index, subgrupa, lang
     schedule, groups = get_schedule_and_groups(cur_group, study_year)
     cache_key = (id(schedule), week_day, cur_group, is_even, course_index, subgrupa, lang, emoji)
     if cache_key in next_course_cache:
-        #send_logs(f"Cache hit next_course for {cache_key}", 'info')
         return next_course_cache[cache_key]
     
     if cur_group in groups:
@@ -486,7 +482,6 @@ def print_sapt(is_even, cur_group, subgrupa, lang=DEFAULT_LANG, *, study_year=No
     schedule, groups = get_schedule_and_groups(cur_group, study_year)
     cache_key = (id(schedule), cur_group, is_even, subgrupa, lang, emoji)
     if cache_key in weekly_schedule_cache:
-        #send_logs(f"Cache hit print_sapt for {cache_key}", 'info')
         return weekly_schedule_cache[cache_key]
     if cur_group not in groups:
         return ""
@@ -552,29 +547,39 @@ def is_rate_limited(user_id):
 def format_id(user_id):
     return f"U{user_id}"
 
-def get_version():    
+RELEASE_ENTRY = re.compile(r"^##\s*\[(\d+\.\d+\.\d+)\]\s*-\s*(\d{4}-\d{2}-\d{2})", re.MULTILINE)
+CHANGELOG_URL = "https://raw.githubusercontent.com/vaniok56/ORAR_UTM_FCIM_BOT/main/CHANGELOG.md"
+
+
+def release_from_changelog(text):
+    """Return the newest release entry from changelog text, or None."""
+    match = RELEASE_ENTRY.search(text)
+    if not match:
+        return None
+    version, released = match.groups()
+    return version, datetime.datetime.strptime(released, "%Y-%m-%d").strftime("%d-%m-%Y")
+
+
+def get_version():
+    """Newest release from the local CHANGELOG.md, then from GitHub."""
     try:
-        response = requests.get(
-            "https://api.github.com/repos/vaniok56/ORAR_UTM_FCIM_BOT/commits",
-            headers={"Accept": "application/vnd.github.v3+json"},
-            timeout=5
-        )
-        
-        if response.status_code == 200:
-            latest_commit = response.json()[0]
-            
-            commit_date = latest_commit['commit']['author']['date']
-            date_obj = datetime.datetime.strptime(commit_date, "%Y-%m-%dT%H:%M:%SZ")
-            formatted_date = date_obj.strftime("%d-%m-%Y")
-            
-            commit_message = latest_commit['commit']['message']
-            version_match = commit_message.split("Version ")[1].split(" ")[0] if "Version " in commit_message else None
-            
-            return version_match, formatted_date
-            
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(project_root, "CHANGELOG.md"), encoding="utf-8") as changelog:
+            release = release_from_changelog(changelog.read())
+        if release:
+            return release
     except Exception as e:
-        send_logs(f"Error fetching version from GitHub: {e}", 'error')
-        return "0.11.0", "01-09-2025"
+        send_logs(f"Error reading version from CHANGELOG.md: {e}", 'error')
+
+    try:
+        response = requests.get(CHANGELOG_URL, timeout=5)
+        if response.status_code == 200:
+            release = release_from_changelog(response.text)
+            if release:
+                return release
+    except Exception as e:
+        send_logs(f"Error fetching CHANGELOG.md from GitHub: {e}", 'error')
+    return "unknown", "unknown"
 
 def extract_specs(groups):
     specs = {}

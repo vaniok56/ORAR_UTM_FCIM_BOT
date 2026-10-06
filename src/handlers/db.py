@@ -396,7 +396,6 @@ def locate_field(sender_id, field):
                     
                     # Return the specific field requested
                     field_value = all_user_data.get(field)
-                    # send_logs(f"locate_field({sender_id}, {field}) returned: {field_value}", "debug")
                     return field_value
                 else:
                     send_logs(f"No data found for user {sender_id}", "warning")
@@ -676,31 +675,26 @@ def is_user_exists(sender_id):
             return False
 
 def restore_backup(backup_path):
-    """Use a MySQL backup file to restore the database"""
-    for attempt in range(MAX_RETRIES):
-        try:
-            host = os.environ.get('MYSQL_HOST', 'mysql')
-            user = os.environ.get('MYSQL_USER')
-            password = os.environ.get('MYSQL_PASSWORD')
-            database = os.environ.get('MYSQL_DATABASE')
-            port = 3306  # Explicitly define port
-            
-            command = f"mysql -h {host} -P {port} -u {user} -p'{password}' {database} < {backup_path}"
-            send_logs(f"Restoring MySQL database from backup at {backup_path}", "info")
-            os.system(command)
-            send_logs("MySQL database restored successfully", "info")
-            return True
-        except mysql.connector.Error as db_err:
-            if attempt < MAX_RETRIES - 1:
-                delay = 0.5 * (2 ** attempt)
-                send_logs(f"DB error in use_backup (attempt {attempt+1}/{MAX_RETRIES}): {db_err}. Retrying in {delay}s...", "warning")
-                time.sleep(delay)
-            else:
-                send_logs(f"Failed to restore MySQL database after {MAX_RETRIES} attempts: {str(db_err)}", "error")
-                return False
-        except Exception as e:
-            send_logs(f"Failed to restore MySQL database: {str(e)}", "error")
-            return False        
+    """Restore the database from a dump without exposing the password."""
+    try:
+        environment = os.environ.copy()
+        environment['MYSQL_PWD'] = os.environ['MYSQL_PASSWORD']
+        command = [
+            'mysql',
+            '--host', os.environ.get('MYSQL_HOST', 'mysql'),
+            '--port', '3306',
+            '--user', os.environ['MYSQL_USER'],
+            os.environ['MYSQL_DATABASE'],
+        ]
+        with open(backup_path, 'rb') as dump:
+            subprocess.run(command, stdin=dump, stderr=subprocess.DEVNULL,
+                           env=environment, check=True)
+        send_logs(f"MySQL database restored from {backup_path}", "info")
+        return True
+    except Exception as error:
+        # Do not log subprocess output or environment: either can contain secrets.
+        send_logs(f"MySQL restore failed ({type(error).__name__})", "error")
+        return False
 
 def get_user_emoji(sender_id, *, strict=False):
     """Read the persisted preference, including changes made after reminder preparation."""

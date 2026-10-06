@@ -10,7 +10,7 @@ import os
 import handlers.db as db
 from functions import print_day, print_sapt, print_next_course, button_grid, simu_button, send_logs, get_next_course_time, is_rate_limited, format_id, get_version, write_groups_to_json, get_online_schedule_versions, get_local_schedule_versions
 write_groups_to_json()
-from functions import cur_group, hours, week_days, is_even, bulk_send_shift_earlier, clock_face, current_pair_index
+from functions import cur_group, is_even, bulk_send_shift_earlier, current_pair_index
 from functions import emoji_preview, format_hours
 from dynamic_group_lists import years, group_list, specialties
 
@@ -37,7 +37,6 @@ TRACKED_BUTTONS = {
 TRACKED_BUTTONS.add("Orele ⏰")
 
 import pandas as pd
-import numpy as np
 import asyncio
 
 #### Access credentials
@@ -590,7 +589,6 @@ async def send_notification(sender, next_course_data):
             return False
         text = get_text(user_lang, "next_pair", course=next_course)
         await client.send_message(sender, text, parse_mode="HTML")
-        #send_logs(f"Sent next course to {sender}", 'info')
         noti_send += 1
         return True
     except Exception as e:
