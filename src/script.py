@@ -188,7 +188,7 @@ async def emoji_command(event):
         await event.respond(get_text(lang, "emoji_start"))
         return
     try:
-        enabled = db.get_user_emoji(format_id(SENDER))
+        enabled = db.get_user_emoji(format_id(SENDER), strict=True)
         await event.respond(emoji_preview(lang, enabled), parse_mode="HTML",
                             buttons=emoji_button(SENDER, lang, enabled))
     except Exception as error:
@@ -739,7 +739,8 @@ async def backup_database():
         timestamp = now.strftime("%Y%m%d_%H%M%S")
         os.makedirs("/backups", exist_ok=True)
         backup_filename = f"/backups/BD_backup_{timestamp}.sql"
-        db.create_mysql_backup(backup_filename)
+        if not db.create_mysql_backup(backup_filename):
+            raise RuntimeError("Database backup failed; no file sent")
         db_len = db.get_user_count()
         
         #send

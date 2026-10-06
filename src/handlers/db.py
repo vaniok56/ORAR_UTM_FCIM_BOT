@@ -4,6 +4,8 @@ import time
 import datetime
 import pytz
 import os
+import subprocess
+import tempfile
 from contextlib import contextmanager
 from functions import send_logs
 
@@ -63,28 +65,15 @@ def initialize_mysql_connection():
                 version = cursor.fetchone()
                 send_logs(f"Connected to MySQL version: {version[0]}", "info")
 
-            # Idempotent migration: ensure app_settings table exists
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS orar_bot.app_settings (
-                        setting_name  VARCHAR(50)  PRIMARY KEY,
-                        setting_value VARCHAR(255) NOT NULL
-                    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-                """)
-                cursor.execute("""
-                    INSERT IGNORE INTO orar_bot.app_settings (setting_name, setting_value)
-                    VALUES ('holiday_mode', '0')
-                """)
-                conn.commit()
-
-            # Preserve historical output for existing users; new rows opt in.
+            # Emoji schema changes are manual; startup only validates the column.
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SHOW COLUMNS FROM settings LIKE 'emoji'")
-                if cursor.fetchone() is None:
-                    cursor.execute("ALTER TABLE settings ADD COLUMN emoji BOOLEAN NOT NULL DEFAULT 0")
-                cursor.execute("ALTER TABLE settings ALTER COLUMN emoji SET DEFAULT 1")
+                column = cursor.fetchone()
+                if column is None:
+                    raise RuntimeError("settings.emoji is missing; manually add BOOLEAN NOT NULL DEFAULT 0, then set DEFAULT 1 before starting the bot")
+                if column[1].lower() != "tinyint(1)" or column[2] != "NO" or str(column[4]) != "1":
+                    raise RuntimeError("settings.emoji must be BOOLEAN NOT NULL DEFAULT 1; correct the schema manually before starting the bot")
 
             # refresh cache with new data if possible
             try:
@@ -322,40 +311,45 @@ def add_new_user(sender_id):
             return False
 
 def create_mysql_backup(backup_path):
-    """Create a MySQL database backup using mysqldump"""
-    for attempt in range(MAX_RETRIES):
-        try:
-            # Use the same credentials as the connection pool
-            host = os.environ.get('MYSQL_HOST', 'mysql')
-            user = os.environ.get('MYSQL_USER')
-            password = os.environ.get('MYSQL_PASSWORD')
-            database = os.environ.get('MYSQL_DATABASE')
-            port = 3306  # Explicitly define port
-            
-            # Create mysqldump command
-            command = f"mysqldump -h {host} -P {port} -u {user} -p'{password}' {database} > {backup_path}"
-            
-            # Execute command
-            send_logs(f"Creating MySQL backup at {backup_path}", "info")
-            os.system(command)
-            
-            if os.path.exists(backup_path):
-                send_logs(f"MySQL backup created successfully: {os.path.getsize(backup_path)} bytes", "info")
-                return True
-            else:
-                send_logs(f"MySQL backup file not created", "error")
-                return False
-        except mysql.connector.Error as db_err:
-            if attempt < MAX_RETRIES - 1:
-                delay = 0.5 * (2 ** attempt)
-                send_logs(f"DB error in create_mysql_backup (attempt {attempt+1}/{MAX_RETRIES}): {db_err}. Retrying in {delay}s...", "warning")
-                time.sleep(delay)
-            else:
-                send_logs(f"Failed to create MySQL backup after {MAX_RETRIES} attempts: {str(db_err)}", "error")
-                return False
-        except Exception as e:
-            send_logs(f"Failed to create database backup: {str(e)}", "error")
-            return False
+    """Publish a private, nonempty dump only after mysqldump succeeds."""
+    temporary = None
+    try:
+        user = os.environ['MYSQL_USER']
+        database = os.environ['MYSQL_DATABASE']
+        environment = os.environ.copy()
+        environment['MYSQL_PWD'] = os.environ['MYSQL_PASSWORD']
+        command = [
+            'mysqldump', '--single-transaction', '--skip-lock-tables',
+            '--no-tablespaces',
+            '--host', os.environ.get('MYSQL_HOST', 'mysql'),
+            '--port', '3306', '--user', user, database,
+        ]
+        # NamedTemporaryFile creates mode 0600; same directory allows atomic rename.
+        with tempfile.NamedTemporaryFile(mode='wb', prefix='.orar-backup-',
+                                         dir=os.path.dirname(os.path.abspath(backup_path)),
+                                         delete=False) as backup:
+            temporary = backup.name
+            subprocess.run(command, stdout=backup, stderr=subprocess.DEVNULL,
+                           env=environment, check=True, timeout=120)
+            backup.flush()
+            size = os.fstat(backup.fileno()).st_size
+            if size == 0:
+                raise ValueError("empty database dump")
+            os.fsync(backup.fileno())
+        os.replace(temporary, backup_path)
+        temporary = None
+        send_logs(f"MySQL backup created successfully: {size} bytes", "info")
+        return True
+    except Exception as error:
+        # Do not log subprocess output or environment: either can contain secrets.
+        send_logs(f"MySQL backup failed ({type(error).__name__})", "error")
+        return False
+    finally:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                send_logs("Could not remove partial MySQL backup", "error")
 
 def migrate_csv_to_mysql(csv_path="BD.csv"):
     """Migrate data from CSV file to MySQL"""
@@ -708,16 +702,22 @@ def restore_backup(backup_path):
             send_logs(f"Failed to restore MySQL database: {str(e)}", "error")
             return False        
 
-def get_user_emoji(sender_id):
+def get_user_emoji(sender_id, *, strict=False):
     """Read the persisted preference, including changes made after reminder preparation."""
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT s.emoji FROM settings s JOIN users u ON u.id=s.id WHERE u.SENDER=%s",
-            (sender_id,),
-        )
-        row = cursor.fetchone()
-        return bool(row[0]) if row else False
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT s.emoji FROM settings s JOIN users u ON u.id=s.id WHERE u.SENDER=%s",
+                (sender_id,),
+            )
+            row = cursor.fetchone()
+            return bool(row[0]) if row else False
+    except Exception as error:
+        if strict:
+            raise
+        send_logs(f"Emoji preference unavailable for {sender_id}; using OFF ({type(error).__name__})", "warning")
+        return False
 
 
 def set_user_emoji(sender_id, enabled):

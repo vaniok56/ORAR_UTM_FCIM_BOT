@@ -1,9 +1,10 @@
 import ast
+import asyncio
+import datetime
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
-from contextlib import nullcontext
 
 from test_upload_status import setUpModule, tearDownModule
 
@@ -12,7 +13,7 @@ class EmojiSettingTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         import handlers.db as db
         import functions
-        from localization import get_text, load_locales
+        from localization import get_text, get_week_days, load_locales, SUPPORTED_LANGS
         from telethon.tl.custom import Button
         from telethon.errors import MessageNotModifiedError
         load_locales()
@@ -21,7 +22,8 @@ class EmojiSettingTests(unittest.IsolatedAsyncioTestCase):
         functions.clear_schedule_caches()
         # Load handler functions without starting Telegram or connecting MySQL.
         tree = ast.parse(Path("src/script.py").read_text())
-        names = {"emoji_button", "emoji_command", "emoji_callback", "send_notification"}
+        names = {"emoji_button", "emoji_command", "emoji_callback", "send_notification",
+                 "send_schedule_tomorrow", "oree"}
         nodes = [node for node in tree.body
                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
         for node in nodes:
@@ -34,6 +36,10 @@ class EmojiSettingTests(unittest.IsolatedAsyncioTestCase):
             "send_logs": Mock(), "MessageNotModifiedError": MessageNotModifiedError,
             "client": SimpleNamespace(send_message=AsyncMock()), "noti_send": 0,
             "print_next_course": functions.print_next_course,
+            "format_hours": functions.format_hours, "get_week_days": get_week_days,
+            "DEFAULT_LANG": "en", "SUPPORTED_LANGS": SUPPORTED_LANGS,
+            "datetime": datetime, "moldova_tz": db.moldova_tz,
+            "bulk_send_shift_earlier": datetime.timedelta(minutes=1), "bulk_send_interval": 0,
         }
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "src/script.py", "exec"), self.namespace)
 
@@ -112,20 +118,52 @@ class EmojiSettingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(glyph, self.runtime.format_hours(lang, emoji=True))
                 self.assertNotIn(glyph, self.runtime.format_hours(lang, emoji=False))
 
-    def test_migration_keeps_existing_off_and_new_default_on_without_resetting(self):
-        for existing_column in (None, ("emoji",)):
-            conn = Mock()
-            cursor = conn.cursor.return_value
-            cursor.fetchone.side_effect = [("8.0",), existing_column]
-            with patch.object(self.db, "get_db_connection", side_effect=lambda: nullcontext(conn)), \
-                    patch.object(self.db.mysql.connector.pooling, "MySQLConnectionPool"), \
-                    patch.object(self.db, "load_user_cache"):
-                self.assertTrue(self.db.initialize_mysql_connection())
-            queries = [call.args[0] for call in cursor.execute.call_args_list]
-            self.assertEqual("ALTER TABLE settings ADD COLUMN emoji BOOLEAN NOT NULL DEFAULT 0" in queries,
-                             existing_column is None)
-            self.assertIn("ALTER TABLE settings ALTER COLUMN emoji SET DEFAULT 1", queries)
-            self.assertFalse(any("UPDATE settings" in sql for sql in queries))
+    async def test_failed_preference_read_still_delivers_raw_reminder(self):
+        self.namespace["print_next_course"] = Mock(return_value="raw schedule")
+        with patch.object(self.db, "locate_field", return_value=1), \
+                patch.object(self.db, "get_db_connection", side_effect=RuntimeError("offline")):
+            self.assertTrue(await self.namespace["send_notification"](
+                42, (1, "SAMPLE", 0, 1, 0, "en", 1)))
+        self.namespace["print_next_course"].assert_called_once_with(
+            1, "SAMPLE", 0, 1, 0, "en", study_year=1, emoji=False)
+        self.namespace["client"].send_message.assert_awaited_once()
+
+    async def test_settings_read_failure_does_not_claim_saved_state(self):
+        event = self.event()
+        with patch.object(self.db, "is_user_exists", return_value=True), \
+                patch.object(self.db, "get_db_connection", side_effect=RuntimeError("offline")):
+            await self.namespace["emoji_command"](event)
+        self.assertEqual(event.respond.call_args.args[0], self.text("en", "emoji_error"))
+        self.assertNotIn("buttons", event.respond.call_args.kwargs)
+
+    async def test_hours_preference_read_failure_still_sends_without_emojis(self):
+        client = AsyncMock()
+        self.namespace.update(client=client,
+                              functions=SimpleNamespace(messages=SimpleNamespace(SetTypingRequest=Mock())),
+                              types=SimpleNamespace(SendMessageTypingAction=Mock()))
+        with patch.object(self.db, "get_db_connection", side_effect=RuntimeError("offline")):
+            await self.namespace["oree"](self.event())
+        client.send_message.assert_awaited_once()
+        text = client.send_message.call_args.args[1]
+        self.assertIn(self.text("en", "hours_title"), text)
+        for glyph in ("🕗", "🍽️", "☕"):
+            self.assertNotIn(glyph, text)
+
+    async def test_tomorrow_preference_read_failure_still_delivers_raw_schedule(self):
+        import pandas as pd
+        users = pd.DataFrame([{"SENDER": "U42", "group_n": "SAMPLE", "ban": 0,
+                               "noti": 1, "subgrupa": 0, "lang": "en", "year_s": 1}])
+        self.namespace.update(pd=pd, print_day=Mock(return_value="raw schedule"),
+                              asyncio=SimpleNamespace(sleep=AsyncMock(
+                                  side_effect=[None, None, asyncio.CancelledError()])))
+        with patch.object(self.db, "get_app_setting", return_value="0"), \
+                patch.object(self.db, "get_all_users", return_value=users), \
+                patch.object(self.db, "get_db_connection", side_effect=RuntimeError("offline")), \
+                self.assertRaises(asyncio.CancelledError):
+            await self.namespace["send_schedule_tomorrow"]()
+        self.assertFalse(self.namespace["print_day"].call_args.kwargs["emoji"])
+        self.namespace["client"].send_message.assert_awaited_once()
+        self.assertIn("raw schedule", self.namespace["client"].send_message.call_args.args[1])
 
     async def test_schedule_caches_and_reminders_use_current_preference(self):
         from course_classification import classify

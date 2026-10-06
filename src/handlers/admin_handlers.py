@@ -590,7 +590,8 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
             timestamp = now.strftime("%Y%m%d_%H%M%S")
             os.makedirs("/backups", exist_ok=True)
             backup_filename = f"../backups/BD_backup_{timestamp}.sql"
-            db.create_mysql_backup(backup_filename)
+            if not db.create_mysql_backup(backup_filename):
+                raise RuntimeError("Database backup failed; no file sent")
             db_len = db.get_user_count()
             #send
             await client.send_file(
