@@ -104,6 +104,9 @@ classifications keep original text. You can switch back at any time.
 - `/activity [days]` - View recent user activity
 - `/backup` - Manual database backup (owner only)
 - `/use_backup` - Choose a database backup to restore (owner only)
+- `/cancel_restore` - Cancel a pending database restore (owner only)
+- `/debug_next` - Print the next course for debugging
+- `/logs` - Send the latest log file
 - `/auto_migrate` - Match users' academic years to loaded schedule groups
 - `/message` - Send message to users
 - `/cancel_message` - Cancel current message draft
@@ -111,6 +114,9 @@ classifications keep original text. You can switch back at any time.
 - `/update_schedule` - Review and publish dean XLSX schedules, with optional PDF audit
 - `/contrib` - List schedule contributors
 - `/edit_contrib` - Manage contributors (owner only)
+- `/admin` - Grant admin rights to a user
+- `/unadmin` - Remove admin rights
+- `/list_admin` - List admins
 - `/ban` - Ban a user
 - `/unban` - Unban a user
 - `/list_ban` - List banned users

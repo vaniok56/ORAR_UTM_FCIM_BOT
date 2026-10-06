@@ -1,6 +1,5 @@
 import asyncio
 import pandas as pd
-import numpy as np
 import datetime
 import pytz
 import os
@@ -13,13 +12,13 @@ import copy
 import re
 from pathlib import Path
 
-from telethon import TelegramClient, events, types
+from telethon import events
 from telethon.errors import MessageNotModifiedError
 from telethon.tl.custom import Button
 
 import handlers.db as db
 import functions as runtime
-from functions import activate_schedule, button_grid, send_logs, print_next_course, is_rate_limited, format_id, load_schedule_file, write_groups_to_json, hours, week_days
+from functions import activate_schedule, button_grid, send_logs, print_next_course, format_id, load_schedule_file, write_groups_to_json, hours, week_days
 from course_classification import classification_counts, sidecar_path
 from schedule_ingest import MAX_XLSX_BYTES, MAX_PDF_BYTES, UploadReject, compare_versions, inspect_pdf, inspect_xlsx, parse_version, pdf_version, prepare_upload, schedule_diff, write_diff_csv
 from year_migration import plan_year_migration
@@ -154,10 +153,12 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
         text += "/stats - show statistics\n\n"
         text += "/activity [days] - show user activity\n\n"
         text += "/backup - manual database backup\n\n"
-        text += "/use_backup - restore database from backup\n\n"
+        text += "/use_backup - restore database from backup\n"
+        text += "/cancel_restore - cancel a pending database restore\n\n"
         text += "/message - send a message to users\n"
         text += "/cancel_message - cancel the current message draft\n\n"
         text += "/debug_next - debug print next course\n\n"
+        text += "/logs - send the latest log file\n\n"
         text += "/auto_migrate - match user years to schedule groups\n\n"
         text += "Change user status:\n"
         text += "/ban - ban a user\n"
@@ -169,7 +170,6 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
         text += "/contrib - show contributors\n\n"
         text += "/edit_contrib - edit contributors\n\n"
         text += "/update_schedule - update schedule from file\n\n"
-        text += "/auto_migrate - match user years to schedule groups\n\n"
         text += "/holidays - toggle holiday mode (pauses scheduled notifications)\n\n"
         await client.send_message(SENDER, text, parse_mode="HTML")
         send_logs(format_id(SENDER) + " - /admin_help", 'info')
@@ -620,29 +620,22 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
             return
         
         try:
-            #file
+            log_files = sorted(glob.glob(os.path.join(runtime.log_dir, "orarbot_*.log")),
+                               key=os.path.getmtime)
+            if not log_files:
+                await client.send_message(SENDER, "No log files found!", parse_mode="HTML")
+                return
+            log_path = log_files[-1]
             now = datetime.datetime.now(moldova_tz)
-            logs_filename = "orarbot.log"
-            backup_filename = f"orarbot_{now.strftime('%Y%m%d')}.log"
-            with open(logs_filename, 'r') as original_file:
-                with open(backup_filename, 'w') as backup_file:
-                    backup_file.write(original_file.read())
-            #send
             await client.send_file(
                 SENDER,
-                backup_filename,
-                caption=f"Logs\n{now.strftime('%Y-%m-%d %H:%M:%S')}"
+                log_path,
+                caption=f"Logs\n{now.strftime('%Y-%m-%d %H:%M:%S')}\n{os.path.basename(log_path)}"
             )
-
-            #delete
-            import os
-            if os.path.exists(backup_filename):
-                os.remove(backup_filename)
-                
-            send_logs(f"Manual backup sent to {SENDER}", 'info')
+            send_logs(f"Log file sent to {SENDER}", 'info')
         except Exception as e:
-            send_logs(f"Error sending manual backup: {str(e)}", 'error')
-            await client.send_message(SENDER, f"Error sending backup: {str(e)}", parse_mode="HTML")
+            send_logs(f"Error sending logs: {str(e)}", 'error')
+            await client.send_message(SENDER, f"Error sending logs: {str(e)}", parse_mode="HTML")
 
     # Dictionary to track users waiting for actions
     user_action_waiting = {}

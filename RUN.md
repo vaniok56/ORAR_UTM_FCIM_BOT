@@ -295,7 +295,7 @@ CI also builds the regular image and runs `tests/image_smoke.py` without network
 | Problem | Check |
 | --- | --- |
 | Bot exits with database connection error | Check MySQL health/logs, config credentials, and initialized schema. Restarting does not reset or migrate MySQL. |
-| Missing/invalid `settings.emoji` | Prepare the column manually as `BOOLEAN NOT NULL DEFAULT 1` before deploying. Preserve existing choices; no startup migration runs. |
+| Missing/invalid `settings.emoji` | Add the column as `BOOLEAN NOT NULL DEFAULT 0`, then set its default to `1`; existing users stay OFF and new users start ON. Never reset saved choices; no startup migration runs. |
 | Missing `app_settings` or `current_year` | Prepare required table/settings manually. Do not replay full initialization SQL against live data. |
 | Missing `contributors.csv` or group catalog | Supply contributors file and at least one valid active schedule before startup. |
 | Telegram config unavailable | Check `ORAR_CONFIG` and its read-only mount. Verify credentials locally, without printing them. |

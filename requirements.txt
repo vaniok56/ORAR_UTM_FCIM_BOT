@@ -1,7 +1,7 @@
 Telethon==1.45.0
 openpyxl==3.1.5
-DateTime==6.0
 pandas==3.0.6
+numpy==2.5.3
 pytz==2026.4
 mysql-connector-python==26.7.0
 requests==2.34.2
