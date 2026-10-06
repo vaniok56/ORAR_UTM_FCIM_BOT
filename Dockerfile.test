@@ -1,0 +1,14 @@
+FROM python:slim-bookworm
+
+WORKDIR /
+COPY requirements.txt /requirements.txt
+RUN pip3 install -r /requirements.txt && \
+    apt-get update && apt-get install -y --no-install-recommends default-mysql-client poppler-utils && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY src /src
+COPY schedule_parser /src/schedule_parser
+COPY locales /locales
+
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "-u", "src/script.py"]

@@ -5,19 +5,97 @@ import datetime
 import pytz
 import os
 import glob
+import hashlib
+import shutil
+import tempfile
+import secrets
+import copy
+import re
 from pathlib import Path
 
 from telethon import TelegramClient, events, types
+from telethon.errors import MessageNotModifiedError
 from telethon.tl.custom import Button
 
 import handlers.db as db
-from functions import activate_schedule, button_grid, send_logs, print_next_course, is_rate_limited, format_id, load_schedule_file, write_groups_to_json
+import functions as runtime
+from functions import activate_schedule, button_grid, send_logs, print_next_course, is_rate_limited, format_id, load_schedule_file, write_groups_to_json, hours, week_days
+from course_classification import classification_counts, sidecar_path
+from schedule_ingest import MAX_XLSX_BYTES, MAX_PDF_BYTES, UploadReject, compare_versions, inspect_pdf, inspect_xlsx, parse_version, pdf_version, prepare_upload, schedule_diff, write_diff_csv
 from year_migration import plan_year_migration
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
 
 main_admin = "U500303890"  # Your user ID here as string
 contributors_df = pd.read_csv('contributors.csv')
+
+async def update_batch_status(client, state, chat_id, text):
+    """Keep one live status message per upload batch.
+
+    Bulk uploads must not append a new message per file, so the first status
+    message is edited from then on. If it is no longer editable (deleted, too
+    old, or gone) a fresh one is sent and remembered.
+    """
+    token = state["token"]
+    buttons = [[Button.inline("Review uploads", f"upload_review_{token}".encode()),
+                Button.inline("Cancel", f"cancel_update_schedule_{token}".encode())]]
+    message = state.get("status_message")
+    if message is not None:
+        try:
+            await message.edit(text, buttons=buttons)
+            return message
+        except MessageNotModifiedError:
+            return message
+        except Exception as error:
+            send_logs(f"Batch status message not editable: {error}", "warning")
+            state["status_message"] = None
+    state["status_message"] = await client.send_message(chat_id, text, buttons=buttons)
+    return state["status_message"]
+
+
+def batch_progress_line(state):
+    return ", ".join(f"Year {year}: {'XLSX ' if item.get('xlsx') else ''}{'PDF' if item.get('pdf') else ''}".strip()
+                     for year, item in sorted(state["years"].items())) or "no files staged yet"
+
+
+UPLOAD_STAGE_ROOT = Path("schedules/.uploads")
+UPLOAD_MAX_AGE_SECONDS = 1800
+
+
+def target_fingerprint(path):
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except FileNotFoundError:
+        return None
+
+
+def capture_runtime(year, specialties, group_list):
+    return {"sheet": getattr(runtime, f"schedule{year}"),
+            "groups": list(getattr(runtime, f"groups{year}")),
+            "classes": runtime.classifications_by_schedule.copy(),
+            "specialties": copy.deepcopy(specialties), "group_list": copy.deepcopy(group_list)}
+
+
+def restore_runtime(year, snapshot, specialties, group_list):
+    setattr(runtime, f"schedule{year}", snapshot["sheet"])
+    setattr(runtime, f"groups{year}", snapshot["groups"])
+    runtime.classifications_by_schedule.clear()
+    runtime.classifications_by_schedule.update(snapshot["classes"])
+    specialties.clear()
+    specialties.update(snapshot["specialties"])
+    group_list.clear()
+    group_list.update(snapshot["group_list"])
+    runtime.clear_schedule_caches()
+
+
+def purge_stale_stages(root=UPLOAD_STAGE_ROOT):
+    """Drop staging left by batches that a restart already killed. Active batches keep a fresh mtime."""
+    cutoff = datetime.datetime.now().timestamp() - UPLOAD_MAX_AGE_SECONDS
+    for path in root.glob("*"):
+        if path.is_dir() and path.stat().st_mtime < cutoff:
+            shutil.rmtree(path, ignore_errors=True)
+
+
 
 def register_admin_handlers(client, admins1, admins2, specialties, group_list):
     draft = {}
@@ -489,7 +567,8 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
         try:
             for i in range(1, 8):
                 text = "Perechea urmatore: #" + str(i)
-                text += print_next_course(week_day, 'TI-241', is_even, i, subgrupa)
+                text += print_next_course(week_day, 'TI-241', is_even, i, subgrupa,
+                                          study_year=db.locate_field(format_id(SENDER), 'year_s'))
                 if text:
                     await client.send_message(SENDER, text, parse_mode="HTML")
                 send_logs(format_id(SENDER) + " - /debug_next", 'info')
@@ -511,7 +590,8 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
             timestamp = now.strftime("%Y%m%d_%H%M%S")
             os.makedirs("/backups", exist_ok=True)
             backup_filename = f"../backups/BD_backup_{timestamp}.sql"
-            db.create_mysql_backup(backup_filename)
+            if not db.create_mysql_backup(backup_filename):
+                raise RuntimeError("Database backup failed; no file sent")
             db_len = db.get_user_count()
             #send
             await client.send_file(
@@ -927,8 +1007,119 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
         await user_status_management(client, event, 'list_ban')
         return
 
-    #/update_schedule admin
-    active_file_handlers = {}
+    # Dean-upload state. Files remain private under schedules until publish.
+    purge_stale_stages()
+    active_uploads = {}
+    year_publish_locks = {year: asyncio.Lock() for year in range(1, 5)}
+
+    def can_update(sender_id, study_year):
+        if format_id(sender_id) == main_admin:
+            return True
+        years = contributors_df[contributors_df['user_id'] == f"U{sender_id}"]['orar'].values
+        return bool(years.size and study_year in years)
+
+    def clear_upload(sender_id):
+        state = active_uploads.pop(sender_id, None)
+        if state:
+            task = state.get("expiry_task")
+            if task and task is not asyncio.current_task():
+                task.cancel()
+            shutil.rmtree(state["stage"], ignore_errors=True)
+
+    def touch_upload(state):
+        state["deadline"] = asyncio.get_running_loop().time() + UPLOAD_MAX_AGE_SECONDS
+
+    def expired(sender_id, state):
+        if asyncio.get_running_loop().time() >= state["deadline"]:
+            clear_upload(sender_id)
+            return True
+        return False
+
+    async def expire_upload(sender_id, state):
+        loop = asyncio.get_running_loop()
+        while active_uploads.get(sender_id) is state:
+            await asyncio.sleep(max(0, state["deadline"] - loop.time()))
+            async with state["lock"]:
+                if active_uploads.get(sender_id) is not state:
+                    return
+                if expired(sender_id, state):
+                    return
+
+    async def send_stage_file(sender_id, path, name):
+        if path.exists():
+            await client.send_file(sender_id, str(path), force_document=True, file_name=name)
+
+    async def publish_upload(sender_id, state, year_selected):
+        item = state["years"][year_selected]
+        prepared = item["prepared"]
+        counts = classification_counts(prepared.classifications)
+        schedule_dir = Path("schedules")
+        target = schedule_dir / f"orar{year_selected}.xlsx"
+        sidecar = sidecar_path(target)
+        backup = item["stage"] / "previous.xlsx"
+        backup_sidecar = item["stage"] / "previous.classifications.json"
+        catalog = Path("src/dynamic_group_lists.py")
+        catalog_backup = item["stage"] / "previous.dynamic_group_lists.py"
+        rollback_dir = schedule_dir / "rollback"
+        rollback_dir.mkdir(mode=0o700, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + state["token"]
+        snapshot = capture_runtime(year_selected, specialties, group_list)
+        files = ((target, backup, rollback_dir / f"orar{year_selected}.{stamp}.xlsx"),
+                 (sidecar, backup_sidecar, rollback_dir / f"orar{year_selected}.{stamp}.classifications.json"),
+                 (catalog, catalog_backup, rollback_dir / f"orar{year_selected}.{stamp}.dynamic_group_lists.py"))
+        present = {path: path.exists() for path, _, _ in files}
+        replaced = False
+        try:
+            for path, staged_backup, durable_backup in files:
+                if present[path]:
+                    shutil.copy2(path, staged_backup)
+                    shutil.copy2(staged_backup, durable_backup)
+            os.replace(prepared.xlsx, target)
+            replaced = True
+            os.replace(prepared.sidecar, sidecar)
+            schedule, groups = load_schedule_file(target)
+            activate_schedule(schedule, groups, year_selected)
+            _, new_specialties, new_group_list = write_groups_to_json()
+            if new_specialties is None or new_group_list is None:
+                raise RuntimeError("group catalog refresh failed")
+            specialties.clear()
+            specialties.update(new_specialties)
+            group_list.clear()
+            group_list.update(new_group_list)
+        except Exception as error:
+            rollback_errors = []
+            if replaced:
+                for path, staged_backup, _ in files:
+                    try:
+                        if present[path]:
+                            shutil.copy2(staged_backup, path)
+                        else:
+                            path.unlink(missing_ok=True)
+                    except Exception as restore_error:
+                        rollback_errors.append(f"{path.name}: {restore_error}")
+            try:
+                restore_runtime(year_selected, snapshot, specialties, group_list)
+            except Exception as restore_error:
+                rollback_errors.append(f"RAM: {restore_error}")
+                setattr(runtime, f"schedule{year_selected}", runtime.openpyxl.Workbook().active)
+                setattr(runtime, f"groups{year_selected}", [])
+                runtime.clear_schedule_caches()
+            detail = "; ".join(rollback_errors) if rollback_errors else "files and RAM restored"
+            raise RuntimeError(f"{error}; rollback: {detail}; durable copies: {rollback_dir}") from error
+        item["published"] = True
+        try:
+            await client.send_message(
+                sender_id,
+                f"✅ Year {year_selected} published, version {prepared.version}. Distinct texts: {len(prepared.classifications)}.\n"
+                f"Classified: {counts['classified']} · Review: {counts['needs_review']} · "
+                f"Unclassified: {counts['unclassified']}. "
+                f"Raw display slots: {len({row[:5] for row in prepared.review if row[6] != 'classified_review'})}."
+                + ("\n⚠️ Warning: published a same/older revision." if item.get("version_warning") else ""),
+            )
+        except Exception as error:
+            send_logs(f"Year {year_selected} published; Telegram confirmation failed: {error}", "error")
+        if all(value.get("published") or value.get("rejected") for value in state["years"].values()):
+            clear_upload(sender_id)
 
     @client.on(events.NewMessage(pattern=r'^/update_schedule$'))
     async def update_schedule(event):
@@ -937,115 +1128,277 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
         if format_id(SENDER) != main_admin and f"U{SENDER}" not in contributors_df['user_id'].astype(str).tolist():
             await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
             return
-        #select year
-        text = "Select the year to update schedule:"
-        buttons = [
-            Button.inline("Year 1", data=b"year_1"),
-            Button.inline("Year 2", data=b"year_2"),
-            Button.inline("Year 3", data=b"year_3"),
-            Button.inline("Year 4", data=b"year_4"),
-            Button.inline("Cancel", data=b"cancel_update_schedule")
-        ]
-        buttons = button_grid(buttons, 2)
-        await client.send_message(SENDER, text, buttons=buttons)
+        existing = active_uploads.get(SENDER)
+        if existing:
+            async with existing["lock"]:
+                if active_uploads.get(SENDER) is not existing:
+                    return
+                clear_upload(SENDER)
+        root = UPLOAD_STAGE_ROOT
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        stage = Path(tempfile.mkdtemp(prefix=f"{SENDER}-", dir=root))
+        token = secrets.token_hex(4)
+        state = {"phase": "collect",
+                 "stage": stage, "years": {}, "lock": asyncio.Lock(), "token": token}
+        active_uploads[SENDER] = state
+        touch_upload(state)
+        state["expiry_task"] = asyncio.create_task(expire_upload(SENDER, state))
+        await update_batch_status(client, state, SENDER,
+            "Send 1–8 files: dean XLSX and optional matching PDF for up to four years, any order. "
+            "Then tap Review uploads. PDFs without XLSX cannot publish.",
+        )
         send_logs(f"User {SENDER} initiated schedule update", 'info')
         return
     
     #cancel update schedule
-    @client.on(events.CallbackQuery(pattern=b"cancel_update_schedule"))
+    @client.on(events.CallbackQuery(pattern=rb"^cancel_update_schedule_([0-9a-f]{8})$"))
     async def cancel_update_schedule(event):
-        nonlocal active_file_handlers
         sender = await event.get_sender()
         SENDER = sender.id
+        state = active_uploads.get(SENDER)
+        if not state or not event.data.endswith(state["token"].encode()):
+            await event.answer("This batch is no longer active.", alert=True)
+            return
         await event.answer("Update cancelled.")
+        async with state["lock"]:
+            if active_uploads.get(SENDER) is state:
+                clear_upload(SENDER)
         await client.edit_message(SENDER, event.message_id, "Schedule update cancelled.")
-        
-        if SENDER in active_file_handlers:
-            handler_func = active_file_handlers[SENDER]
-            client.remove_event_handler(handler_func)
-            del active_file_handlers[SENDER]
         
         send_logs(f"User {SENDER} cancelled schedule update", 'info')
         return
-    
-    #year selection callback
-    @client.on(events.CallbackQuery(pattern=lambda x: x.startswith(b"year_")))
-    async def year_selection_callback(event):
-        sender = await event.get_sender()
-        SENDER = sender.id
-        if format_id(SENDER) != main_admin and f"U{SENDER}" not in contributors_df['user_id'].astype(str).tolist():
-            await client.send_message(SENDER, "Nu ai acces!", parse_mode="HTML")
+
+    async def review_batch(sender_id, state):
+        years = state["years"]
+        missing = [year for year, item in sorted(years.items()) if item.get("xlsx") and item.get("version") is None]
+        if missing:
+            state["phase"] = "versions"
+            await client.send_message(sender_id, "Send missing versions as YEAR=NUMBER or YEAR=final, one per message: "
+                                      + ", ".join(str(year) for year in missing))
             return
-        
-        year_selected = int(event.data.decode('utf-8').split('_')[1])
-        await event.answer(f"Selected - Year {year_selected}")
-
-        #if contributor, check if has permission for that year(multiple years possible)
-        user_years = contributors_df[contributors_df['user_id'] == f"U{SENDER}"]['orar'].values
-        send_logs(f"{year_selected}.  {user_years}", 'info')
-        if user_years.size == 0 or year_selected not in user_years:
-            await client.edit_message(SENDER, event.message_id,
-                f"❌ You do not have permission to update schedule for Year {year_selected}.",
-                buttons=[
-                    Button.inline(f"Cancel", data=b"cancel_update_schedule")
-                ]
-            )
-            send_logs(f"User {SENDER} tried to update schedule for Year {year_selected} without permission", 'warning')
-            return
-        
-        await client.edit_message(SENDER, event.message_id,
-            f"Selected - Year {year_selected}\n\nPlease send the new schedule file in .xlsx format:",
-            buttons=[
-                Button.inline(f"Cancel", data=b"cancel_update_schedule")
-            ]
-        )
-
-        #file upload handler
-        @client.on(events.NewMessage(from_users=SENDER))
-        async def handle_schedule_file(file_event):
-            # Remove the handler after first message and from tracking
-            nonlocal active_file_handlers
-            client.remove_event_handler(handle_schedule_file, events.NewMessage(from_users=SENDER))
-
-            if SENDER in active_file_handlers:
-                del active_file_handlers[SENDER]
-            
-            #if file_event is a command, ignore
-            if file_event.text and file_event.text.startswith('/'):
-                return
-
-            if file_event.media and file_event.file.name and file_event.file.name.endswith('.xlsx'):
-                await file_event.reply(f"File received for Year {year_selected}. Processing...")
-                schedule_dir = Path("schedules")
-                target = schedule_dir / f"orar{year_selected}.xlsx"
-                staged = schedule_dir / f".orar{year_selected}.{file_event.id}.upload.xlsx"
-
-                try:
-                    staged.unlink(missing_ok=True)
-                    await file_event.download_media(str(staged))
-                    schedule, groups = load_schedule_file(staged)
-                    os.replace(staged, target)
-                    activate_schedule(schedule, groups, year_selected)
-
-                    _, new_specialties, new_group_list = write_groups_to_json()
-                    if new_specialties is None or new_group_list is None:
-                        raise RuntimeError("group catalog refresh failed; restart required")
-
-                    specialties.clear()
-                    specialties.update(new_specialties)
-                    group_list.clear()
-                    group_list.update(new_group_list)
-                except Exception as error:
-                    send_logs(f"Schedule update failed for Year {year_selected}: {error}", "error")
-                    await client.send_message(SENDER, f"Schedule update failed: {error}")
-                    return
-                finally:
-                    staged.unlink(missing_ok=True)
-
-                send_logs(f"Schedule for Year {year_selected} updated successfully", "info")
-                await client.send_message(SENDER, f"✅ Schedule for Year {year_selected} updated successfully.")
+        xlsx_years = [year for year, item in sorted(years.items()) if item.get("xlsx")]
+        if not xlsx_years:
+            if years:
+                clear_upload(sender_id)
+                await client.send_message(sender_id, "PDF-only years excluded; no publishable XLSX. Start /update_schedule again.")
             else:
-                await file_event.reply("Please send a valid .xlsx file or type /update_schedule to start over.")
+                await client.send_message(sender_id, "No dean XLSX uploaded. Send at least one XLSX before reviewing.")
+            return
+        state["phase"] = "review"
+        for year in xlsx_years:
+            item = years[year]
+            if not can_update(sender_id, year):
+                await client.send_message(sender_id, f"Year {year}: permission denied; not staged.")
+                item["rejected"] = True
+                continue
+            if item.get("pdf") and item["pdf_metadata"] != item["metadata"]:
+                await client.send_message(sender_id, f"Year {year}: PDF title differs from XLSX; not staged.")
+                item["rejected"] = True
+                continue
+            try:
+                prepared = await asyncio.to_thread(
+                    prepare_upload, item["xlsx"], item.get("pdf"), item["version"], item["stage"],
+                    [week_days[day] for day in sorted(week_days)], [slot[0] for slot in hours],
+                )
+                target = Path("schedules") / f"orar{year}.xlsx"
+                async with year_publish_locks[year]:
+                    expected = target_fingerprint(target)
+                    if expected is not None:
+                        active_value = load_schedule_file(target)[0].cell(1, 1).value
+                        newer, reason = compare_versions(prepared.version, active_value)
+                        changed, added, removed, differences = await asyncio.to_thread(schedule_diff, target, prepared.xlsx)
+                    else:
+                        newer, reason = True, "no active schedule yet"
+                        changed, added, removed, differences = 0, 0, 0, []
+                write_diff_csv(differences, item["stage"] / "changes.csv")
+                group_delta = (sum(row[0] == "group added" for row in differences),
+                               sum(row[0] == "group removed" for row in differences))
+                item["prepared"] = prepared
+                item["target_hash"] = expected
+                item["version_warning"] = not newer
+            except UploadReject as error:
+                item["rejected"] = True
+                await client.send_message(sender_id, f"Year {year}: rejected ({error}). Active schedule unchanged.")
+                await send_stage_file(sender_id, item["stage"] / "audit.csv", f"year-{year}-audit.csv")
+                continue
+            except Exception as error:
+                item["rejected"] = True
+                send_logs(f"Year {year} preparation failed: {error}", "error")
+                await client.send_message(sender_id, f"Year {year}: processing failed; active schedule unchanged.")
+                continue
+            scope = "PDF text checked (geometry not checked)" if item.get("pdf") else "XLSX-only"
+            approved = sum(finding.status == "approved" for finding in prepared.findings)
+            warning = f"Approved covered source cells: {approved}. " if approved else ""
+            warning += (f"Other PDF text findings: {len(prepared.findings) - approved}. "
+                        if len(prepared.findings) > approved else "")
+            counts = classification_counts(prepared.classifications)
+            # Owner decision: same/older revisions stay publishable; warn only.
+            warning_text = "" if newer else "⚠️ Warning: not newer than the active revision. "
+            await client.send_message(
+                sender_id,
+                f"Year {year}: {scope}, version {prepared.version}. Changed {changed}, added {added}, removed {removed} parity cells; "
+                f"groups +{group_delta[0]}/-{group_delta[1]}. "
+                f"{warning}{reason}. {warning_text}{item.get('version_advisory', '')}"
+                f"Classified {counts['classified']}, "
+                f"review variants {len(prepared.review)}. Review before publishing this year.",
+                buttons=[[Button.inline(f"Publish Year {year}", data=f"upload_publish_{state['token']}_{year}".encode()),
+                          Button.inline("Cancel batch", data=f"cancel_update_schedule_{state['token']}".encode())]],
+            )
+            if prepared.findings or not newer:
+                await send_stage_file(sender_id, prepared.audit_csv, f"year-{year}-audit.csv")
+            await send_stage_file(sender_id, item["stage"] / "changes.csv", f"year-{year}-changes.csv")
+            if prepared.review_csv:
+                await send_stage_file(sender_id, prepared.review_csv, f"year-{year}-classification-review.csv")
+        for year, item in sorted(years.items()):
+            if not item.get("xlsx"):
+                item["rejected"] = True
+                await client.send_message(sender_id, f"Year {year}: PDF received without XLSX; cannot publish.")
+        if all(item.get("rejected") for item in years.values()):
+            clear_upload(sender_id)
+
+    @client.on(events.CallbackQuery(pattern=rb"^upload_review_([0-9a-f]{8})$"))
+    async def upload_review(event):
+        state = active_uploads.get(event.sender_id)
+        if not state or not event.data.endswith(state["token"].encode()) or state["phase"] not in {"collect", "versions"}:
+            await event.answer("No open upload batch.", alert=True)
+            return
+        async with state["lock"]:
+            if active_uploads.get(event.sender_id) is not state or state["phase"] not in {"collect", "versions"}:
+                await event.answer("No open upload batch.", alert=True)
+                return
+            if expired(event.sender_id, state):
+                await event.answer("Batch expired. Start /update_schedule again.", alert=True)
+                return
+            touch_upload(state)
+            await event.answer("Reviewing uploads.")
+            await review_batch(event.sender_id, state)
+
+    @client.on(events.CallbackQuery(pattern=rb"^upload_publish_([0-9a-f]{8})_([1-4])$"))
+    async def upload_publish(event):
+        state = active_uploads.get(event.sender_id)
+        year = int(event.data[-1:])
+        if (not state or state["phase"] != "review" or year not in state["years"]
+                or not event.data.startswith(f"upload_publish_{state['token']}_".encode())):
+            await event.answer("No prepared year in this batch.", alert=True)
+            return
+        async with state["lock"]:
+            if active_uploads.get(event.sender_id) is not state:
+                await event.answer("Batch no longer active.", alert=True)
+                return
+            if expired(event.sender_id, state):
+                await event.answer("Batch expired. Start /update_schedule again.", alert=True)
+                return
+            async with year_publish_locks[year]:
+                item = state["years"][year]
+                if item.get("published") or item.get("rejected") or not item.get("prepared") or not can_update(event.sender_id, year):
+                    await event.answer("Already handled or permission denied.", alert=True)
+                    return
+                target = Path("schedules") / f"orar{year}.xlsx"
+                if "target_hash" not in item or target_fingerprint(target) != item["target_hash"]:
+                    clear_upload(event.sender_id)
+                    await event.answer("Schedule changed since review; restart upload and review.", alert=True)
+                    return
+                touch_upload(state)
+                await event.answer(f"Publishing Year {year}.")
+                try:
+                    await publish_upload(event.sender_id, state, year)
+                except Exception as error:
+                    clear_upload(event.sender_id)
+                    send_logs(f"Year {year} publication failed: {error}", "critical")
+                    for recipient in {event.sender_id, int(main_admin[1:])}:
+                        try:
+                            await client.send_message(recipient, f"Year {year}: publication failed. {error}. Start a fresh upload/review.")
+                        except Exception as alert_error:
+                            send_logs(f"Publication failure alert failed: {alert_error}", "error")
+
+    @client.on(events.NewMessage)
+    async def receive_dean_upload(event):
+        sender_id = event.sender_id
+        state = active_uploads.get(sender_id)
+        if not state or not event.is_private or (event.text and event.text.startswith("/")):
+            return
+        async with state["lock"]:
+            if active_uploads.get(sender_id) is not state:
+                return
+            if expired(sender_id, state):
+                await event.reply("Schedule batch expired. Start /update_schedule again.")
+                return
+            if state["phase"] not in {"collect", "versions"}:
+                await event.reply("Batch under review; use its Publish or Cancel buttons.")
+                return
+            suffix = Path(event.file.name).suffix.casefold() if event.file and event.file.name else ""
+            if not event.file:
+                match = re.fullmatch(r"([1-4])\s*=\s*(\d{1,2}|final)", (event.raw_text or "").strip(), re.I)
+                if (not match or not state["years"].get(int(match.group(1)), {}).get("xlsx")
+                        or not can_update(sender_id, int(match.group(1)))):
+                    await event.reply("Send YEAR=NUMBER (1–99) or YEAR=final, for a received XLSX.")
+                    return
+                try:
+                    version = parse_version(match.group(2))
+                except UploadReject as error:
+                    await event.reply(str(error))
+                    return
+                item = state["years"][int(match.group(1))]
+                item.update(version=version, version_source="manual")
+                guess = item.get("pdf_version")
+                item["version_advisory"] = (f"Warning: manual version {version} overrides PDF version {guess}. "
+                                            if guess is not None and guess != version else "")
+                touch_upload(state)
+                await update_batch_status(client, state, sender_id,
+                    f"Year {match.group(1)} version set. {item['version_advisory']}"
+                    f"Staged: {batch_progress_line(state)}. Tap Review uploads when ready.")
+                return
+            if suffix not in {".xlsx", ".pdf"} or (event.file.size or 0) > (MAX_XLSX_BYTES if suffix == ".xlsx" else MAX_PDF_BYTES):
+                await event.reply("Send dean XLSX (≤20 MiB) or matching PDF (≤30 MiB), then tap Review uploads.")
+                return
+            temporary = state["stage"] / f"incoming-{event.id}{suffix}"
+            try:
+                await event.download_media(str(temporary))
+                if temporary.stat().st_size > (MAX_XLSX_BYTES if suffix == ".xlsx" else MAX_PDF_BYTES):
+                    raise UploadReject("file exceeds upload size limit")
+                metadata = await asyncio.to_thread(inspect_xlsx if suffix == ".xlsx" else inspect_pdf, temporary)
+                year = metadata.study_year
+                if not can_update(sender_id, year):
+                    raise UploadReject(f"no permission for Year {year}")
+                item = state["years"].setdefault(year, {"stage": state["stage"] / str(year)})
+                key = "xlsx" if suffix == ".xlsx" else "pdf"
+                if key in item:
+                    raise UploadReject(f"duplicate Year {year} {suffix}; cancel and restart to replace it")
+                other = item.get("metadata") if suffix == ".pdf" else item.get("pdf_metadata")
+                if other and other != metadata:
+                    raise UploadReject(f"Year {year} XLSX/PDF title mismatch")
+                item["stage"].mkdir(exist_ok=True)
+                destination = item["stage"] / ("dean.xlsx" if suffix == ".xlsx" else "official.pdf")
+                os.replace(temporary, destination)
+                item[key] = destination
+                item["metadata" if suffix == ".xlsx" else "pdf_metadata"] = metadata
+                if suffix == ".pdf":
+                    guess = pdf_version(Path(event.file.name))
+                    item["pdf_version"] = guess
+                    if item.get("version_source") == "manual":
+                        item["version_advisory"] = (f"Warning: manual version {item['version']} overrides PDF version {guess}. "
+                                                    if guess is not None and guess != item["version"] else "")
+                    else:
+                        item.update(version=guess, version_source="pdf")
+                touch_upload(state)
+                await update_batch_status(
+                    client, state, sender_id,
+                    f"📥 Year {year} {suffix} staged. Staged: {batch_progress_line(state)}.\n"
+                    f"{item.get('version_advisory', '')}Send more files or tap Review uploads.",
+                )
+            except (UploadReject, ValueError) as error:
+                await update_batch_status(
+                    client, state, sender_id,
+                    f"❌ File not staged: {error}\nStaged: {batch_progress_line(state)}.",
+                )
+            except Exception as error:
+                send_logs(f"Dean batch file rejected: {error}", "error")
+                await update_batch_status(
+                    client, state, sender_id,
+                    f"❌ File not staged: invalid or unreadable upload.\nStaged: {batch_progress_line(state)}.",
+                )
+            finally:
+                temporary.unlink(missing_ok=True)
     
     #/contrib admin
     @client.on(events.NewMessage(pattern=r'^/contrib$'))
@@ -1139,7 +1492,7 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
                 remove_contrib = False
                 user_id = int(user_input)
                 user_str = "U" + str(user_id)
-                
+
                 contributors_df = pd.read_csv('contributors.csv')
                 buttons_contrib = [
                     Button.inline("Add Contributor", data=f"add_contrib".encode()),

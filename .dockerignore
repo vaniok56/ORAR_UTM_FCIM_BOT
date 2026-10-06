@@ -16,6 +16,16 @@ ORAR_UTM_FCIM_BOT.code-workspace
 
 # Configuration & sensitive files
 **.env
+configs/*.ini
+**/.env*
+schedules/
+test_*.py
+tests/
+docker-compose*.yml
+.mypy_cache/
+.ruff_cache/
+downloads/
+transform*/
 
 # Temporary and backup files
 temp/
@@ -42,6 +52,11 @@ docker-compose.yml
 **Thumbs.db
 
 # Mounted volumes
+.test-env/
+schedule_parser/*
+!schedule_parser/__init__.py
+!schedule_parser/parser.py
+!schedule_parser/audit_outputs.py
 **.log
 sessions/
 mysql/

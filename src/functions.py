@@ -3,8 +3,10 @@ import openpyxl # excel read library
 import datetime
 import pytz
 import requests
+from telethon import types
 import handlers.db as db
 import re
+from course_classification import format_course, load_classifications, select_subgroup, viewer_subgroup
 from schedule_groups import extract_schedule_groups, normalize_schedule_version
 
 
@@ -110,6 +112,9 @@ hours =   [
     ["18.45-20.15"]
 ]
 
+from clock_emoji import clock_face, current_pair_index, pair_index_label
+
+
 #week days
 week_days = {
     0 : "Luni",
@@ -133,6 +138,8 @@ weekly_schedule_cache = {} #cache for weekly schedules
 next_course_cache = {} #cache for next course
 orele_cache = {} #cache for hours
 schedule_groups_cache = {} #cache for schedule and groups
+daily_courses_cache = {}
+classifications_by_schedule = {}
 
 def send_logs(message, type):
     if type =='info':
@@ -164,10 +171,13 @@ for i in range(1, 5):
         globals()[f"groups{i}"] = extract_schedule_groups(
             globals()[f"schedule{i}"], schedule_column_start
         )
-        send_logs(f"Extracted {len(globals()[f"groups{i}"])} groups from schedule{i}", 'info')
+        send_logs(f"Extracted {len(globals()[f'groups{i}'])} groups from schedule{i}", 'info')
     except Exception as e:
         send_logs(f"Error extracting groups from schedule{i}: {e}", 'error')
         globals()[f"groups{i}"] = []
+
+for i in range(1, 5):
+    classifications_by_schedule[id(globals()[f"schedule{i}"])] = load_classifications(f"schedules/orar{i}.xlsx")
 
 def get_local_schedule_versions():
     versions = {}
@@ -255,30 +265,23 @@ def get_online_schedule_versions():
         send_logs(f"Error fetching online schedule versions: {e}", 'error')
         return {}
 
-def get_schedule_and_groups(cur_group):
-    if cur_group in schedule_groups_cache:
-        #send_logs(f"Cache hit get_schedule_and_groups for {cur_group}", 'info')
-        return schedule_groups_cache[cur_group]
-
-    # Check loaded group lists directly first
-    for i in range(1, 5):
-        gr_list = globals().get(f"groups{i}", [])
-        if cur_group in gr_list:
-            result = globals()[f"schedule{i}"], gr_list
-            schedule_groups_cache[cur_group] = result
-            return result
-
+def get_schedule_and_groups(cur_group, study_year=None):
+    matches = [year for year in range(1, 5)
+               if cur_group and cur_group in globals().get(f"groups{year}", [])]
     try:
-        group_year = int(cur_group[-3:-1]) # from TI-241 to 24
-        sch_nr = db.get_current_year() - group_year # from 24 to 2
-        if 1 <= sch_nr <= 4:
-            result = globals()[f"schedule{sch_nr}"], globals()[f"groups{sch_nr}"]
-            schedule_groups_cache[cur_group] = result
-            return result
-    except (ValueError, IndexError, KeyError):
-        pass
-
-    raise ValueError(f"Invalid group number: {cur_group}")
+        selected = int(study_year) if study_year is not None else None
+    except (TypeError, ValueError, OverflowError):
+        selected = None
+    if selected in matches:
+        year = selected
+    elif len(matches) == 1:
+        year = matches[0]
+    else:
+        raise ValueError("Select your year and group again")
+    key = (year, cur_group)
+    if key not in schedule_groups_cache:
+        schedule_groups_cache[key] = globals()[f"schedule{year}"], globals()[f"groups{year}"]
+    return schedule_groups_cache[key]
 
 #get value from a cell even if it's a merged cell
 merged_cell_ranges = {}  # cache merged cell ranges
@@ -307,6 +310,11 @@ def getMergedCellVal(sheet, cell):
     cell_value_cache[cell_key] = value
     return value
 
+# Needs Telethon 1.45.0 or newer. Production pins 1.44.0, where types.ButtonTypeSimpleWebView
+# does not exist, so ship requirements.txt with this code when promoting to target host.
+def simu_button():
+    return types.KeyboardButton("SIMU📚", types.ButtonTypeSimpleWebView("https://simu.utm.md/students/"))
+
 def button_grid(buttons, butoane_rand):
     grid = []
     row = []
@@ -326,32 +334,25 @@ def button_grid(buttons, butoane_rand):
     return grid
 
 #get daily schedule
-def print_day(week_day, cur_group, is_even, subgrupa, lang=DEFAULT_LANG):
-    schedule, groups = get_schedule_and_groups(cur_group)[0:2]
+def print_day(week_day, cur_group, is_even, subgrupa, lang=DEFAULT_LANG, now_pair=None, *, study_year=None, emoji=True):
+    schedule, groups = get_schedule_and_groups(cur_group, study_year)
     if cur_group not in groups:
         return ""
     col_gr = groups.index(cur_group) + schedule_column_start  # column with the selected group
-    return print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang)
-     
-#extract daily schedule
-def print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang=DEFAULT_LANG):
-    #cache key — includes lang for per-language output
-    cache_key = (id(schedule), is_even, col_gr, week_day, subgrupa, lang)
-    
-    #find daily schedule in cache
-    if cache_key in daily_schedule_cache:
-        #send_logs(f"Cache hit schedule for {cache_key}", 'info')
-        return daily_schedule_cache[cache_key]
-    
+    return print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang, now_pair, emoji=emoji)
+
+def get_daily_courses(schedule, is_even, col_gr, week_day, subgrupa):
     #subgrupa - 0/1/2
     try:
         subgrupa = int(subgrupa)
     except (ValueError, TypeError):
         subgrupa = 0
         
-    #if is even, change the subgrupa
-    if is_even and subgrupa != 0:
-        subgrupa = 3 - subgrupa
+    subgrupa = viewer_subgroup(subgrupa, is_even)
+
+    cache_key = (id(schedule), is_even, col_gr, week_day, subgrupa)
+    if cache_key in daily_courses_cache:
+        return daily_courses_cache[cache_key]
 
     day_sch = []
     seen = set() 
@@ -365,7 +366,7 @@ def print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang=DEFAULT_LANG
         #send_logs(f"Cache hit row_start for {schedule_day_key}", 'info')
         row_start = day_row_start_cache[schedule_day_key]
     else:
-        for i in range(1, 84):
+        for i in range(1, schedule.max_row + 1):
             if day_name != getMergedCellVal(schedule, schedule.cell(row=i, column=1)):
                 continue
             row_start = i
@@ -373,9 +374,8 @@ def print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang=DEFAULT_LANG
             day_row_start_cache[schedule_day_key] = row_start
             break
         else:
-            #cache empty result
-            daily_schedule_cache[cache_key] = ""
-            return ""
+            daily_courses_cache[cache_key] = []
+            return []
     
     
     orele_key = (id(schedule), row_start)
@@ -397,81 +397,97 @@ def print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang=DEFAULT_LANG
         day_sch.append(cell_value)
         seen.add(orele[i])
 
-    processed_courses = []
-
+    courses = []
     for i, course in enumerate(day_sch):
         if course is None or course == "":
             continue
-        
-        #subgrupe handling
-        if subgrupa != 0:
-            try:
-                if isinstance(course, float) and (np.isnan(course)):
-                    course = ""
-                else:
-                    course = str(course)
-            except Exception:
-                course = str(course)
-
-            count_05 = course.count("0.5") + course.count("0,5")
-            if count_05 == 2:
-                if subgrupa == 1:
-                    try:
-                        course = course.split("\n2)")[0]
-                    except:
-                        course = course
-                else:
-                    course = "2)" + course.split("\n2)")[1]
-            elif count_05 == 1:
-                if subgrupa == 2:
-                    course = ""
-        
+        if isinstance(course, float) and np.isnan(course):
+            continue
+        course = select_subgroup(course, subgrupa)
         if course:
-            try :
-                processed_courses.append(get_text(lang, "pair_format", index=i + 1, course=course, time=hours[i][0].replace('.', ':')))
-            except Exception:
-                pass
-            
-    # Join the properly formatted strings
-    result = "".join(processed_courses)
+            courses.append((i + 1, course))
+    daily_courses_cache[cache_key] = courses
+    return courses
+
+
+def format_pair(index, course, classified, subgrupa, is_even, lang=DEFAULT_LANG, now_pair=None, *, emoji=True):
+    return get_text(
+        lang, "pair_format", index=pair_index_label(index, now_pair if emoji else None),
+        course=format_course(course, classified, subgrupa, is_even, emoji=emoji),
+        time=hours[index - 1][0].replace('.', ':'),
+        clock=(clock_face(hours[index - 1][0]) + " ") if emoji else "",
+    )
+
+
+def emoji_preview(lang, enabled):
+    from course_classification import classify
+    # Fixed illustrative subjects, never drawn from a user's selected group.
+    samples = ((1, "c. Algebra liniară și geometria analitică\nExemplu A.\n3-3"),
+               (2, "sem. ALGA\nExemplu A.\n101"),
+               (3, "2) lab. CDE 0.5 gr.\nExemplu B.\n202"))
+    text = get_text(lang, "emoji_on" if enabled else "emoji_off")
+    text += "\n\n" + get_text(lang, "emoji_description")
+    text += "\n" + get_text(lang, "emoji_example") + "\n"
+    for index, raw in samples:
+        text += format_pair(index, raw, {raw: classify(raw)}, 2,
+                            0, lang, 2, emoji=enabled)
+    return text
+
+
+def format_hours(lang=DEFAULT_LANG, *, emoji=True):
+    text = get_text(lang, "hours_title")
+    for i, hour in enumerate(hours):
+        clock = (clock_face(hour[0]) + " ") if emoji else ""
+        text += "\n" + get_text(lang, "pair_label", index=i+1) + "\n"
+        text += get_text(lang, "hour_label", time=hour[0], clock=clock) + "\n"
+        duration = get_text(lang, "break_30" if i == 2 else "break_15")
+        if emoji:
+            duration = ("🍽️ " if i == 2 else "☕ ") + duration
+        text += get_text(lang, "break_label", duration=duration) + "\n"
+    return text
+
+
+def print_daily(schedule, is_even, col_gr, week_day, subgrupa, lang=DEFAULT_LANG, now_pair=None, *, emoji=True):
+    # now_pair in the key keeps /today's hourglass out of the cached weekly text.
+    cache_key = (id(schedule), is_even, col_gr, week_day, subgrupa, lang, now_pair, emoji)
+    if cache_key in daily_schedule_cache:
+        return daily_schedule_cache[cache_key]
+    classified = classifications_by_schedule.get(id(schedule), {})
+    result = "".join(
+        format_pair(index, course, classified, subgrupa, is_even, lang, now_pair, emoji=emoji)
+        for index, course in get_daily_courses(schedule, is_even, col_gr, week_day, subgrupa)
+    )
     daily_schedule_cache[cache_key] = result
     return result
 
-def print_next_course(week_day, cur_group, is_even, course_index, subgrupa, lang=DEFAULT_LANG):
-    cache_key = (week_day, cur_group, is_even, course_index, subgrupa, lang)
+def print_next_course(week_day, cur_group, is_even, course_index, subgrupa, lang=DEFAULT_LANG, *, study_year=None, emoji=True):
+    schedule, groups = get_schedule_and_groups(cur_group, study_year)
+    cache_key = (id(schedule), week_day, cur_group, is_even, course_index, subgrupa, lang, emoji)
     if cache_key in next_course_cache:
         #send_logs(f"Cache hit next_course for {cache_key}", 'info')
         return next_course_cache[cache_key]
     
-    #get daily schedule
-    daily = print_day(week_day, cur_group, is_even, subgrupa, lang)
-    if not daily:
-        next_course_cache[cache_key] = ""
-        return ""
-    
-    courses = daily.split(get_text(lang, "pair_label", index="").rstrip())
-    for i in range(1, len(courses)):
-        if int(courses[i][0]) != course_index:
-            continue
-        course = courses[i]
-        parts = course.split(get_text(lang, "hour_label", time="").rstrip())
-        course_name = parts[0][1:]  # Skip the index digit
-        course_time = parts[1]
-        hour_word = get_text(lang, "hour_label", time="").rstrip()
-        result = f"<b>{course_name}</b>{hour_word}{course_time}"
-        next_course_cache[cache_key] = result
-        return result
+    if cur_group in groups:
+        col_gr = groups.index(cur_group) + schedule_column_start
+        for index, course in get_daily_courses(schedule, is_even, col_gr, week_day, subgrupa):
+            if index == course_index:
+                body = format_course(course, classifications_by_schedule.get(id(schedule), {}),
+                                     subgrupa, is_even, emoji=emoji)
+                clock = (clock_face(hours[index - 1][0]) + " ") if emoji else ""
+                result = f"\n<b>{body}</b>\n{get_text(lang, 'hour_label', time=hours[index - 1][0].replace('.', ':'), clock=clock)}"
+                next_course_cache[cache_key] = result
+                return result
     
     next_course_cache[cache_key] = ""
     return ""
 
 #get weekly schedule
-def print_sapt(is_even, cur_group, subgrupa, lang=DEFAULT_LANG):
-    cache_key = (cur_group, is_even, subgrupa, lang)
+def print_sapt(is_even, cur_group, subgrupa, lang=DEFAULT_LANG, *, study_year=None, emoji=True):
+    schedule, groups = get_schedule_and_groups(cur_group, study_year)
+    cache_key = (id(schedule), cur_group, is_even, subgrupa, lang, emoji)
     if cache_key in weekly_schedule_cache:
         #send_logs(f"Cache hit print_sapt for {cache_key}", 'info')
         return weekly_schedule_cache[cache_key]
-    schedule, groups = get_schedule_and_groups(cur_group)[0:2]
     if cur_group not in groups:
         return ""
     col_gr = groups.index(cur_group) + 3 #column with the selected group
@@ -479,7 +495,7 @@ def print_sapt(is_even, cur_group, subgrupa, lang=DEFAULT_LANG):
     lang_week_days = get_week_days(lang)
     week_sch = ""
     for j in range(1, 7):
-        daily = print_daily(schedule, is_even, col_gr, j-1, subgrupa, lang)
+        daily = print_daily(schedule, is_even, col_gr, j-1, subgrupa, lang, emoji=emoji)
         #do not print an empty weekday
         if str(daily) == "":
             continue
@@ -496,7 +512,7 @@ def get_next_course_time():
     for i, hour in enumerate(hours):
         course_time = datetime.datetime.strptime(hour[0].split("-")[0], "%H.%M")
         notification_time = course_time - datetime.timedelta(minutes=15) - bulk_send_shift_earlier
-        if notification_time.time() >= current_time.time():
+        if notification_time.time() > current_time.time():
             course_index = i
             break
     
@@ -695,14 +711,17 @@ def load_schedule_file(file_path):
     return schedule, groups
 
 
+def clear_schedule_caches():
+    for cache in (day_row_start_cache, daily_schedule_cache, cell_value_cache,
+                  weekly_schedule_cache, next_course_cache, orele_cache,
+                  schedule_groups_cache, daily_courses_cache, merged_cell_ranges):
+        cache.clear()
+
+
 def activate_schedule(schedule, groups, schedule_number):
     globals()[f"schedule{schedule_number}"] = schedule
     globals()[f"groups{schedule_number}"] = groups
-
-    day_row_start_cache.clear()
-    daily_schedule_cache.clear()
-    cell_value_cache.clear()
-    weekly_schedule_cache.clear()
-    next_course_cache.clear()
-    orele_cache.clear()
-    schedule_groups_cache.clear()
+    clear_schedule_caches()
+    classifications_by_schedule.clear()
+    for i in range(1, 5):
+        classifications_by_schedule[id(globals()[f"schedule{i}"])] = load_classifications(f"schedules/orar{i}.xlsx")

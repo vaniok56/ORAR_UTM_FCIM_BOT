@@ -47,6 +47,7 @@ services:
       - ./backups:/backups
       - ./schedules:/schedules
       - ./contributors.csv:/contributors.csv
+      - ./configs/config.ini:/configs/config.ini:ro
     environment:
       - MYSQL_HOST=mysql
       - TZ=Europe/Chisinau

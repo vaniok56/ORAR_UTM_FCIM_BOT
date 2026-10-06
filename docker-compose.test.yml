@@ -1,0 +1,41 @@
+services:
+  mysql:
+    image: mysql:8.0
+    env_file: configs/mysql.env
+    environment:
+      TZ: Europe/Chisinau
+    command: --default-authentication-plugin=caching_sha2_password --default-time-zone=Europe/Chisinau
+    volumes:
+      - test_mysql_data:/var/lib/mysql
+      - ./init/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./configs/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+
+  orar_bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    image: orar_bot_test:local
+    env_file: configs/mysql.env
+    environment:
+      MYSQL_HOST: mysql
+      ORAR_SESSION: sessions/session_test
+      ORAR_CONFIG: configs/config2.ini
+      TZ: Europe/Chisinau
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ./configs/config2.ini:/configs/config2.ini:ro
+      - ./.test-env/sessions:/sessions
+      - ./.test-env/schedules:/schedules
+      - ./.test-env/logs:/logs
+      - ./.test-env/backups:/backups
+      - ./.test-env/contributors.csv:/contributors.csv
+
+volumes:
+  test_mysql_data:
