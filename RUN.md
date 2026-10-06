@@ -228,6 +228,17 @@ Review CSV includes source coordinates and XLSX hash; changed-cell CSV uses
 ISO-even/ISO-odd weeks. Previous workbook, sidecar, and group catalog copies
 remain in `schedules/rollback/`. Check schedules and reminders after publication.
 
+### Replacing runtime workbooks manually
+
+Legacy runtime XLSX files cannot be uploaded through the new bot workflow. To
+install one manually, back up its workbook and sidecar, stop only the bot, replace
+`schedules/orarN.xlsx`, then start the bot. A running process caches its workbooks;
+copying a file alone does not reload it.
+
+Keep a sidecar only when its workbook hash matches. A mismatched sidecar is ignored
+and original class text is displayed. Do not replace production files with test
+copies or overwrite source-review decisions without approval.
+
 ### Local test bot
 
 Use `docker-compose.test.yml` with project `orar_test`, `configs/config2.ini`,
