@@ -1,7 +1,5 @@
 # 🤖 ORAR UTM FCIM BOT
 
-Welcome! This document provides a comprehensive guide to setting up, running, and managing the ORAR UTM FCIM Telegram Bot using Docker.
-
 ## 📋 Table of Contents
 - [Introduction](#-introduction)
 - [Prerequisites](#️-prerequisites)
@@ -13,362 +11,284 @@ Welcome! This document provides a comprehensive guide to setting up, running, an
 
 ## ✨ Introduction
 
-This Telegram bot provides students of the UTM FCIM faculty with easy access to their academic schedules. It supports fetching schedules by day or week and sends notifications for upcoming classes.
-
-The recommended setup uses Docker to ensure a consistent and reliable environment.
-> **Note:** This setup has been tested only on Linux and macOS.
+Telegram bot for UTM FCIM schedules by day or week, class reminders, and
+reviewed schedule uploads. This guide covers Docker setup on Linux and macOS.
 
 ## 🛠️ Prerequisites
 
-Before you begin, ensure you have the following installed:
+- [Docker](https://docs.docker.com/engine/install/) with
+  [Docker Compose](https://docs.docker.com/compose/install/).
+- [Git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git).
+- A Telegram bot token from [BotFather](https://t.me/BotFather) and API
+  credentials from [my.telegram.org](https://my.telegram.org).
+- At least one valid schedule workbook. An example is provided in
+  `schedules/orar_example.xlsx`; real faculty schedules are not included.
 
--   [**Docker**](https://docs.docker.com/engine/install/)
--   [**Docker Compose**](https://docs.docker.com/compose/install/)
--   [**Git**](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git)
+The bot connects to Telegram outbound. It needs no inbound port or router rule.
+The supplied `docker-compose.yml` publishes MySQL on port 3306. For an
+internal-only database, remove its `mysql.ports` block before the first run.
+Changes to an existing deployment's bindings require separate review and approval.
 
 ## 🚀 Setup and First Run
 
-Follow these steps to get the bot running.
+These steps are for a new installation. For an existing bot, use
+[Updating the bot](#updating-the-bot); do not overwrite its configuration or data.
+Obtain approval before container or database changes on a managed host.
 
-### 1. Clone the Repository
+### 1. Clone the repository
 
-First, clone the project to your local machine and navigate into the directory.
-
-```bash
+```sh
 git clone https://github.com/vaniok56/ORAR_UTM_FCIM_BOT.git
 cd ORAR_UTM_FCIM_BOT
 ```
 
-### 2. Create Configuration Files
+Use the intended release branch or commit. Run the following commands from
+the repository root.
 
-You need to create two essential configuration files: `config.ini` and `mysql.env` in the `configs/` directory. Templates are provided, so you can copy them.
+### 2. Create configuration and contributors files
 
-```bash
+```sh
+umask 077
 cp configs/config.ini.template configs/config.ini
 cp configs/mysql.env.template configs/mysql.env
+cp contributors.csv.template contributors.csv
+chmod 600 configs/config.ini configs/mysql.env contributors.csv
 ```
 
-Next, **edit these new files** with your specific credentials as described in the [Configuration Details](#️-configuration-details) section below.
+Fill in the configuration files using [Configuration Details](#️-configuration-details).
+Remove the template's example contributor rows; keep its `user_id,orar` header.
+Add rows only for users allowed to update the corresponding study year.
 
-### 3. Prepare the Database
+If you will own this installation, set `main_admin` in
+`src/handlers/admin_handlers.py` to your `U`-prefixed Telegram ID before building.
+Owner-only commands use this ID, independently of database admin rank.
 
-This step automatically configures the database initialization script.
+### 3. Prepare database initialization
 
-```bash
-# 1. Copy the database script template
+```sh
 cp init/init.sql.template init/init.sql
-
-# 2. Automatically replace credentials in init.sql
-# This command reads your credentials from configs/mysql.env and safely updates the SQL script.
-export $(grep -v '^#' configs/mysql.env | xargs) && \
-sed -i.bak "s/'your_user'/'$MYSQL_USER'/g; s/'your_password'/'$MYSQL_PASSWORD'/g" init/init.sql
-```
-> **Note:** The `sed` command creates a backup `init.sql.bak`. You can safely delete it after confirming `init.sql` was modified correctly.
-
-### 4. Build and Run the Bot
-
-Now, you can build the Docker image and launch the services. For the first start, it's recommended to run without detached mode to see potential issues.
-
-```bash
-sudo docker build --tag orar_bot . && sudo docker compose up
+chmod 600 init/init.sql
 ```
 
-> **Note:** The first start will take a while. Don't panic if you see errors. You should wait for `[CRITICAL] Failed to establish MySQL connection`, after which MySQL reinitializes and the script will start.
+Edit the `your_user` and `your_password` placeholders in `init/init.sql` to match
+`MYSQL_USER` and `MYSQL_PASSWORD` in `configs/mysql.env`. Escape SQL string
+literals correctly. Review the initial `current_year` value for your deployment.
+Keep generated SQL private; do not paste credentials into shell commands or Git.
 
-Once it has started successfully, `/start` the bot in Telegram to initialize your user record in the database. After that, stop the bot (e.g., by pressing `Ctrl+C`) and start it normally in the background:
+MySQL runs initialization scripts only when its data directory is empty.
+Changing `init.sql` does not migrate an existing database. Bot startup does not
+create or alter database tables.
 
-```bash
-    sudo docker compose down && \
-    sudo docker build --tag orar_bot . && \
-    sudo docker compose up -d && \
-    sudo docker logs -f -n 500 orar_bot
+### 4. Add schedules and writable directories
+
+```sh
+mkdir -p schedules sessions logs backups
+chmod 700 sessions logs backups
 ```
 
-> **Note:** The `sudo docker logs -f -n 500 orar_bot` command allows you to follow the bot's logs in real-time, which is helpful for debugging and ensuring everything is running smoothly. You can Ctrl+C to stop following the logs without stopping the container.
+Place runtime workbooks at `schedules/orar1.xlsx` through `orar4.xlsx`, using the
+format below. For a local demonstration, copy `schedules/orar_example.xlsx` to
+`schedules/orar1.xlsx`. Do not use the example as a production schedule.
 
-### 5. Make Yourself an Admin
+At least one year must contain valid group headers. Missing years stay inactive.
+Provide `contributors.csv` and schedules before startup; the bot reads them and
+generates `src/dynamic_group_lists.py` before connecting to Telegram.
 
-To manage the bot via Telegram, you need to grant yourself admin privileges in the database.
+### 5. Start MySQL and the bot
 
-1. First, find your Telegram ID in the database (replace `{password}` with your `MYSQL_ROOT_PASSWORD`):
-   ```bash
-   sudo docker exec -it orar_mysql mysql -u root -p{password} orar_bot -e "SELECT * FROM users;"
-   ```
-
-2. Update your user record to make yourself an admin (replace `{YOUR_TELEGRAM_ID}` with your Telegram ID from the previous step, including the "U" prefix, e.g., `U123456789`):
-   ```bash
-   sudo docker exec -it orar_mysql mysql -u root -p{password} orar_bot -e \
-   "UPDATE settings s \
-   JOIN users u ON s.id = u.id \
-   SET s.admins = 1 \
-   WHERE u.SENDER = '{YOUR_TELEGRAM_ID}';"
-   ```
-
-3. Verify that you are now an admin:
-   ```bash
-   sudo docker exec -it orar_mysql mysql -u root -p{password} orar_bot -e \
-   "SELECT u.SENDER, s.admins \
-   FROM users u \
-   JOIN settings s ON u.id = s.id \
-   WHERE u.SENDER = '{YOUR_TELEGRAM_ID}';"
-   ```
-
-> **Important:** You need to restart the container for the changes to apply:
-> ```bash
-> sudo docker compose down && \
-> sudo docker build --tag orar_bot . && \
-> sudo docker compose up -d && \
-> sudo docker logs -f -n 500 orar_bot
-> ```
-
-### 6. Fix Backup Permissions
-
-To allow the bot to write database backups, you need to set the correct permissions for the `backups` directory:
-
-```bash
-sudo chown -R 1000:1000 ./backups && \
-sudo chmod -R 755 ./backups
+```sh
+docker compose up -d mysql
+docker compose up -d --build orar_bot
+docker compose ps
+docker compose logs --tail 80 -f orar_bot
 ```
 
-Your bot is now running! 🎉
+MySQL should become healthy before the bot starts. Look for successful database
+and Telegram connections, then send `/start` and request a schedule in Telegram.
+Ctrl+C stops log following, not the running container.
+
+These commands start only MySQL and the bot. The optional `restarter` service
+is not needed to run the bot.
+
+### 6. Grant admin access
+
+Send `/start` first so your user record exists. Open MySQL with an interactive
+password prompt; enter the configured root password without putting it in arguments:
+
+```sh
+docker compose exec mysql mysql -uroot -p orar_bot
+```
+
+Replace `U<YOUR_TELEGRAM_ID>` below with your actual sender ID:
+
+```sql
+UPDATE settings s JOIN users u ON u.id = s.id
+SET s.admins = 1 WHERE u.SENDER = 'U<YOUR_TELEGRAM_ID>';
+
+SELECT u.SENDER, s.admins FROM users u JOIN settings s ON s.id = u.id
+WHERE u.SENDER = 'U<YOUR_TELEGRAM_ID>';
+```
+
+Exit MySQL, then reload the bot's startup admin list:
+
+```sh
+docker compose restart orar_bot
+```
+
+Check `/admin_help`. Do not restart MySQL for this change.
 
 ## ⚙️ Configuration Details
 
-### `configs/config.ini`
+| File or setting | Purpose |
+| --- | --- |
+| `configs/config.ini` | `[default]` section with `api_id`, `api_hash`, `BOT_TOKEN`. |
+| `configs/mysql.env` | `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_ROOT_PASSWORD`. Initialization SQL uses database name `orar_bot`. |
+| `configs/my.cnf` | MySQL configuration shipped with the repository. |
+| `contributors.csv` | `user_id,orar` entries granting upload access to study years 1–4. |
+| `ORAR_CONFIG` | Configuration path; defaults to `configs/config.ini`. Mounted read-only. |
+| `ORAR_SESSION` | Telegram session path; defaults to `sessions/session_master`. |
+| `app_settings.current_year` | Cohort-year setting used by group/year logic, separate from study year 1–4. |
 
-This file holds your Telegram API credentials.
-
-```ini
-[default]
-api_id = YOUR_API_ID
-api_hash = YOUR_API_HASH
-BOT_TOKEN = YOUR_BOT_TOKEN
-```
-
--   `api_id` and `api_hash`: Obtain these from [my.telegram.org](https://my.telegram.org).
--   `BOT_TOKEN`: Get this from [@BotFather](https://t.me/BotFather) on Telegram by creating a new bot.
-
-### `configs/mysql.env`
-
-This file configures the database credentials.
-
-```env
-MYSQL_DATABASE=orar_bot
-MYSQL_USER=your_user
-MYSQL_PASSWORD=your_password
-MYSQL_ROOT_PASSWORD=root_password
-```
-
-> **Security:** Choose a strong, unique password for `MYSQL_USER`, `MYSQL_PASSWORD`, and `MYSQL_ROOT_PASSWORD`. These files are ignored by Git to prevent accidentally exposing secrets.
+Keep generated config and SQL files `0600`. Never commit credentials or sessions.
+Production MySQL data uses the bind mount `./mysql:/var/lib/mysql`.
 
 ## 🗓️ Schedule File Format
 
-The bot reads schedules from Excel files placed in the `schedules/` directory.
+Runtime files are `schedules/orar<study_year>.xlsx`, where study year is 1–4.
+Follow `schedules/orar_example.xlsx`:
 
--   **Naming Convention**: `orar<year>.xlsx`, where `<year>` is the academic year (1-4).
-    -   Example: `orar1.xlsx`, `orar2.xlsx`, etc.
--   **File Structure**:
-    -   The data must be in a sheet named **"Table 2"**.
-    -   **Row 1, Column A**: Contains the version of the schedule.
-    -   **Row 1**: Contains group names (e.g., "TI-241") starting from **Column C**.
-    -   **Column A**: Contains the day of the week (e.g., "Luni", "Marţi").
-    -   **Column B**: Contains the class time intervals (e.g., "8.00-9.30").
-    -   The intersection of a group's column and a time slot's row contains the class details (subject, teacher, room).
+- The bot reads the first worksheet. The example uses `Table 2`.
+- Cell A1 contains the schedule version.
+- Row 1 contains group names from column C, such as `TI-241`.
+- Column A contains weekdays; column B contains class time intervals.
+- Group columns contain subject, teacher, and room text. Preserve the example's
+  paired rows and merged-cell layout for alternating weeks.
 
-An example file, `orar_example.xlsx`, is provided for reference.
+These are runtime workbooks, not raw dean exports. Use the upload workflow below
+to convert and review dean-layout files. Publication also saves a hash-matched
+`orarN.classifications.json`. Without a matching sidecar, class text stays raw.
 
 ## 🕹️ Managing the Bot
 
-### Stopping the Bot
+### Status, logs, and stopping
 
-To stop the bot and shut down all services:
-
-```bash
-sudo docker compose down
+```sh
+docker compose ps
+docker compose logs --tail 80 orar_bot
+docker compose stop orar_bot
+docker compose start orar_bot
 ```
 
-### Updating the Bot
+Stop only the bot when maintaining its code. Preserve `mysql/`, `sessions/`,
+schedules/sidecars, contributors, and backups. Do not reset a database to upgrade.
 
-To update the bot with the latest changes from the Git repository:
+### Updating the bot
 
-```bash
-# 1. Stop the running services
-sudo docker compose down
+Before updating, review the release, confirm any required manual database changes,
+back up affected files and database, and retain the previous source/image.
+Prepare a full database backup including routines with an authorized account;
+the bot's automated dump does not include routines. Test restoration separately.
 
-# 2. Pull the latest code
-git pull
+Production bind-mounts `src/`, so stop the bot before replacing source files.
+After approval, update the intended branch and recreate only the bot:
 
-# 3. Rebuild the image and restart the services
-sudo docker build --tag orar_bot . && sudo docker compose up -d
+```sh
+docker compose stop orar_bot
+git pull --ff-only
+docker compose build orar_bot
+docker compose up -d --no-deps orar_bot
+docker compose logs --tail 80 orar_bot
 ```
 
-### Resetting the Database
+Do not proceed if checkout/build fails. Restore previous source/image instead.
+Leave MySQL running. Verify schedules, reminder delivery, mounts, and startup
+before declaring the update complete. Do not copy test config or data into production.
 
-To completely wipe the database and start fresh:
+### Uploading schedules
 
-```bash
-# 1. Stop the services
-sudo docker compose down
+1. Send `/update_schedule` as owner or authorized contributor.
+2. Send one dean XLSX and optional matching PDF per study year, up to eight files
+   total. XLSX limit is 20 MiB; PDF limit is 30 MiB. Order and Telegram albums are supported.
+3. If a version cannot be read from the PDF filename, send a value such as `2=3`
+   or `2=final`, then tap **Review uploads**. Numeric versions are 1–99.
+4. Read each year's audit/diff reports, then tap its Publish button. No automatic
+   publication occurs; years publish independently.
 
-# 2. Remove the MySQL data volume
-sudo rm -rf ./mysql
+File titles must agree on academic year, study year, and semester. PDF alone
+cannot publish. Manual versions override filename guesses with a warning.
+Same/older revisions and PDF findings require explicit review; parser/layout/
+source-output failures block publication. Sunday/seven-day layouts are unsupported.
 
-# 3. Restart the services. Docker will re-create the database using init.sql.
-sudo docker compose up -d
-```
+Batches expire after 30 minutes idle. Accepted files/versions and valid review/
+publish actions refresh expiry. Duplicate files require a new batch; editing ends
+once review is prepared. Stale targets or failed publication clear remaining items,
+but already-published years stay committed.
 
-## Local test bot on Mac
+Review CSV includes source coordinates and XLSX hash; changed-cell CSV uses
+ISO-even/ISO-odd weeks. Previous workbook, sidecar, and group catalog copies
+remain in `schedules/rollback/`. Check schedules and reminders after publication.
 
-Mac and private stage share the test Telegram token. Stop one before starting
-the other. Live Telegram/stage checks require a separate execution decision.
+### Local test bot
 
-Run from the repository root. This setup uses `configs/config2.ini` for the test
-Telegram bot, an independent `orar_test` Docker project, a fresh named MySQL
-volume, and `.test-env/` for schedules, logs, backups, and the Telegram session.
-Neither container publishes a host port. Do not run the normal
-`docker-compose.yml` for this test: it publishes MySQL on port 3306 and mounts
-the regular `mysql/` and `sessions/` directories.
+Use `docker-compose.test.yml` with project `orar_test`, `configs/config2.ini`,
+and `.test-env/`. It uses a separate named MySQL volume and publishes no ports.
+Mac and reactor stage share the test token; never run both simultaneously.
 
-First-time preparation (already done on this Mac):
+Prepare `config2.ini` from the Telegram config template and use test credentials.
+Prepare current initialization SQL as in first-run setup. For an existing test
+database, apply needed schema changes manually; initialization will not rerun.
 
-```bash
+```sh
 mkdir -p .test-env/{schedules,sessions,logs,backups}
 chmod 700 .test-env .test-env/{schedules,sessions,logs,backups}
-cp -p schedules/orar{1,2,3,4}.xlsx .test-env/schedules/
+cp -p schedules/orar[1-4].xlsx .test-env/schedules/
 cp -p contributors.csv .test-env/contributors.csv
 chmod 600 configs/config2.ini configs/mysql.env .test-env/contributors.csv
-```
-
-`init/init.sql` must match the credentials in `configs/mysql.env`; the test
-Compose file mounts only that initialization script, not migration scripts.
-Initialize and check the isolated database:
-
-```bash
-docker compose -p orar_test -f docker-compose.test.yml up -d mysql
-docker compose -p orar_test -f docker-compose.test.yml ps
-```
-
-For the Telegram account currently hardcoded as `main_admin` in
-`src/handlers/admin_handlers.py`, seed admin rank **before** starting the bot.
-This modifies the test database only. If you use a different Telegram account,
-replace the ID below with its `U`-prefixed ID:
-
-```bash
-docker compose -p orar_test -f docker-compose.test.yml exec -T mysql sh -c \
-  'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -D orar_bot' <<'SQL'
-CALL add_new_user('U500303890');
-UPDATE settings SET admins=1
-WHERE id=(SELECT id FROM users WHERE SENDER='U500303890');
-SQL
-```
-
-Build and start the test bot, then check logs and send `/start`, `/admin_help`,
-and `/today` to the **test** bot in Telegram:
-
-```bash
 docker compose -p orar_test -f docker-compose.test.yml up -d --build orar_bot
 docker compose -p orar_test -f docker-compose.test.yml logs --tail 80 orar_bot
 ```
 
-`/update_schedule` writes only to `.test-env/schedules/`. The test bot session
-is `.test-env/sessions/session_test.session`; the regular `session_master`
-is untouched. The database persists across stops. Code or locale changes
-require rebuilding the test bot with the `up -d --build orar_bot` command above.
-`/update_schedule` collects **1–8 files**: dean-layout XLSX (20 MiB max)
-and optional matching PDF (30 MiB max), at most one each per Year 1–4. Send
-in any order or Telegram album, then tap **Review uploads**; omitted PDFs
-mean XLSX-only audit. PDF without XLSX cannot publish. Bot pairs academic
-year, study year, and semester from file titles; academic year itself is
-unrestricted. PDF filename provides version when recognized; for XLSX-only
-or versionless PDF, send `YEAR=1`–`YEAR=99` or `YEAR=final` when prompted,
-then tap **Review uploads** again. Bot sends independent audit/diff reports
-and Publish Year buttons; no year publishes until clicked. Each year can
-publish independently. Same/older revisions and PDF text-audit findings need
-explicit review; parser/layout/source-output failures cannot publish.
-Staging lives under `.test-env/schedules/.uploads/` and expires after 30
-minutes of idle time, refreshed only by accepted files/versions and valid
-Review/Publish actions. Duplicate files require restarting the batch. Manual
-versions win over PDF filename guesses, with a warning. Once review is prepared,
-editing ends. Stale targets or publication failures clear remaining batch;
-already-published years stay committed. Sunday/seven-day uploads reject.
-Published output saves classifications beside it as
-`orarN.classifications.json`; uncertain labels keep raw text. Review CSV records
-source coordinates and XLSX hash; changed-cell CSV identifies displayed
-**ISO-even/ISO-odd** weeks. Previous XLSX, sidecar, and group catalog copies
-stay under `.test-env/schedules/rollback/` after publication. Check `/today`,
-`/curr_week`, reminders, and restart persistence. Existing test schedules
-need matching sidecars when testing without upload.
+Use the admin setup above with the same test project/file arguments, not the
+production Compose command. Uploads write only to `.test-env/schedules/`;
+`session_test` stays separate from `session_master`. Copy matching sidecars if
+testing existing classified schedules. Rebuild after code or locale changes.
 
-Private schedule-refresh host paths live in ignored `RUN_PRIVATE.md`. Compare
-all SHA-256 hashes before replacing local copies; restart only the test bot.
-
-Stop the local test without deleting its database:
-
-```bash
+```sh
 docker compose -p orar_test -f docker-compose.test.yml stop
 ```
 
-Do not use `down -v`: it deletes the test database volume. Check isolation with
-`docker compose -p orar_test -f docker-compose.test.yml ps`; the `PORTS` column
-must not show a published host address.
+`down -v` deletes this test project's named MySQL volume. Use it only when
+intentionally resetting disposable test data, never during a production upgrade.
+It does not delete production's `./mysql` bind directory, but `down` still stops
+the whole stack. Private refresh paths are in ignored `RUN_PRIVATE.md`.
 
-## Runtime configuration and checks
+### Regression checks
 
-`/emoji` saves a per-user preference for schedule content, `/hours`, and both
-reminder types. Existing users default OFF when the bot first adds the
-`settings.emoji` column; future users default ON. Restarting does not reset
-choices. OFF uses the original raw course text (HTML-escaped); menus and status
-emojis are unchanged. The settings message contains a fixed illustrative sample
-unrelated to any date or user schedule: three pairs covering
-lecture, seminar, and a single subgroup-2 lab. With emojis ON, `c.` subjects use
-🎙️; `sem.` and unprefixed subjects use 📖. Prefixes remain visible and lab markers
-preserve the source's `lab` spelling and case.
-Whole-group labs use one line (`🌕 lab. BD1`), without a book icon; half-group
-labs keep their marker and book-prefixed subject on separate lines.
-Its inline button shows the current state and switches the saved preference and preview in place.
-
-Production uses read-only `/configs/config.ini`; Mac/stage set
-`ORAR_CONFIG=configs/config2.ini`. Production base pins Python 3.14.8 bookworm.
+These tests use synthetic inputs, not Telegram or a production database:
 
 ```sh
 python -m pip install -r requirements.txt
 python -m pip check
-python -m unittest test_schedule_ingest test_upload_status
-docker build -t orar-pr4-smoke .
-docker run --rm --network none \
-  --mount type=bind,source="$PWD/tests",target=/checks/tests,readonly \
-  --mount type=bind,source="$PWD/test_schedule_ingest.py",target=/checks/test_schedule_ingest.py,readonly \
-  orar-pr4-smoke python /checks/tests/image_smoke.py
+python -m unittest test_schedule_ingest test_upload_status test_emoji_setting test_clock_emoji test_course_classification test_notification_timing
+git diff --check
 ```
 
-Checks use synthetic inputs only. Upload caps: 2,000 rows, 1,024 columns,
-100,000 cells, 2,000 merges, 20,000 merged cells, 100 groups; measured maxima:
-873, 518, 27,689, 793, 3,368, 42. Existing size/archive caps remain. PDF timeout:
-30 seconds.
-
-## Manual recovery after interrupted publication
-
-Normal failures restore files and RAM. Rollback errors alert uploader/admin and
-leave durable copies in `schedules/rollback/`. Before manual recovery, stop bot;
-restore matching workbook/sidecar/catalog copies, preserve independently
-published years, validate workbook/sidecar hashes, then restart. RAM state alone
-does not make disk safe for restart.
+CI also builds the regular image and runs `tests/image_smoke.py` without network access.
 
 ## 🔍 Troubleshooting
 
-If you encounter issues, check the following:
+| Problem | Check |
+| --- | --- |
+| Bot exits with database connection error | Check MySQL health/logs, config credentials, and initialized schema. Restarting does not reset or migrate MySQL. |
+| Missing/invalid `settings.emoji` | Prepare the column manually as `BOOLEAN NOT NULL DEFAULT 1` before deploying. Preserve existing choices; no startup migration runs. |
+| Missing `app_settings` or `current_year` | Prepare required table/settings manually. Do not replay full initialization SQL against live data. |
+| Missing `contributors.csv` or group catalog | Supply contributors file and at least one valid active schedule before startup. |
+| Telegram config unavailable | Check `ORAR_CONFIG` and its read-only mount. Verify credentials locally, without printing them. |
+| Permission denied | Inspect the failing mount and actual container UID/GID. Fix ownership narrowly; do not hardcode UID 1000 or apply recursive `chmod 755`. |
+| Wrong schedule or raw class text | Check workbook path/layout, selected study year/group, and sidecar hash. Uncertain or missing classifications deliberately retain raw text. |
+| Backup fails | Check executable, credentials, disk space, permissions, and dump privileges. Failed/empty/timed-out dumps are not sent; partial temporary files are removed when cleanup succeeds. |
 
--   **Permission Denied Errors**:
-    -   This is common on Linux/macOS if the `./mysql` or `./backups` directory permissions are incorrect.
-    -   **Solution**: Stop the bot (`sudo docker compose down`), ensure the directories have the correct permissions (e.g., `sudo chown -R 1000:1000 ./mysql ./backups` and `sudo chmod -R 755 ./mysql ./backups`), and restart.
-
--   **Database Connection Issues**:
-    -   Check the database logs for errors: `sudo docker logs orar_mysql`.
-    -   **Solution**: Ensure the credentials in `configs/mysql.env` are correct and that you have run the `sed` command in [Step 3](#3-prepare-the-database) to update `init.sql` correctly.
-
--   **Bot Is Unresponsive**:
-    -   Check the bot's logs: `sudo docker logs orar_bot`.
-    -   **Solution**: This is often caused by incorrect Telegram credentials. Verify that `api_id`, `api_hash`, and `BOT_TOKEN` in `configs/config.ini` are correct.
-
--   **Incorrect Schedule Displayed**:
-    -   **Solution**: Verify that your `orar<year>.xlsx` files are correctly named, located in the root directory, and follow the format specified in the [Schedule File Format](#️-schedule-file-format) section.
+For interrupted publication or failed rollback, obtain approval and stop only
+the bot. Restore matching workbook/sidecar/catalog backups, preserve independently
+published years and later legitimate updates, validate hashes, then restart.
+Restoring RAM alone does not repair disk state.
