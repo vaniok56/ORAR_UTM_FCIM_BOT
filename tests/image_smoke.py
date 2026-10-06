@@ -7,7 +7,7 @@ from pathlib import Path
 
 assert shutil.which("pdftotext")
 sys.path.insert(0, "/src")
-sys.path.insert(0, "/checks")
+sys.path.insert(0, "/checks/tests")
 import schedule_ingest
 import schedule_parser
 from test_schedule_ingest import ScheduleIngestTests
