@@ -188,6 +188,7 @@ async def emoji_command(event):
         return
     try:
         enabled = db.get_user_emoji(format_id(SENDER), strict=True)
+        send_logs(format_id(SENDER) + " - /emoji", 'info')
         await event.respond(emoji_preview(lang, enabled), parse_mode="HTML",
                             buttons=emoji_button(SENDER, lang, enabled))
     except Exception as error:
@@ -211,6 +212,7 @@ async def emoji_callback(event):
     try:
         enabled = target == "1"
         db.set_user_emoji(format_id(SENDER), enabled)
+        send_logs(format_id(SENDER) + f" - emoji set to {'on' if enabled else 'off'}", 'info')
         try:
             await event.edit(emoji_preview(lang, enabled), parse_mode="HTML",
                              buttons=emoji_button(SENDER, lang, enabled))
