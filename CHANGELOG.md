@@ -2,6 +2,51 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.15.0] - 2026-10-07
+
+### TL;DR
+Adds optional emoji display and reviewed dean-workbook uploads. Classifications
+are saved alongside schedules, database upgrades are manual, and failed backups
+are no longer reported as successful. Released through [PR #4](https://github.com/vaniok56/ORAR_UTM_FCIM_BOT/pull/4).
+
+### Added
+- `/emoji` with a saved per-user preference and localized preview. It controls
+  schedule output, `/hours`, and both reminder types without changing menu/status
+  emojis. Existing users initialize OFF through manual migration; new users default ON.
+- Structured subject/teacher/room display using workbook-hash-matched classification
+  JSON. Lectures use 🎙️; whole-group labs render inline without a book icon.
+  Source lab spelling/case is preserved; uncertain entries retain raw text.
+- Dean XLSX parsing, optional PDF audit, and per-year review/diff reports before
+  publication through `/update_schedule`. Supports Telegram albums, explicit version
+  selection, upload expiry, stale-target checks, and rollback of caught publish failures.
+- Isolated test Compose configuration, synthetic regression tests, Python 3.11/3.14
+  CI checks, and a regular-image smoke test.
+
+### Changed
+- `/update_schedule` now accepts dean-layout XLSX, not legacy runtime workbooks.
+  Legacy `orarN.xlsx` files still load from `schedules/`; manual replacement requires
+  a bot restart. PDF-only and Sunday/seven-day uploads are rejected.
+- Startup validates `settings.emoji` instead of creating or altering tables.
+  Existing databases require manual preparation before deployment; fresh-install
+  SQL includes the new column. Existing `app_settings` must also be provisioned.
+- Pinned runtime dependencies/base image, added PDF extraction tooling, and mounted
+  production Telegram config read-only. Test/stage configuration and sessions remain separate.
+- Reworked operating guide around first run, configuration, updates, and troubleshooting.
+
+### Fixed
+- Next-class slot selection avoids repeatedly sending an already-due notification.
+- Emoji-preference read failures fall back to raw formatting rather than skipping
+  output. The settings screen reports read failure instead of claiming a saved state.
+- Backups require successful dump completion and nonempty output, have a bounded
+  runtime, and publish `0600` files atomically. Failed dumps preserve existing backups
+  and are not sent; dump passwords no longer appear in command arguments.
+- Schedule handling tolerates inactive years and rejects malformed or mismatched sidecars.
+
+### Credits
+- Thanks to [@Studentul404](https://github.com/Studentul404) for the structured-display
+  idea and initial [PR #3](https://github.com/vaniok56/ORAR_UTM_FCIM_BOT/pull/3).
+  This release uses a separate implementation with saved classifications.
+
 ## [0.14.1] - 2026-09-28
 
 ### TL;DR
@@ -213,19 +258,19 @@ This release improves logging robustness, optimizes broadcast messaging by uploa
 This release enhances the schedule versioning system to support "final" versions, introduces a contributors role for managing schedules without full admin access, and updates the bot's startup sequence.
 
 ### Added
-- **Contributors System** ([`handlers/admin_handlers.py`](./handlers/admin_handlers.py)):
+- **Contributors System** ([`handlers/admin_handlers.py`](./src/handlers/admin_handlers.py)):
     - New `/contrib` command to list authorized contributors.
     - New `/edit_contrib` command (Main Admin only) to add/remove contributors and assign them permissions for specific academic years.
     - Contributors can now use `/update_schedule` for their assigned years.
     - Mounted `contributors.csv` in `docker-compose.yml` to persist contributor data.
 
 ### Updated
-- **Schedule Versioning** ([`functions.py`](./functions.py), [`script.py`](./script.py)):
+- **Schedule Versioning** ([`functions.py`](./src/functions.py), [`script.py`](./src/script.py)):
     - Optimized `/version` command to correctly display and compare "final" schedule versions (filenames without numbers) alongside numbered versions (e.g., "v12").
     - Improved parsing logic in `get_online_schedule_versions` and `get_local_schedule_versions` to handle various data types (floats, strings) and filenames.
-- **Bot Startup** ([`script.py`](./script.py)):
+- **Bot Startup** ([`script.py`](./src/script.py)):
     - Refactored entry point to use `asyncio.run(main())` because python 3.11+ deprecates `get_event_loop()`.
-- **Admin Rate Limiting** ([`handlers/admin_handlers.py`](./handlers/admin_handlers.py)):
+- **Admin Rate Limiting** ([`handlers/admin_handlers.py`](./src/handlers/admin_handlers.py)):
     - Removed rate limit checks for admin commands to ensure smoother administration.
 
 ### Fixed
@@ -255,20 +300,20 @@ Patch release with configurations path fixes, small robustness improvements to s
 This release introduces a major feature: automatic schedule update checking. The bot now monitors the official FCIM website for new schedule versions and notifies admins if local files are outdated. The `/version` command has been enhanced to show a side-by-side comparison of local and online schedule versions. Additionally, the project structure has been cleaned up by moving schedule files into a dedicated `schedules` directory.
 
 ### Added
-- **Schedule Update Checker** ([`functions.py`](./functions.py), [`script.py`](./script.py)):
+- **Schedule Update Checker** ([`functions.py`](./src/functions.py), [`script.py`](./src/script.py)):
     - The bot now fetches schedule version numbers from the FCIM website by running the command `/version`. 
     - It compares online versions with the versions of the local `orar*.xlsx` files.
-- **Dynamic Schedule Loading & Updating** ([`functions.py`](./functions.py), [`handlers/admin_handlers.py`](./handlers/admin_handlers.py)):
+- **Dynamic Schedule Loading & Updating** ([`functions.py`](./src/functions.py), [`handlers/admin_handlers.py`](./src/handlers/admin_handlers.py)):
     - Added a function to process and reload schedule files dynamically.
     - Introduced a new `/update_schedule` command for admins to upload new schedule files directly to the bot.
     - Caches are now cleared automatically when a new schedule file is processed.
 
 ### Updated
-- **`/version` Command** ([`script.py`](./script.py)):
+- **`/version` Command** ([`script.py`](./src/script.py)):
     - The command output now includes a detailed comparison of local versus online schedule versions for each academic year, making it easy to see what's current.
 - **File Structure**:
     - All schedule Excel files (`orar*.xlsx`) have been moved from the root directory to the [`schedules/`](./schedules/) directory for better organization.
-    - Code in [`functions.py`](./functions.py) has been updated to reflect the new file paths.
+    - Code in [`functions.py`](./src/functions.py) has been updated to reflect the new file paths.
 - **Documentation** ([`RUN.md`](./RUN.md)): Completely rewritten to provide a comprehensive, step-by-step guide for setup, configuration, and management.
 - **Docker & Git** ([`.dockerignore`](./.dockerignore), [`.gitignore`](./.gitignore)): Updated to align with the new file structure and improve build context.
 
@@ -278,7 +323,7 @@ This release introduces a major feature: automatic schedule update checking. The
     - Deleted `orar1.xlsx` and `orar2.xlsx` from the root directory, as they are now managed in the `schedules/` directory. Now only the example schedule is keeped in repository.
 
 ### Fixed
-- **Admin Commands** ([`handlers/admin_handlers.py`](./handlers/admin_handlers.py)):
+- **Admin Commands** ([`handlers/admin_handlers.py`](./src/handlers/admin_handlers.py)):
     - Refactored user management commands (`/ban`, `/unban`, `/admin`) for improved reliability and code structure.
     - Replaced hardcoded main admin ID with a dedicated constant.
 
@@ -288,25 +333,25 @@ This release introduces a major feature: automatic schedule update checking. The
 This update enhances logging, refines the Docker environment, and improves the user experience for group selection. Key changes include moving to date-stamped log files in a dedicated `logs` directory, adding a MySQL configuration file for timezone and performance, and streamlining the initial bot interaction flow.
 
 ### Added
-- [`my.cnf`](./my.cnf): New MySQL configuration file to set the timezone, optimize performance, and disable binary logging.
+- [`my.cnf`](./configs/my.cnf): New MySQL configuration file to set the timezone, optimize performance, and disable binary logging.
 - [`sessions/.gitkeep`](./sessions/.gitkeep): Added to ensure the `sessions` directory is tracked by Git.
 
 ### Updated
-- Logging ([`functions.py`](./functions.py)):
-    - Logs are now stored in the [`logs/`](./logs/) directory with date-stamped filenames (e.g., `orarbot_04_09_25.log`).
+- Logging ([`functions.py`](./src/functions.py)):
+    - Logs are now stored in the `logs/` directory with date-stamped filenames (e.g., `orarbot_04_09_25.log`).
     - The application ensures the `logs` directory exists at startup.
 - Docker ([`docker-compose.yml`](./docker-compose.yml)):
     - Set the timezone for the MySQL container to `Europe/Chisinau`.
-    - Mounted the new [`logs/`](./logs/) directory into the `orarbot` container instead of a single log file.
+    - Mounted the new `logs/` directory into the `orarbot` container instead of a single log file.
     - Added `PYTHONUNBUFFERED=1` to the bot's environment for better log output.
-- Group Selection Flow ([`handlers/group_handlers.py`](./handlers/group_handlers.py), [`script.py`](./script.py)):
+- Group Selection Flow ([`handlers/group_handlers.py`](./src/handlers/group_handlers.py), [`script.py`](./src/script.py)):
     - The `/start` command now presents a cleaner initial interface, prompting users to select their group immediately.
     - The group selection process (`/alege_grupa`) now feels smoother, clearing old buttons and showing the main keyboard upon completion.
-- Code Refinements ([`functions.py`](./functions.py)):
+- Code Refinements ([`functions.py`](./src/functions.py)):
     - Minor improvements to schedule and group constant definitions for better readability.
 
 ### Fixed
-- Group Selection ([`handlers/group_handlers.py`](./handlers/group_handlers.py)): Fixed a bug where the wrong button variable was used when displaying the group selection menu.
+- Group Selection ([`handlers/group_handlers.py`](./src/handlers/group_handlers.py)): Fixed a bug where the wrong button variable was used when displaying the group selection menu.
 - [`.gitignore`](./.gitignore): Adjusted to correctly handle session files and no longer ignore `.cnf` files.
 
 ## [0.11.1] - 2025-09-03
@@ -322,12 +367,12 @@ This update focuses on improving Docker setup robustness, database connection st
 - [`docker-compose.yml`](./docker-compose.yml):
     - Set a fixed `user` for the MySQL service to avoid permission issues.
     - Set `restart: always` for the `restarter` service to ensure it always comes back online.
-- [`handlers/db.py`](./handlers/db.py): Explicitly defined the MySQL port in connection settings and backup/restore commands for more reliable connections.
+- [`handlers/db.py`](./src/handlers/db.py): Explicitly defined the MySQL port in connection settings and backup/restore commands for more reliable connections.
 - [`.gitignore`](./.gitignore): Now ignores specific shell scripts (`*.sh`) and only the `init.sql` file instead of the whole directory.
 
 ### Fixed
-- [`script.py`](./script.py): Removed an unnecessary `keep_network_alive` task.
-- [`functions.py`](./functions.py): Added a `try-except` block to handle potential errors when converting `subgrupa` to an integer, preventing crashes.
+- [`script.py`](./src/script.py): Removed an unnecessary `keep_network_alive` task.
+- [`functions.py`](./src/functions.py): Added a `try-except` block to handle potential errors when converting `subgrupa` to an integer, preventing crashes.
 
 ## [0.11.0] - 2025-09-01
 
@@ -335,24 +380,24 @@ This update focuses on improving Docker setup robustness, database connection st
 Refactored schedule and group handling to be fully dynamic, generating group lists from Excel files at startup. Introduced dynamic versioning via the GitHub API. Added new admin commands for restoring backups (`/use_backup`) and advancing user academic years (`/new_year`).
 
 ### Added
-- [`dynamic_group_lists.py`](./dynamic_group_lists.py) to store group information generated at runtime from schedule files.
-- `/use_backup` admin command to restore the database from a selection of recent backups in [`handlers/admin_handlers.py`](./handlers/admin_handlers.py).
-- `/new_year` admin command to increment the academic year for all users in [`handlers/admin_handlers.py`](./handlers/admin_handlers.py).
+- `dynamic_group_lists.py` to store group information generated at runtime from schedule files.
+- `/use_backup` admin command to restore the database from a selection of recent backups in [`handlers/admin_handlers.py`](./src/handlers/admin_handlers.py).
+- `/new_year` admin command to increment the academic year for all users in [`handlers/admin_handlers.py`](./src/handlers/admin_handlers.py).
 - `requests` library to [`requirements.txt`](./requirements.txt) for making GitHub API calls.
 - `backups/` directory to [`.gitignore`](./.gitignore).
 
 ### Updated
-- Refactored schedule data loading in [`functions.py`](./functions.py) to be dynamic, removing hardcoded file paths and adapting to available `orar*.xlsx` files.
-- The bot now automatically generates group selection menus from schedule Excel files on startup ([`functions.py`](./functions.py), [`script.py`](./script.py)).
-- The `/version` command now dynamically fetches the version and last update date from the latest GitHub commit ([`functions.py`](./functions.py), [`script.py`](./script.py)).
-- Database backups are now stored in the `/backups/` directory with a full timestamp and are no longer deleted after being sent ([`script.py`](./script.py), [`handlers/admin_handlers.py`](./handlers/admin_handlers.py)).
+- Refactored schedule data loading in [`functions.py`](./src/functions.py) to be dynamic, removing hardcoded file paths and adapting to available `orar*.xlsx` files.
+- The bot now automatically generates group selection menus from schedule Excel files on startup ([`functions.py`](./src/functions.py), [`script.py`](./src/script.py)).
+- The `/version` command now dynamically fetches the version and last update date from the latest GitHub commit ([`functions.py`](./src/functions.py), [`script.py`](./src/script.py)).
+- Database backups are now stored in the `/backups/` directory with a full timestamp and are no longer deleted after being sent ([`script.py`](./src/script.py), [`handlers/admin_handlers.py`](./src/handlers/admin_handlers.py)).
 - [`docker-compose.yml`](./docker-compose.yml) to mount the `backups` and `dynamic_group_lists.py` files.
 - [`.dockerignore`](./.dockerignore) and [`.gitignore`](./.gitignore) for better file management and to include new backup/volume paths.
 - [`README.md`](./README.md) and `/admin_help` command to include the new admin commands.
-- `/start` message in [`script.py`](./script.py) to clarify that only 1st and 2nd-year schedules are currently available.
+- `/start` message in [`script.py`](./src/script.py) to clarify that only 1st and 2nd-year schedules are currently available.
 
 ### Fixed
-- Added error handling in [`handlers/group_handlers.py`](./handlers/group_handlers.py) for the year selection callback to prevent crashes if a selected year's schedule is not available.
+- Added error handling in [`handlers/group_handlers.py`](./src/handlers/group_handlers.py) for the year selection callback to prevent crashes if a selected year's schedule is not available.
 
 ## [0.10.4] - 2025-05-07
 
@@ -360,16 +405,16 @@ Refactored schedule and group handling to be fully dynamic, generating group lis
 Fixed several `CallbackQuery` handlers to use specific patterns, improving reliability and preventing unintended triggers. Added MySQL config file mounting in Docker and ignored it in git. Minor improvements to start and contact messages.
 
 ### Fixed
-- Corrected `CallbackQuery` patterns in [`handlers/group_handlers.py`](./handlers/group_handlers.py) for year, specialty, group, and subgroup selection to use specific checks instead of generic handlers.
-- Corrected `CallbackQuery` patterns in [`handlers/admin_handlers.py`](./handlers/admin_handlers.py) for the custom message feature (`/message`) confirmation steps.
-- Corrected notification button data in `group_callback` in [`handlers/group_handlers.py`](./handlers/group_handlers.py) to use `b"noti_on"`/`b"noti_off"`.
-- Corrected `CallbackQuery` pattern for notification preference handler (`notiff`) in [`script.py`](./script.py).
+- Corrected `CallbackQuery` patterns in [`handlers/group_handlers.py`](./src/handlers/group_handlers.py) for year, specialty, group, and subgroup selection to use specific checks instead of generic handlers.
+- Corrected `CallbackQuery` patterns in [`handlers/admin_handlers.py`](./src/handlers/admin_handlers.py) for the custom message feature (`/message`) confirmation steps.
+- Corrected notification button data in `group_callback` in [`handlers/group_handlers.py`](./src/handlers/group_handlers.py) to use `b"noti_on"`/`b"noti_off"`.
+- Corrected `CallbackQuery` pattern for notification preference handler (`notiff`) in [`script.py`](./src/script.py).
 
 ### Updated
 - Added `*.cnf` to [`.gitignore`](./.gitignore) to ignore MySQL config files.
 - Mounted `my.cnf` into the MySQL container in [`docker-compose.yml`](./docker-compose.yml).
-- Improved `/start` message in [`script.py`](./script.py) to include the user's first name, disable link preview and warn users about not all schedules implemented.
-- Removed unnecessary `link_preview=False` from `/contacts` message in [`script.py`](./script.py).
+- Improved `/start` message in [`script.py`](./src/script.py) to include the user's first name, disable link preview and warn users about not all schedules implemented.
+- Removed unnecessary `link_preview=False` from `/contacts` message in [`script.py`](./src/script.py).
 
 ## [0.10.3] - 2025-04-30
 
@@ -377,14 +422,14 @@ Fixed several `CallbackQuery` handlers to use specific patterns, improving relia
 Fixed subgroup schedule display, database stored procedure handling, and background notification task logic. Improved database connection pooling and caching.
 
 ### Fixed
-- Corrected schedule display for subgroup 1 when a course is split between subgroups in [`functions.py`](./functions.py).
-- Resolved potential "unread result" errors by correctly handling stored procedure results in database functions in [`handlers/db.py`](./handlers/db.py).
-- Fixed logic error in the background task for sending current course notifications (`send_curr_course_users`) in [`script.py`](./script.py).
-- Improved reliability and logic of the background task for sending tomorrow's schedule notifications (`send_schedule_tomorrow`) in [`script.py`](./script.py).
+- Corrected schedule display for subgroup 1 when a course is split between subgroups in [`functions.py`](./src/functions.py).
+- Resolved potential "unread result" errors by correctly handling stored procedure results in database functions in [`handlers/db.py`](./src/handlers/db.py).
+- Fixed logic error in the background task for sending current course notifications (`send_curr_course_users`) in [`script.py`](./src/script.py).
+- Improved reliability and logic of the background task for sending tomorrow's schedule notifications (`send_schedule_tomorrow`) in [`script.py`](./src/script.py).
 
 ### Updated
-- Enhanced MySQL connection pool management (increased size, unique names, reinitialization on errors) for better stability and performance in [`handlers/db.py`](./handlers/db.py).
-- Improved user data caching strategy, including preloading and fallback mechanisms during database issues in [`handlers/db.py`](./handlers/db.py).
+- Enhanced MySQL connection pool management (increased size, unique names, reinitialization on errors) for better stability and performance in [`handlers/db.py`](./src/handlers/db.py).
+- Improved user data caching strategy, including preloading and fallback mechanisms during database issues in [`handlers/db.py`](./src/handlers/db.py).
 
 ## [0.10.2] - 2025-04-28
 
@@ -392,18 +437,18 @@ Fixed subgroup schedule display, database stored procedure handling, and backgro
 Refactored group selection logic to use temporary storage, improving reliability. Fixed database functions for user count and existence checks. Corrected admin ID usage in background tasks and fixed notification logic. Updated version command and removed minor logging.
 
 ### Updated
-- Refactored group selection flow in [`handlers/group_handlers.py`](./handlers/group_handlers.py) to use a temporary dictionary (`temp_selection`) for storing year and specialty choices before final database update.
-- Ensured `backup_database` and `keep_network_alive` in [`script.py`](./script.py) use dynamically fetched admin IDs.
-- Updated `/version` command in [`script.py`](./script.py) with the current version `0.10.2` and date `28-04-2025`.
+- Refactored group selection flow in [`handlers/group_handlers.py`](./src/handlers/group_handlers.py) to use a temporary dictionary (`temp_selection`) for storing year and specialty choices before final database update.
+- Ensured `backup_database` and `keep_network_alive` in [`script.py`](./src/script.py) use dynamically fetched admin IDs.
+- Updated `/version` command in [`script.py`](./src/script.py) with the current version `0.10.2` and date `28-04-2025`.
 
 ### Fixed
-- Corrected `get_user_count` in [`handlers/db.py`](./handlers/db.py) to properly retrieve and return the user count by processing all result sets.
-- Corrected `is_user_exists` in [`handlers/db.py`](./handlers/db.py) to correctly check the cache first before querying the database.
-- Corrected notification check in `send_notification` in [`script.py`](./script.py) to use `noti == 1` instead of `noti != 'on'`.
-- Added missing log entry after successfully sending a notification in `send_notification` in [`script.py`](./script.py).
+- Corrected `get_user_count` in [`handlers/db.py`](./src/handlers/db.py) to properly retrieve and return the user count by processing all result sets.
+- Corrected `is_user_exists` in [`handlers/db.py`](./src/handlers/db.py) to correctly check the cache first before querying the database.
+- Corrected notification check in `send_notification` in [`script.py`](./src/script.py) to use `noti == 1` instead of `noti != 'on'`.
+- Added missing log entry after successfully sending a notification in `send_notification` in [`script.py`](./src/script.py).
 
 ### Removed
-- Removed some redundant debug logging calls from `update_user_field` and `locate_field` in [`handlers/db.py`](./handlers/db.py).
+- Removed some redundant debug logging calls from `update_user_field` and `locate_field` in [`handlers/db.py`](./src/handlers/db.py).
 
 ## [0.10.1] - 2025-04-27
 
