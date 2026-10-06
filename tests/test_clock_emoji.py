@@ -2,7 +2,7 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 
 class ClockEmojiTests(unittest.TestCase):
@@ -53,7 +53,7 @@ class ClockLocaleTests(unittest.TestCase):
         import json
         from clock_emoji import clock_face
 
-        locales = sorted(Path(__file__).parent.joinpath("locales").glob("*.json"))
+        locales = sorted(Path(__file__).resolve().parent.parent.joinpath("locales").glob("*.json"))
         self.assertTrue(locales)
         for path in locales:
             with self.subTest(locale=path.name):

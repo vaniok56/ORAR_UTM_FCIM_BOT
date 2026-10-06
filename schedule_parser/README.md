@@ -16,7 +16,7 @@ CLI helpers stay available:
 ```sh
 python -m schedule_parser.parser --help
 python -m schedule_parser.audit_outputs --help
-python -m unittest test_schedule_ingest test_upload_status
+python -m unittest discover -s tests -t tests -p 'test_*.py'
 ```
 
 Publication saves workbook-hash-matched `orarN.classifications.json` files.

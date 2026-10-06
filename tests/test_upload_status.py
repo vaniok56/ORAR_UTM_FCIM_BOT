@@ -9,13 +9,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 
 def setUpModule():
     global sandbox, previous, modules
     sandbox = tempfile.TemporaryDirectory()
-    root = Path(__file__).resolve().parent
+    root = Path(__file__).resolve().parent.parent
     modules = {name: module for name, module in sys.modules.items()
                if name in {"functions", "localization", "handlers"} or name.startswith("handlers.")}
     for name in modules:

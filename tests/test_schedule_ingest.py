@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from schedule_ingest import Metadata, UploadReject, compare_versions, parse_title, parse_version, pdf_version, schedule_diff
 from schedule_parser.audit_outputs import audit_schedule
@@ -140,7 +140,7 @@ class ScheduleIngestTests(unittest.TestCase):
 
         root = Path.home() / "Downloads" / "Re__Orar (1)"
         if (not (root / "Anul_I_Semestrul_I.xlsx").exists() or not importlib.util.find_spec("pymupdf")
-                or not (Path(__file__).parent / "schedule_parser" / "pdf_geometry.py").exists()):
+                or not (Path(__file__).resolve().parent.parent / "schedule_parser" / "pdf_geometry.py").exists()):
             self.skipTest("official PDFs or optional development-only PyMuPDF unavailable")
         import openpyxl
         from schedule_parser.pdf_geometry import audit_geometry

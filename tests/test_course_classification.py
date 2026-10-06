@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from openpyxl import Workbook
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from course_classification import (
     build_classifications,

@@ -280,9 +280,13 @@ These tests use synthetic inputs, not Telegram or a production database:
 ```sh
 python -m pip install -r requirements.txt
 python -m pip check
-python -m unittest test_schedule_ingest test_upload_status test_emoji_setting test_clock_emoji test_course_classification test_notification_timing
+python -m unittest discover -s tests -t tests -p 'test_*.py'
 git diff --check
 ```
+
+Tests live in `tests/`. Restrict a run with `-p`, for example
+`-p 'test_emoji_setting.py'`. They generate their own workbooks and import bot
+modules from a temporary sandbox, so run them from the repository root.
 
 CI also builds the regular image and runs `tests/image_smoke.py` without network access.
 
