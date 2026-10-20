@@ -18,6 +18,11 @@ class EmojiSettingTests(unittest.IsolatedAsyncioTestCase):
         from telethon.errors import MessageNotModifiedError
         load_locales()
         self.runtime, self.db = functions, db
+        from functions import reminder_eligible
+        self.user = {"SENDER": "U42", "group_n": "SAMPLE", "subgrupa": 0,
+                     "year_s": 1, "lang": "en", "noti": 1, "ban": 0, "delivery_status": "unknown"}
+        self.enterContext(patch.object(db, "get_user_for_delivery", return_value=self.user))
+        self.enterContext(patch.object(functions, "get_schedule_and_groups", return_value=(object(), ["SAMPLE"])))
         self.text = get_text
         functions.clear_schedule_caches()
         # Load handler functions without starting Telegram or connecting MySQL.
@@ -40,6 +45,7 @@ class EmojiSettingTests(unittest.IsolatedAsyncioTestCase):
             "DEFAULT_LANG": "en", "SUPPORTED_LANGS": SUPPORTED_LANGS,
             "datetime": datetime, "moldova_tz": db.moldova_tz,
             "bulk_send_shift_earlier": datetime.timedelta(minutes=1), "bulk_send_interval": 0,
+            "reminder_eligible": reminder_eligible,
         }
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "src/script.py", "exec"), self.namespace)
 
@@ -118,15 +124,13 @@ class EmojiSettingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(glyph, self.runtime.format_hours(lang, emoji=True))
                 self.assertNotIn(glyph, self.runtime.format_hours(lang, emoji=False))
 
-    async def test_failed_preference_read_still_delivers_raw_reminder(self):
+    async def test_fresh_read_failure_skips_reminder(self):
         self.namespace["print_next_course"] = Mock(return_value="raw schedule")
-        with patch.object(self.db, "locate_field", return_value=1), \
-                patch.object(self.db, "get_db_connection", side_effect=RuntimeError("offline")):
-            self.assertTrue(await self.namespace["send_notification"](
+        with patch.object(self.db, "get_user_for_delivery", side_effect=RuntimeError("offline")):
+            self.assertFalse(await self.namespace["send_notification"](
                 42, (1, "SAMPLE", 0, 1, 0, "en", 1)))
-        self.namespace["print_next_course"].assert_called_once_with(
-            1, "SAMPLE", 0, 1, 0, "en", study_year=1, emoji=False)
-        self.namespace["client"].send_message.assert_awaited_once()
+        self.namespace["print_next_course"].assert_not_called()
+        self.namespace["client"].send_message.assert_not_awaited()
 
     async def test_settings_read_failure_does_not_claim_saved_state(self):
         event = self.event()
@@ -149,21 +153,20 @@ class EmojiSettingTests(unittest.IsolatedAsyncioTestCase):
         for glyph in ("🕗", "🍽️", "☕"):
             self.assertNotIn(glyph, text)
 
-    async def test_tomorrow_preference_read_failure_still_delivers_raw_schedule(self):
+    async def test_tomorrow_fresh_read_failure_skips_user(self):
         import pandas as pd
         users = pd.DataFrame([{"SENDER": "U42", "group_n": "SAMPLE", "ban": 0,
-                               "noti": 1, "subgrupa": 0, "lang": "en", "year_s": 1}])
+                               "noti": 1, "subgrupa": 0, "lang": "en", "year_s": 1, "delivery_status": "unknown"}])
         self.namespace.update(pd=pd, print_day=Mock(return_value="raw schedule"),
                               asyncio=SimpleNamespace(sleep=AsyncMock(
                                   side_effect=[None, None, asyncio.CancelledError()])))
         with patch.object(self.db, "get_app_setting", return_value="0"), \
                 patch.object(self.db, "get_all_users", return_value=users), \
-                patch.object(self.db, "get_db_connection", side_effect=RuntimeError("offline")), \
+                patch.object(self.db, "get_user_for_delivery", side_effect=RuntimeError("offline")), \
                 self.assertRaises(asyncio.CancelledError):
             await self.namespace["send_schedule_tomorrow"]()
-        self.assertFalse(self.namespace["print_day"].call_args.kwargs["emoji"])
-        self.namespace["client"].send_message.assert_awaited_once()
-        self.assertIn("raw schedule", self.namespace["client"].send_message.call_args.args[1])
+        self.namespace["print_day"].assert_not_called()
+        self.namespace["client"].send_message.assert_not_awaited()
 
     async def test_schedule_caches_and_reminders_use_current_preference(self):
         from course_classification import classify

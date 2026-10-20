@@ -18,6 +18,8 @@ MAX_RETRIES = 5
 RETRY_DELAY = 2  # seconds
 user_data_cache = {}
 _current_year = None
+DELIVERY_STATUSES = ('unknown', 'delivered', 'blocked', 'deleted')
+DEFAULT_OWNER_ID = '500303890'
 
 def initialize_mysql_connection():
     """Initialize MySQL connection pool with retry logic"""
@@ -74,6 +76,32 @@ def initialize_mysql_connection():
                     raise RuntimeError("settings.emoji is missing; manually add BOOLEAN NOT NULL DEFAULT 0, then set DEFAULT 1 before starting the bot")
                 if column[1].lower() != "tinyint(1)" or column[2] != "NO" or str(column[4]) != "1":
                     raise RuntimeError("settings.emoji must be BOOLEAN NOT NULL DEFAULT 1; correct the schema manually before starting the bot")
+                cursor.execute("SHOW COLUMNS FROM settings LIKE 'delivery_status'")
+                column = cursor.fetchone()
+                if (column is None or column[1].lower() != "enum('unknown','delivered','blocked','deleted')"
+                        or column[2] != "NO" or column[4] != "unknown"):
+                    raise RuntimeError("settings.delivery_status migration is required before startup")
+                for procedure, args in [('get_all_users', []), ('get_all_users_with', ['noti', '1']),
+                                        ('get_all_users_without', ['noti', '0']), ('select_all_user_data', ['U0'])]:
+                    cursor.callproc(procedure, args)
+                    for result in cursor.stored_results():
+                        if 'delivery_status' not in result.column_names:
+                            raise RuntimeError("Upgrade user-read stored procedures before startup")
+                        result.fetchall()
+                cursor.execute("SELECT @@global.time_zone, @@session.time_zone")
+                if set(cursor.fetchone()) != {'Europe/Chisinau'}:
+                    raise RuntimeError("MySQL global/session time zone must be Europe/Chisinau")
+                cursor.execute("SELECT setting_value FROM app_settings WHERE setting_name='fcim_owner_id'")
+                owner = cursor.fetchone()
+                if owner is None:
+                    cursor.execute("INSERT IGNORE INTO app_settings (setting_name, setting_value) VALUES ('fcim_owner_id', %s)",
+                                   (DEFAULT_OWNER_ID,))
+                    if cursor.rowcount == 1:
+                        send_logs(f"Seeded default fcim_owner_id {DEFAULT_OWNER_ID}", "info")
+                    cursor.execute("SELECT setting_value FROM app_settings WHERE setting_name='fcim_owner_id'")
+                    owner = cursor.fetchone()
+                if owner is None or not owner[0].isascii() or not owner[0].isdigit() or int(owner[0]) <= 0:
+                    raise RuntimeError("app_settings.fcim_owner_id must be a positive numeric Telegram ID")
 
             # refresh cache with new data if possible
             try:
@@ -509,7 +537,7 @@ def get_all_users():
                     return df
                 else:
                     # Check if we have cached data before returning empty
-                    if '_cached_all_users_df' in globals() and not _cached_all_users_df.empty:
+                    if isinstance(_cached_all_users_df, pd.DataFrame) and not _cached_all_users_df.empty:
                         send_logs("No users found in fresh query, using cached data", "warning")
                         return _cached_all_users_df
                     
@@ -517,7 +545,7 @@ def get_all_users():
                     return pd.DataFrame(columns=[
                         'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                         'admins', 'prem', 'subgrupa', 'gamble', 
-                        'ban', 'ban_time', 'last_interaction_at', 'lang'
+                        'ban', 'ban_time', 'last_interaction_at', 'lang', 'delivery_status'
                     ])
                     
         except mysql.connector.Error as db_err:
@@ -529,27 +557,27 @@ def get_all_users():
                 send_logs(f"Failed to get all users after {MAX_RETRIES} attempts: {str(db_err)}", "error")
                 
                 # Return cached data if available instead of empty dataframe
-                if '_cached_all_users_df' in globals() and not _cached_all_users_df.empty:
+                if isinstance(_cached_all_users_df, pd.DataFrame) and not _cached_all_users_df.empty:
                     send_logs(f"Using cached user data ({len(_cached_all_users_df)} records) due to DB failure", "warning")
                     return _cached_all_users_df
                 
                 return pd.DataFrame(columns=[
                     'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                     'admins', 'prem', 'subgrupa', 'gamble', 
-                    'ban', 'ban_time', 'last_interaction_at', 'lang'
+                    'ban', 'ban_time', 'last_interaction_at', 'lang', 'delivery_status'
                 ])
         except Exception as e:
             send_logs(f"Failed to get all users: {str(e)}", "error")
             
             # Return cached data if available
-            if '_cached_all_users_df' in globals() and not _cached_all_users_df.empty:
+            if isinstance(_cached_all_users_df, pd.DataFrame) and not _cached_all_users_df.empty:
                 send_logs(f"Using cached user data ({len(_cached_all_users_df)} records) due to error", "warning")
                 return _cached_all_users_df
                 
             return pd.DataFrame(columns=[
                 'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                 'admins', 'prem', 'subgrupa', 'gamble', 
-                'ban', 'ban_time', 'last_interaction_at', 'lang'
+                'ban', 'ban_time', 'last_interaction_at', 'lang', 'delivery_status'
             ])
 
 def get_all_users_with(field, value):
@@ -574,7 +602,7 @@ def get_all_users_with(field, value):
                     return pd.DataFrame(columns=[
                         'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                         'admins', 'prem', 'subgrupa', 'gamble', 
-                        'ban', 'ban_time', 'last_interaction_at', 'lang'
+                        'ban', 'ban_time', 'last_interaction_at', 'lang', 'delivery_status'
                     ])
         except mysql.connector.Error as db_err:
             if attempt < MAX_RETRIES - 1:
@@ -587,14 +615,14 @@ def get_all_users_with(field, value):
                 return pd.DataFrame(columns=[
                     'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                     'admins', 'prem', 'subgrupa', 'gamble', 
-                    'ban', 'ban_time', 'last_interaction_at', 'lang'
+                    'ban', 'ban_time', 'last_interaction_at', 'lang', 'delivery_status'
                 ])
         except Exception as e:
             send_logs(f"Failed to get all users with {field}={value}: {str(e)}", "error")
             return pd.DataFrame(columns=[
                 'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                 'admins', 'prem', 'subgrupa', 'gamble', 
-                'ban', 'ban_time', 'last_interaction_at', 'lang'
+                'ban', 'ban_time', 'last_interaction_at', 'lang', 'delivery_status'
             ])
 
 def get_all_users_without(field, value):
@@ -619,7 +647,7 @@ def get_all_users_without(field, value):
                     return pd.DataFrame(columns=[
                         'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                         'admins', 'prem', 'subgrupa', 'gamble', 
-                        'ban', 'ban_time', 'last_interaction_at', 'lang'
+                        'ban', 'ban_time', 'last_interaction_at', 'lang', 'delivery_status'
                     ])
         except mysql.connector.Error as db_err:
             if attempt < MAX_RETRIES - 1:
@@ -632,14 +660,14 @@ def get_all_users_without(field, value):
                 return pd.DataFrame(columns=[
                     'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                     'admins', 'prem', 'subgrupa', 'gamble', 
-                    'ban', 'ban_time', 'last_interaction_at', 'lang'
+                    'ban', 'ban_time', 'last_interaction_at', 'lang', 'delivery_status'
                 ])
         except Exception as e:
             send_logs(f"Failed to get all users without {field}={value}: {str(e)}", "error")
             return pd.DataFrame(columns=[
                 'id', 'SENDER', 'group_n', 'spec', 'year_s', 'noti', 
                 'admins', 'prem', 'subgrupa', 'gamble', 
-                'ban', 'ban_time', 'last_interaction_at', 'lang'
+                'ban', 'ban_time', 'last_interaction_at', 'lang', 'delivery_status'
             ])
         
 def is_user_exists(sender_id):
@@ -724,18 +752,105 @@ def set_user_emoji(sender_id, enabled):
         conn.commit()
 
 
-def get_app_setting(name: str, default: str = '0') -> str:
+def get_user_for_delivery(sender_id):
+    """Fresh eligibility read; fail closed instead of sending from stale caches."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT u.*, s.* FROM users u JOIN settings s ON s.id=u.id WHERE u.SENDER=%s",
+                       (sender_id,))
+        return cursor.fetchone()
+
+
+def set_delivery_status(sender_id, status, *, only_blocked=False):
+    if status not in DELIVERY_STATUSES:
+        raise ValueError("Invalid delivery status")
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE settings s JOIN users u ON s.id=u.id SET s.delivery_status=%s WHERE u.SENDER=%s"
+            + (" AND s.delivery_status='blocked'" if only_blocked else ""),
+            (status, sender_id),
+        )
+        conn.commit()
+    user_data_cache.pop(sender_id, None)
+    cached = globals().get('_cached_all_users_df')
+    if isinstance(cached, pd.DataFrame) and not cached.empty:
+        mask = cached['SENDER'] == sender_id
+        if only_blocked:
+            mask &= cached['delivery_status'] == 'blocked'
+        cached.loc[mask, 'delivery_status'] = status
+
+
+def has_interaction_since(sender_id, at):
+    local_time = at.astimezone(moldova_tz).replace(tzinfo=None)
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT s.last_interaction_at >= %s FROM settings s JOIN users u ON s.id=u.id WHERE u.SENDER=%s",
+                       (local_time.replace(microsecond=0), sender_id))
+        row = cursor.fetchone()
+        return bool(row and row[0])
+
+
+def get_app_settings(prefix):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT setting_name,setting_value FROM app_settings WHERE LEFT(setting_name,%s)=%s",
+                       (len(prefix), prefix))
+        return dict(cursor.fetchall())
+
+
+def set_app_settings(values):
+    """Atomically persist an observation and its pending notices (each value <=255 chars)."""
+    if any(value is not None and len(value) > 255 for value in values.values()):
+        raise ValueError("app_settings value exceeds 255 characters")
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        try:
+            conn.start_transaction()
+            for key, value in values.items():
+                if value is None:
+                    cursor.execute("DELETE FROM app_settings WHERE setting_name=%s", (key,))
+                else:
+                    cursor.execute("INSERT INTO app_settings VALUES (%s,%s) ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value)",
+                                   (key, value))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def claim_watch_date(date):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        try:
+            conn.start_transaction()
+            cursor.execute("INSERT IGNORE INTO app_settings VALUES ('fcim_attempt_date','')")
+            cursor.execute("UPDATE app_settings SET setting_value=%s WHERE setting_name='fcim_attempt_date' AND setting_value < %s",
+                           (date, date))
+            claimed = cursor.rowcount == 1
+            if claimed:
+                cursor.execute("INSERT INTO app_settings VALUES ('fcim_run','incomplete') ON DUPLICATE KEY UPDATE setting_value='incomplete'")
+            conn.commit()
+            return claimed
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def get_app_setting(name: str, default: str = '0', *, strict=False) -> str:
     """Get a global app setting value by name"""
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT setting_value FROM orar_bot.app_settings WHERE setting_name = %s",
+                "SELECT setting_value FROM app_settings WHERE setting_name = %s",
                 (name,)
             )
             row = cursor.fetchone()
             return row[0] if row else default
     except Exception as e:
+        if strict:
+            raise
         send_logs(f"Failed to get app setting '{name}': {str(e)}", "error")
         return default
 
@@ -745,7 +860,7 @@ def set_app_setting(name: str, value: str) -> None:
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO orar_bot.app_settings (setting_name, setting_value)
+            INSERT INTO app_settings (setting_name, setting_value)
             VALUES (%s, %s)
             ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
             """,

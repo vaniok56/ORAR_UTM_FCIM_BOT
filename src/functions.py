@@ -196,74 +196,20 @@ def get_local_schedule_versions():
             versions[i] = None
     return versions
 
-def get_online_schedule_versions():
-    """Fetch current schedule versions from FCIM website"""
+def reminder_eligible(user, *, selection=None):
+    if not user or user.get('noti') != 1 or user.get('ban') == 1:
+        return False
+    if user.get('delivery_status') not in ('unknown', 'delivered'):
+        return False
+    if selection is not None and any(user.get(field) != selection.get(field)
+                                     for field in ('group_n', 'year_s', 'subgrupa')):
+        return False
     try:
-        response = requests.get("https://fcim.utm.md/procesul-de-studii/orar/", timeout=10)
-        if response.status_code != 200:
-            send_logs(f"Failed to fetch schedule page: {response.status_code}", 'error')
-            return {}
-        
-        content = response.text
-        
-        # Find the row containing "Orar Semestrul de" (case insensitive)
-        # matches the first occurring row, which is usually the current semester
-        target_phrase = "Orar Semestrul de"
-        idx = content.lower().find(target_phrase.lower())
-        
-        matches = []
-        if idx != -1:
-             # Isolate the row content: search backwards for <tr and forwards for </tr>
-            start_tr = content.rfind("<tr", 0, idx)
-            end_tr = content.find("</tr>", idx)
-            
-            if start_tr != -1 and end_tr != -1:
-                row_content = content[start_tr:end_tr]
-                
-                # Parse each link. The site uses different separators and filenames.
-                links = re.findall(
-                    r'href\s*=\s*["\']([^"\']+\.pdf)(?:\?[^"\']*)?["\']',
-                    row_content,
-                    re.IGNORECASE,
-                )
-                matches = []
-                for link in links:
-                    filename = link.rsplit('/', 1)[-1].split('?', 1)[0]
-                    year_match = re.match(
-                        r'anul[_-](IV|III|II|I)(?:[_-]|\.pdf$)',
-                        filename,
-                        re.IGNORECASE,
-                    )
-                    if not year_match:
-                        continue
-                    version_match = re.search(r'-(\d+)\.pdf$', filename, re.IGNORECASE)
-                    matches.append(
-                        (
-                            year_match.group(1),
-                            version_match.group(1) if version_match else '',
-                        )
-                    )
-            else:
-                 send_logs("Found 'Orar Semestrul de' but could not isolate table row", 'warning')
-        else:
-             send_logs("Could not find 'Orar Semestrul de' in page content", 'warning')
+        get_schedule_and_groups(user.get('group_n'), user.get('year_s'))
+    except (ValueError, TypeError):
+        return False
+    return True
 
-        roman_to_num = {'I': 1, 'II': 2, 'III': 3, 'IV': 4}
-        versions = {}
-
-        for roman_year, version in matches:
-            year_num = roman_to_num.get(roman_year.upper())
-            if not year_num:
-                continue
-            # If the second capture group (version) is empty, the file is final
-            versions[year_num] = normalize_schedule_version(version)
-        
-        send_logs(f"Fetched online versions: {versions}", 'info')
-        return versions
-        
-    except Exception as e:
-        send_logs(f"Error fetching online schedule versions: {e}", 'error')
-        return {}
 
 def get_schedule_and_groups(cur_group, study_year=None):
     matches = [year for year in range(1, 5)

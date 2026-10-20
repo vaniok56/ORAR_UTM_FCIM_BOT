@@ -237,6 +237,14 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
         text += f"  • Total users with groups: {users_with_groups_count}\n"
         text += f"  • Users with notifications: {users_with_notifications}\n"
         text += f"  • Users with selected sub-group: {users_with_subgroups}\n"
+        delivery_users = db.get_all_users()
+        counts = delivery_users['delivery_status'].value_counts()
+        text += "📬 Recorded delivery status:\n"
+        for status in db.DELIVERY_STATUSES:
+            text += f"  • {status}: {counts.get(status, 0)}\n"
+        eligible = sum(runtime.reminder_eligible(row.to_dict())
+                       for _, row in delivery_users.iterrows())
+        text += f"  • Eligible reminder candidates: {eligible}\n"
         text += f"🌐 Languages distribution:\n"
         text += f"  • Romanian: {lang_ro}\n"
         text += f"  • Russian: {lang_ru}\n"
@@ -522,24 +530,15 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
                 user = row['SENDER']
                 try:
                     sender = int(user[1:])
-                    if uploaded_media:
-                        await client.send_file(
-                            sender,
-                            uploaded_media,
-                            caption=text,
-                            parse_mode="Markdown"
-                        )
-                    elif media_path and os.path.exists(media_path):
-                        await client.send_file(
-                            sender,
-                            media_path,
-                            caption=text,
-                            parse_mode="Markdown"
-                        )
+                    guard = lambda: (db.get_user_for_delivery(user) or {}).get('delivery_status') in ('unknown', 'delivered')
+                    media = uploaded_media or (media_path if media_path and os.path.exists(media_path) else None)
+                    if media:
+                        sent = await client.send_file(sender, media, caption=text, parse_mode="Markdown", delivery_guard=guard)
                     else:
-                        await client.send_message(sender, text, parse_mode="Markdown")
+                        sent = await client.send_message(sender, text, parse_mode="Markdown", delivery_guard=guard)
 
-                    sent_count += 1
+                    if sent is not None:
+                        sent_count += 1
                 except Exception:
                     error_count += 1
 

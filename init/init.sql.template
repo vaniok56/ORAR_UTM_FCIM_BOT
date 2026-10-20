@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS orar_bot.settings (
     last_interaction_at DATETIME DEFAULT NULL,
     lang VARCHAR(5) DEFAULT 'none',
     emoji BOOLEAN NOT NULL DEFAULT 1,
+    delivery_status ENUM('unknown', 'delivered', 'blocked', 'deleted') NOT NULL DEFAULT 'unknown',
     INDEX idx_settings_last_interaction_at (last_interaction_at)
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -192,7 +193,7 @@ DELIMITER //
 CREATE PROCEDURE IF NOT EXISTS orar_bot.get_all_users()
 BEGIN
     SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa,
-           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang
+           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang, s.delivery_status
     FROM users u
     JOIN settings s ON u.id = s.id;
 END //
@@ -209,7 +210,7 @@ BEGIN
     SET @value_val = field_value;
     
     SET @query = CONCAT('SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa, ',
-                       's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang ',
+                       's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang, s.delivery_status ',
                        'FROM users u JOIN settings s ON u.id = s.id WHERE ', @field_val, ' = ?');
     
     PREPARE stmt FROM @query;
@@ -229,7 +230,7 @@ BEGIN
     SET @value_val = field_value;
     
     SET @query = CONCAT('SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa, ',
-                       's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang ',
+                       's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang, s.delivery_status ',
                        'FROM users u JOIN settings s ON u.id = s.id WHERE ', @field_val, ' != ?');
     
     PREPARE stmt FROM @query;
@@ -289,7 +290,7 @@ CREATE PROCEDURE IF NOT EXISTS orar_bot.select_all_user_data(
 )
 BEGIN
     SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa,
-           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang
+           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang, s.delivery_status
     FROM users u
     JOIN settings s ON u.id = s.id
     WHERE u.SENDER = sender COLLATE utf8mb4_unicode_ci;

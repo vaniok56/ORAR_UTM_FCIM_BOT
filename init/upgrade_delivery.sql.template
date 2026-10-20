@@ -1,0 +1,50 @@
+-- Existing databases only, while the bot is stopped, after backup and owner approval.
+-- delivery_status already exists in production. Do not replay init.sql.
+USE orar_bot;
+SET SESSION lock_wait_timeout = 5;
+
+DELIMITER //
+DROP PROCEDURE IF EXISTS get_all_users //
+CREATE PROCEDURE get_all_users()
+BEGIN
+    SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa,
+           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang, s.delivery_status
+    FROM users u JOIN settings s ON u.id=s.id;
+END //
+
+DROP PROCEDURE IF EXISTS get_all_users_with //
+CREATE PROCEDURE get_all_users_with(IN field VARCHAR(50), IN field_value VARCHAR(50))
+BEGIN
+    SET @value_val = field_value;
+    SET @query = CONCAT('SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa, ',
+        's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang, s.delivery_status ',
+        'FROM users u JOIN settings s ON u.id=s.id WHERE ', field, ' = ?');
+    PREPARE stmt FROM @query;
+    EXECUTE stmt USING @value_val;
+    DEALLOCATE PREPARE stmt;
+END //
+
+DROP PROCEDURE IF EXISTS get_all_users_without //
+CREATE PROCEDURE get_all_users_without(IN field VARCHAR(50), IN field_value VARCHAR(50))
+BEGIN
+    SET @value_val = field_value;
+    SET @query = CONCAT('SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa, ',
+        's.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang, s.delivery_status ',
+        'FROM users u JOIN settings s ON u.id=s.id WHERE ', field, ' != ?');
+    PREPARE stmt FROM @query;
+    EXECUTE stmt USING @value_val;
+    DEALLOCATE PREPARE stmt;
+END //
+
+DROP PROCEDURE IF EXISTS select_all_user_data //
+CREATE PROCEDURE select_all_user_data(IN sender VARCHAR(15))
+BEGIN
+    SELECT u.SENDER, u.group_n, u.spec, u.year_s, u.subgrupa,
+           s.noti, s.admins, s.prem, s.gamble, s.ban, s.ban_time, s.last_interaction_at, s.lang, s.delivery_status
+    FROM users u JOIN settings s ON u.id=s.id
+    WHERE u.SENDER=sender COLLATE utf8mb4_unicode_ci;
+END //
+DELIMITER ;
+
+-- Verified current production backup recipient; stage must use its own approved recipient.
+INSERT IGNORE INTO app_settings VALUES ('fcim_owner_id', '500303890');

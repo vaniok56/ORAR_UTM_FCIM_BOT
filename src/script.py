@@ -1,6 +1,6 @@
-from telethon import TelegramClient, events, functions, types
+from telethon import TelegramClient, events, functions, types, utils
 from telethon.tl.custom import Button
-from telethon.errors import MessageNotModifiedError
+from telethon.errors import MessageNotModifiedError, UserIsBlockedError, InputUserDeactivatedError, UserDeactivatedError
 
 import configparser # read
 import datetime
@@ -8,7 +8,8 @@ import pytz
 import os
 
 import handlers.db as db
-from functions import print_day, print_sapt, print_next_course, button_grid, simu_button, send_logs, get_next_course_time, is_rate_limited, format_id, get_version, write_groups_to_json, get_online_schedule_versions, get_local_schedule_versions
+from functions import print_day, print_sapt, print_next_course, button_grid, simu_button, send_logs, get_next_course_time, is_rate_limited, format_id, get_version, write_groups_to_json, get_local_schedule_versions, reminder_eligible
+import version_watch
 write_groups_to_json()
 from functions import cur_group, is_even, bulk_send_shift_earlier, current_pair_index
 from functions import emoji_preview, format_hours
@@ -38,6 +39,74 @@ TRACKED_BUTTONS.add("Orele ⏰")
 
 import pandas as pd
 import asyncio
+from collections import defaultdict
+
+delivery_locks = defaultdict(asyncio.Lock)
+delivery_active = set()
+# shortcut: event ordering is process-local; add persisted observation time if stricter ordering is needed.
+delivery_events = {}
+
+
+def record_delivery(sender, status):
+    try:
+        db.set_delivery_status(format_id(sender), status)
+    except Exception as error:
+        send_logs(f"Delivery status write failed for {sender}: {type(error).__name__}", "error")
+
+
+async def delivery_event(sender, at, stopped=False):
+    async with delivery_locks[sender]:
+        if sender in delivery_events and at < delivery_events[sender]:
+            return
+        try:
+            if stopped and db.has_interaction_since(format_id(sender), at):
+                return
+            db.set_delivery_status(format_id(sender), 'blocked' if stopped else 'unknown', only_blocked=not stopped)
+            delivery_events[sender] = at
+        except Exception as error:
+            send_logs(f"Delivery event write failed for {sender}: {type(error).__name__}", "error")
+
+
+async def track_send(entity, operation, guard=None):
+    if isinstance(entity, int):
+        sender = entity
+    else:
+        try:
+            sender = utils.get_peer_id(entity)
+        except (TypeError, ValueError):
+            return await operation()
+    identity = (asyncio.current_task(), sender)
+    if sender <= 0 or identity in delivery_active:
+        return await operation()
+    async with delivery_locks[sender]:
+        if guard is not None and not guard():
+            return None
+        delivery_active.add(identity)
+        at = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+        try:
+            result = await operation()
+        except (UserIsBlockedError, InputUserDeactivatedError, UserDeactivatedError) as error:
+            record_delivery(sender, 'blocked' if isinstance(error, UserIsBlockedError) else 'deleted')
+            delivery_events[sender] = at
+            raise
+        else:
+            # A status-write failure must not turn a successful send into a duplicate retry.
+            record_delivery(sender, 'delivered')
+            delivery_events[sender] = at
+            return result
+        finally:
+            delivery_active.remove(identity)
+
+
+class DeliveryClient(TelegramClient):
+    # event.reply/respond and send_message(file=...) use these methods too.
+    async def send_message(self, entity, *args, delivery_guard=None, **kwargs):
+        send = super().send_message
+        return await track_send(entity, lambda: send(entity, *args, **kwargs), delivery_guard)
+
+    async def send_file(self, entity, *args, delivery_guard=None, **kwargs):
+        send = super().send_file
+        return await track_send(entity, lambda: send(entity, *args, **kwargs), delivery_guard)
 
 #### Access credentials
 config = configparser.ConfigParser()
@@ -50,7 +119,24 @@ api_hash = config.get('default','api_hash') # get the api hash
 BOT_TOKEN = config.get('default','BOT_TOKEN') # get the bot token
 
 # Keep the local test bot session separate from the production session.
-client = TelegramClient(os.environ.get('ORAR_SESSION', 'sessions/session_master'), api_id, api_hash)
+client = DeliveryClient(os.environ.get('ORAR_SESSION', 'sessions/session_master'), api_id, api_hash)
+
+# Register returns before command handlers so a successful reply is not cleared afterward.
+@client.on(events.NewMessage(incoming=True))
+async def delivery_message(event):
+    if event.is_private and event.sender_id:
+        await delivery_event(event.sender_id, event.date)
+
+
+@client.on(events.CallbackQuery())
+async def delivery_callback(event):
+    if event.is_private:
+        await delivery_event(event.sender_id, datetime.datetime.now(datetime.timezone.utc))
+
+
+@client.on(events.Raw(types.UpdateBotStopped))
+async def delivery_stopped(update):
+    await delivery_event(update.user_id, update.date, update.stopped)
 
 #keyboard button factories (per-language)
 def build_bot_kb(lang):
@@ -283,17 +369,7 @@ async def versionn(event):
             peer=SENDER,
             action=types.SendMessageTypingAction()
         ))
-    local_schedule_versions = get_local_schedule_versions()
-    online_schedule_versions = get_online_schedule_versions()
-    text = get_text(lang, "version_schedule_info")
-    for year in local_schedule_versions.keys():
-        local_ver = local_schedule_versions.get(year)
-        online_ver = online_schedule_versions.get(year)
-        local_display = "missing" if local_ver is None else f"v{local_ver}" if isinstance(local_ver, int) else local_ver
-        online_display = "missing" if online_ver is None else f"v{online_ver}" if isinstance(online_ver, int) else online_ver
-        match = local_ver is not None and local_ver == online_ver
-
-        text += get_text(lang, "version_year", year=year, local=local_display, online=online_display) + (" ✅" if match else " ❌") + "\n"
+    text = version_watch.version_text(get_local_schedule_versions())
     text += get_text(lang, "version_bot_info")
     text += get_text(lang, "version_label", version=latest_version)
     text += get_text(lang, "version_date", date=latest_date)
@@ -535,11 +611,8 @@ def prepare_next_courses(week_day, is_even, course_index):
     #only group != 'none' / ban != 1 / noti == 1
     try:
         all_users = db.get_all_users()
-        filtered_users = all_users[
-                (all_users['group_n'].astype(str) != 'none') & 
-                (all_users['ban'] != 1) &
-                (all_users['noti'] == 1)
-            ]
+        filtered_users = all_users[all_users.apply(
+            lambda row: reminder_eligible(row.to_dict()), axis=1).astype(bool)]
         error_count = 0
         for index, row in filtered_users.iterrows():
             try:
@@ -579,18 +652,24 @@ def prepare_next_courses(week_day, is_even, course_index):
 async def send_notification(sender, next_course_data):
     global noti_send
     
-    #re-check if notifications are still enabled for this user
-    if db.locate_field(format_id(sender), 'noti') != 1:
-        return
-    
     try:
-        week_day, group, parity, index, subgroup, user_lang, year = next_course_data
+        user = db.get_user_for_delivery(format_id(sender))
+        if not reminder_eligible(user):
+            return False
+        week_day, group, parity, index, subgroup, _, year = next_course_data
+        selected = {'group_n': group, 'year_s': year, 'subgrupa': subgroup}
+        if (user.get('group_n'), user.get('year_s'), user.get('subgrupa')) != (group, year, subgroup):
+            return False
+        user_lang = user.get('lang') if user.get('lang') in SUPPORTED_LANGS else DEFAULT_LANG
         next_course = print_next_course(week_day, group, parity, index, subgroup, user_lang,
                                        study_year=year, emoji=db.get_user_emoji(format_id(sender)))
         if not next_course:
             return False
         text = get_text(user_lang, "next_pair", course=next_course)
-        await client.send_message(sender, text, parse_mode="HTML")
+        sent = await client.send_message(sender, text, parse_mode="HTML", delivery_guard=lambda:
+            reminder_eligible(db.get_user_for_delivery(format_id(sender)), selection=selected))
+        if sent is None:
+            return False
         noti_send += 1
         return True
     except Exception as e:
@@ -675,11 +754,8 @@ async def send_schedule_tomorrow():
 
             # Get users with notifications enabled
             all_users = db.get_all_users()
-            filtered_users = all_users[
-                    (all_users['group_n'].astype(str) != 'none') & 
-                    (all_users['ban'] != 1) &
-                    (all_users['noti'] == 1)
-                ]
+            filtered_users = all_users[all_users.apply(
+                lambda row: reminder_eligible(row.to_dict()), axis=1).astype(bool)]
             
             noti_day = 0  # Counter for successful notifications
             send_logs(f"Starting to send tomorrow's schedule to {len(filtered_users)} eligible users", 'info')
@@ -688,6 +764,10 @@ async def send_schedule_tomorrow():
             for index, row in filtered_users.iterrows():
                 try:
                     sender = int(row['SENDER'][1:])
+                    user = db.get_user_for_delivery(format_id(sender))
+                    if not reminder_eligible(user):
+                        continue
+                    row = user
                     csv_gr = row['group_n']
                     subgrupa = row['subgrupa']
                     user_lang = row.get('lang', DEFAULT_LANG)
@@ -703,8 +783,10 @@ async def send_schedule_tomorrow():
                                         study_year=row.get('year_s'), emoji=db.get_user_emoji(format_id(sender)))
                     if day_sch:
                         text = get_text(user_lang, "notif_tomorrow_schedule", day=lang_week_days[week_day], schedule=day_sch)
-                        await client.send_message(sender, text, parse_mode="HTML")
-                        noti_day += 1
+                        sent = await client.send_message(sender, text, parse_mode="HTML", delivery_guard=lambda:
+                            reminder_eligible(db.get_user_for_delivery(format_id(sender)), selection=row))
+                        if sent is not None:
+                            noti_day += 1
                 except Exception as e:
                     send_logs(f"Error sending schedule to {row['SENDER']}: {e}", 'error')
 
@@ -719,11 +801,11 @@ async def send_schedule_tomorrow():
 #backup BD automation
 async def backup_database():
     try:
-        if not admins1:
-            send_logs("No admins found for database backup", 'warning')
+        recipient = db.get_app_setting('fcim_owner_id', None, strict=True)
+        if not recipient or not recipient.isdecimal() or int(recipient) <= 0:
+            send_logs("Configure explicit fcim_owner_id for database backup and FCIM alerts", 'error')
             return
-            
-        admin_id = int(admins1[0][1:])
+        admin_id = int(recipient)
 
         #wait
         now = datetime.datetime.now(moldova_tz)
@@ -767,6 +849,7 @@ if __name__ == '__main__':
         loop.create_task(send_curr_course_users())
         loop.create_task(send_schedule_tomorrow())
         loop.create_task(backup_database())
+        loop.create_task(version_watch.run(client))
         await client.run_until_disconnected()
     
     asyncio.run(main())
