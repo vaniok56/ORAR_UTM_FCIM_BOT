@@ -2,6 +2,60 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.15.2] - 2026-10-20
+
+### TL;DR
+Adds a daily official FCIM schedule watcher and persistent Telegram delivery
+status. Reminders and broadcasts now skip accounts Telegram reports as blocked
+or deleted, `/stats` shows delivery and eligibility counts, and `/version`
+reads cached observations instead of fetching PDFs. Existing databases need the
+manual procedure upgrade before this code starts.
+
+### Added
+- Daily 18:00 `Europe/Chisinau` check of the official FCIM full-time timetable
+  link and its four year PDFs, with no startup fetch, no missed-run catch-up and
+  no automatic publication. The first successful scheduled observation seeds
+  the baseline silently; change alerts contain the affected year, official link
+  and observation time and go only to the configured owner.
+- One outage alert after two consecutive failed daily checks per source/year,
+  repeat suppression during the same outage, and one recovery notice after an
+  alerted outage. State and a retryable notice outbox persist in `app_settings`.
+- `settings.delivery_status` with `unknown`, `delivered`, `blocked` and
+  `deleted`; successful normal sends, private returns and Telegram stop/restart
+  updates maintain it. Temporary failures do not change status or preferences.
+- `/stats` all-account delivery-status counts and eligible reminder candidates,
+  plus startup validation of the column and the four user-read procedures.
+
+### Changed
+- Course reminders and tomorrow schedules re-read each account before sending;
+  blocked, deleted, banned, opted-out and invalid-group accounts are excluded.
+  Admin broadcasts keep their selected audience but skip known-undeliverable
+  accounts.
+- `/version` is compact and reads saved observations only: local workbook
+  revision versus the official PDF filename revision, with check marks for
+  numeric values. Unchecked, interrupted, stale and unavailable observations
+  are shown separately instead of being reported as missing schedules.
+- Daily database backup recipient comes from the explicit `fcim_owner_id`
+  app setting instead of mutable admin-list ordering. Startup now requires
+  the MySQL global time zone to be `Europe/Chisinau` and seeds/validates
+  `fcim_owner_id` so backups and alerts cannot silently stop.
+- Existing databases require `init/upgrade_delivery.sql.template` to expose
+  `delivery_status` from the four read procedures before this code starts.
+  Fresh installs already include the column.
+
+### Fixed
+- Reminder eligibility is checked again immediately before each send, and a
+  failed delivery-status write no longer turns a successful Telegram send into
+  a retried duplicate.
+- Stale or unavailable user caches fail closed for scheduled delivery rather
+  than falling back to an uncertain recipient list.
+- Watcher observation and notice sending are serialized so a daily check cannot
+  race a pending owner alert.
+
+### Removed
+- The old landing-page PDF scraper behind `/version`; website data is no longer
+  fetched on demand.
+
 ## [0.15.1] - 2026-10-07
 
 ### TL;DR
