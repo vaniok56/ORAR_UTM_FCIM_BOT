@@ -3,7 +3,7 @@ import openpyxl # excel read library
 import datetime
 import pytz
 import requests
-from telethon import types
+from telethon import Button, types
 import handlers.db as db
 import re
 from course_classification import format_course, load_classifications, select_subgroup, viewer_subgroup
@@ -154,7 +154,7 @@ def send_logs(message, type):
         logging.info(message)
 
 # Moved down because of circular import with localization.py
-from localization import get_text, get_week_days, DEFAULT_LANG
+from localization import get_text, get_week_days, DEFAULT_LANG, SUPPORTED_LANGS
 
 #open the excel files
 for i in range(1, 5):
@@ -255,10 +255,22 @@ def getMergedCellVal(sheet, cell):
     cell_value_cache[cell_key] = value
     return value
 
-# Needs Telethon 1.45.0 or newer. Production pins 1.44.0, where types.ButtonTypeSimpleWebView
-# does not exist, so ship requirements.txt with this code when promoting to target host.
+# Web-view buttons require Telethon 1.45.0 or newer.
 def simu_button():
     return types.KeyboardButton("SIMU📚", types.ButtonTypeSimpleWebView("https://simu.utm.md/students/"))
+
+SCHEDULE_BUTTON_KEYS = ('btn_today', 'btn_tomorrow', 'btn_current_week', 'btn_next_week')
+
+def build_bot_kb(lang):
+    return [Button.text(get_text(lang, key), resize=True) for key in SCHEDULE_BUTTON_KEYS] + [
+        simu_button(),
+        types.KeyboardButton(get_text(lang, 'btn_web'), types.ButtonTypeSimpleWebView("https://fcim.utm.md/procesul-de-studii/orar")),
+    ]
+
+def schedule_reply_buttons(text, lang):
+    if any(text == get_text(code, key) for code in SUPPORTED_LANGS for key in SCHEDULE_BUTTON_KEYS):
+        return button_grid(build_bot_kb(lang), 2)
+    return None
 
 def button_grid(buttons, butoane_rand):
     grid = []

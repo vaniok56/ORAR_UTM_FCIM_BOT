@@ -1,4 +1,4 @@
-"""Daily official-PDF observations; never imports or publishes a timetable."""
+"""Startup and twice-daily official-PDF observations; never publishes a timetable."""
 import asyncio
 import datetime as dt
 import hashlib
@@ -10,12 +10,15 @@ from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
 import requests
+from telethon import Button
 import handlers.db as db
 from functions import send_logs
+from localization import get_text
 
 ZONE = ZoneInfo('Europe/Chisinau')
 LANDING = 'https://fcim.utm.md/procesul-de-studii/orar/'
 YEARS = {'Anul I': 1, 'Anul II': 2, 'Anul III': 3, 'Anul IV': 4}
+CHECK_TIMES = (dt.time(12, 30), dt.time(18))
 _watch_lock = asyncio.Lock()
 
 
@@ -91,26 +94,44 @@ def fetch(url, *, pdf=False):
 
 def next_check(now):
     local = now.astimezone(ZONE)
-    day = local.date() + dt.timedelta(days=local.hour >= 18)
-    return dt.datetime.combine(day, dt.time(18), ZONE)
+    for clock in CHECK_TIMES:
+        target = dt.datetime.combine(local.date(), clock, ZONE)
+        if target > local:
+            return target
+    return dt.datetime.combine(local.date() + dt.timedelta(days=1), CHECK_TIMES[0], ZONE)
 
 
-def save_observation(source, at, *, url=None, fingerprint=None, error=None):
+def previous_check(now):
+    local = now.astimezone(ZONE)
+    for clock in reversed(CHECK_TIMES):
+        target = dt.datetime.combine(local.date(), clock, ZONE)
+        if target <= local:
+            return target
+    return dt.datetime.combine(local.date() - dt.timedelta(days=1), CHECK_TIMES[-1], ZONE)
+
+
+def notice_key(at, source, kind):
+    # Compact timestamp keeps even discovery-source keys within VARCHAR(50).
+    stamp = dt.datetime.fromisoformat(at).astimezone(dt.timezone.utc).strftime('%Y%m%dT%H%M%S%f')
+    return f'fcim_notice_{stamp}_{source}_{kind}'
+
+
+def save_observation(source, at, *, url=None, fingerprint=None, error=None, scheduled=True):
     settings = db.get_app_settings('fcim_')
     state_key = f'fcim_state_{source}'
     state = json.loads(settings.get(state_key, '{}'))
     values = {}
 
     def notice(kind):
-        key = f'fcim_notice_{at[:10]}_{source}_{kind}'
+        key = notice_key(at, source, kind)
         values[key] = json.dumps({'source': source, 'kind': kind, 'at': at}, separators=(',', ':'))
         if url:
             values[key.replace('notice', 'link', 1)] = url
 
     if error:
-        state['f'] = min(state.get('f', 0) + 1, 9999)
+        state['f'] = min(state.get('f', 0) + int(scheduled), 9999)
         state['error'] = type(error).__name__
-        if state['f'] >= 2 and not state.get('outage'):
+        if scheduled and state['f'] >= 2 and not state.get('outage'):
             notice('outage')
             state['outage'] = 'pending'
     else:
@@ -130,16 +151,19 @@ def save_observation(source, at, *, url=None, fingerprint=None, error=None):
     db.set_app_settings(values)
 
 
-async def _check(now):
-    at = now.astimezone(ZONE).isoformat(timespec='seconds')
-    if not db.claim_watch_date(at[:10]):
+async def _check(now, *, startup=False):
+    at = now.astimezone(ZONE).isoformat(timespec='microseconds')
+    if not startup and not db.claim_watch_slot(previous_check(now).strftime('%Y-%m-%dT%H:%M')):
         return False
+    db.set_app_settings({'fcim_run': 'incomplete', 'fcim_attempt_at': at})
+    label = 'startup' if startup else 'scheduled'
+    send_logs(f'FCIM {label} check started', 'info')
     try:
         page = await asyncio.to_thread(fetch, LANDING)
         mapping = pdf_mapping(await asyncio.to_thread(fetch, interactive_url(page)))
     except Exception as error:
         send_logs(f'FCIM discovery unavailable: {type(error).__name__}', 'warning')
-        save_observation('source', at, error=error)
+        save_observation('source', at, error=error, scheduled=not startup)
     else:
         save_observation('source', at)
         for year, url in mapping.items():
@@ -147,10 +171,11 @@ async def _check(now):
                 fingerprint = await asyncio.to_thread(fetch, url, pdf=True)
             except Exception as error:
                 send_logs(f'FCIM year {year} unavailable: {type(error).__name__}', 'warning')
-                save_observation(str(year), at, error=error)
+                save_observation(str(year), at, error=error, scheduled=not startup)
             else:
                 save_observation(str(year), at, url=url, fingerprint=fingerprint)
     db.set_app_settings({'fcim_run': 'complete'})
+    send_logs(f'FCIM {label} check finished', 'info')
     return True
 
 
@@ -172,7 +197,8 @@ async def _send_pending(client):
         text = {'change': 'official PDF changed; review needed before manual publication.',
                 'outage': 'unavailable for two consecutive scheduled checks.',
                 'recovery': 'recovered after the reported outage.'}[kind]
-        await client.send_message(int(owner), f'FCIM {label}: {text}\nObserved: {at}\n{url}',
+        observed = dt.datetime.fromisoformat(at).isoformat(timespec='seconds')
+        await client.send_message(int(owner), f'FCIM {label}: {text}\nObserved: {observed}\n{url}',
                                   parse_mode=None, link_preview=False)
         # shortcut: send/delete cannot be atomic; a crash here can repeat this notice.
         values = {key: None, link_key: None}
@@ -181,7 +207,7 @@ async def _send_pending(client):
             state = json.loads(db.get_app_setting(state_key, '{}', strict=True))
             if state.get('f', 0) == 0:
                 # Recovery may have happened while Telegram was sending this outage.
-                values[f"fcim_notice_{state['ok'][:10]}_{source}_recovery"] = json.dumps(
+                values[notice_key(state['ok'], source, 'recovery')] = json.dumps(
                     {'source': source, 'kind': 'recovery', 'at': state['ok']}, separators=(',', ':'))
             else:
                 state['outage'] = 'sent'
@@ -189,9 +215,9 @@ async def _send_pending(client):
         db.set_app_settings(values)
 
 
-async def check(now):
+async def check(now, *, startup=False):
     async with _watch_lock:
-        return await _check(now)
+        return await _check(now, startup=startup)
 
 
 async def send_pending(client):
@@ -212,6 +238,11 @@ async def run(client):
     target = next_check(dt.datetime.now(ZONE))
     notices = asyncio.create_task(retry_notices(client))
     try:
+        try:
+            await check(dt.datetime.now(ZONE), startup=True)
+        except Exception as error:
+            send_logs(f'FCIM startup check failed: {type(error).__name__}', 'error')
+        send_logs(f'FCIM next scheduled check: {target.isoformat(timespec="minutes")}', 'info')
         while True:
             try:
                 now = dt.datetime.now(ZONE)
@@ -219,6 +250,7 @@ async def run(client):
                     if (now - target).total_seconds() < 60:
                         await check(now)
                     target = next_check(dt.datetime.now(ZONE))
+                    send_logs(f'FCIM next scheduled check: {target.isoformat(timespec="minutes")}', 'info')
                 await asyncio.sleep(min(60, max(1, (target - dt.datetime.now(ZONE)).total_seconds())))
             except Exception as error:
                 send_logs(f'FCIM monitor error: {type(error).__name__}', 'error')
@@ -234,16 +266,27 @@ def _pdf_label(url):
     return f'v{match.group(1)}' if match else 'final' if url else '?'
 
 
-def _clock(iso):
+def pdf_buttons(lang):
     try:
-        return dt.datetime.fromisoformat(iso).strftime('%d.%m %H:%M')
-    except (TypeError, ValueError):
-        return '?'
+        settings = db.get_app_settings('fcim_')
+    except Exception as error:
+        send_logs(f'FCIM PDF links unavailable: {type(error).__name__}', 'warning')
+        return []
+    buttons = []
+    for name, year in YEARS.items():
+        try:
+            url = official_url(settings.get(f'fcim_url_{year}'), pdf=True)
+            if not urlsplit(url).path.rsplit('/', 1)[1].lower().startswith(f'anul_{name.split()[1].lower()}_'):
+                continue
+        except ValueError:
+            continue
+        buttons.append(Button.url(get_text(lang, 'version_pdf_year', year=name.split()[1], number=year), url))
+    return [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
 
 
-def version_text(local_versions, now=None):
+def version_text(local_versions, now=None, *, lang='en'):
     now = (now or dt.datetime.now(ZONE)).astimezone(ZONE)
-    expected = (now.date() - dt.timedelta(days=now.hour < 18)).isoformat()
+    expected = previous_check(now) - dt.timedelta(minutes=5)
     try:
         settings = db.get_app_settings('fcim_')
         source = json.loads(settings.get('fcim_state_source', '{}'))
@@ -252,6 +295,7 @@ def version_text(local_versions, now=None):
         settings, source = {}, {'error': True}
     lines = ['Schedule (local / web):']
     missing, checked, stale = [], [], False
+    successful = []
     for year, version in local_versions.items():
         local = 'missing' if version is None else f'v{version}' if isinstance(version, int) else str(version)
         web = _pdf_label(settings.get(f'fcim_url_{year}'))
@@ -259,26 +303,38 @@ def version_text(local_versions, now=None):
             state = json.loads(settings.get(f'fcim_state_{year}', '{}'))
         except (TypeError, ValueError):
             state = {'error': True}
-        if source.get('error') or state.get('error') or settings.get('fcim_run') == 'incomplete' or not state.get('ok'):
+        at = None
+        try:
+            at = dt.datetime.fromisoformat(state.get('ok', ''))
+            if at.tzinfo is not None:
+                at = at.astimezone(ZONE)
+                successful.append(at)
+            else:
+                at = None
+        except (TypeError, ValueError):
+            pass
+        if source.get('error') or state.get('error') or settings.get('fcim_run') == 'incomplete' or at is None:
             web = '?'
             missing.append(str(year))
         else:
-            checked.append(state['ok'])
-            stale = stale or state['ok'][:10] < expected
+            checked.append(at)
+            stale = stale or at < expected
         mark = ''
         if local.startswith('v') and web.startswith('v') and local[1:].isdigit() and web[1:].isdigit():
             mark = ' ✅' if int(local[1:]) == int(web[1:]) else ' ❌'
         elif local == web == 'final':
             mark = ' ✅'
         lines.append(f'{year}: {local} / {web}{mark}')
+    timestamp = max(successful).strftime('%d.%m.%Y %H:%M') if successful else '—'
+    lines.append(get_text(lang, 'version_last_check', time=timestamp))
     if source.get('error'):
         lines.append('Web unavailable')
     elif settings.get('fcim_run') == 'incomplete':
-        lines.append('Web check interrupted')
+        lines.append('Web check incomplete')
     elif not checked:
         lines.append('Web not checked yet')
     elif missing:
         lines.append(f'Web missing for: {",".join(missing)}')
     elif stale:
-        lines.append(f'Web check stale (last {_clock(max(checked))})')
+        lines.append('Web check stale')
     return '\n'.join(lines) + '\n'

@@ -8,7 +8,7 @@ import pytz
 import os
 
 import handlers.db as db
-from functions import print_day, print_sapt, print_next_course, button_grid, simu_button, send_logs, get_next_course_time, is_rate_limited, format_id, get_version, write_groups_to_json, get_local_schedule_versions, reminder_eligible
+from functions import print_day, print_sapt, print_next_course, button_grid, build_bot_kb, schedule_reply_buttons, send_logs, get_next_course_time, is_rate_limited, format_id, get_version, write_groups_to_json, get_local_schedule_versions, reminder_eligible
 import version_watch
 write_groups_to_json()
 from functions import cur_group, is_even, bulk_send_shift_earlier, current_pair_index
@@ -137,16 +137,6 @@ async def delivery_callback(event):
 @client.on(events.Raw(types.UpdateBotStopped))
 async def delivery_stopped(update):
     await delivery_event(update.user_id, update.date, update.stopped)
-
-#keyboard button factories (per-language)
-def build_bot_kb(lang):
-    return [
-        Button.text(get_text(lang, 'btn_today'), resize=True),
-        Button.text(get_text(lang, 'btn_tomorrow'), resize=True),
-        Button.text(get_text(lang, 'btn_current_week'), resize=True),
-        Button.text(get_text(lang, 'btn_next_week'), resize=True),
-        simu_button(),
-    ]
 
 def build_start_kb(lang):
     return [
@@ -369,12 +359,13 @@ async def versionn(event):
             peer=SENDER,
             action=types.SendMessageTypingAction()
         ))
-    text = version_watch.version_text(get_local_schedule_versions())
+    text = version_watch.version_text(get_local_schedule_versions(), lang=lang)
     text += get_text(lang, "version_bot_info")
     text += get_text(lang, "version_label", version=latest_version)
     text += get_text(lang, "version_date", date=latest_date)
     text += get_text(lang, "version_github")
-    await client.send_message(SENDER, text, parse_mode="Markdown", link_preview=False)
+    await client.send_message(SENDER, text, parse_mode="Markdown", link_preview=False,
+                              buttons=version_watch.pdf_buttons(lang))
     send_logs(format_id(SENDER) + " - /version", 'info')
 
 #/contacts
@@ -469,11 +460,11 @@ async def mainee(event):
                 text = "\n\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_tomorrow", day=lang_week_days[week_day]) + day_sch
             else: 
                 text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_no_pairs_tomorrow", day=lang_week_days[week_day])
-            await client.send_message(SENDER, text, parse_mode="HTML")
+            await client.send_message(SENDER, text, parse_mode="HTML", buttons=schedule_reply_buttons(event.raw_text, lang))
             send_logs(format_id(SENDER) + " - /tomorrow", 'info')
     except Exception as e:
         send_logs(f"Error sending sch tomorr to {str(SENDER)}: {e}", 'error')
-        await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML")
+        await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML", buttons=schedule_reply_buttons(event.raw_text, lang))
     
 #/today
 @client.on(events.NewMessage(pattern='/today|Orarul de azi 📅|Today\'s schedule 📅|Расписание на сегодня 📅')) 
@@ -503,11 +494,11 @@ async def azii(event):
                 text = "\n\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_today", day=lang_week_days[week_day]) + day_sch
             else: 
                 text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_no_pairs_today", day=lang_week_days[week_day])
-            await client.send_message(SENDER, text, parse_mode="HTML")
+            await client.send_message(SENDER, text, parse_mode="HTML", buttons=schedule_reply_buttons(event.raw_text, lang))
             send_logs(format_id(SENDER) + " - /today", 'info')
     except Exception as e:
         send_logs(f"Error sending sch today to {str(SENDER)}: {e}", 'error')
-        await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML")
+        await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML", buttons=schedule_reply_buttons(event.raw_text, lang))
 
 #/curr_week
 @client.on(events.NewMessage(pattern='/curr_week|Săptămâna curentă 🗓️|Current week 🗓️|Текущая неделя 🗓️')) 
@@ -530,11 +521,11 @@ async def sapt_curr(event):
         else: 
             is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
             text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_current_week") + print_sapt(is_even, cur_group, subgrupa, lang, study_year=db.locate_field(format_id(SENDER), 'year_s'), emoji=db.get_user_emoji(format_id(SENDER)))
-            await client.send_message(SENDER, text, parse_mode="HTML")
+            await client.send_message(SENDER, text, parse_mode="HTML", buttons=schedule_reply_buttons(event.raw_text, lang))
             send_logs(format_id(SENDER) + " - /curr_week", 'info')
     except Exception as e:
         send_logs(f"Error sending curr week to {str(SENDER)}: {e}", 'error')
-        await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML")
+        await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML", buttons=schedule_reply_buttons(event.raw_text, lang))
 
 #/next_week
 @client.on(events.NewMessage(pattern='/next_week|Săptămâna viitoare 🗓️|Next week 🗓️|Следующая неделя 🗓️')) 
@@ -558,11 +549,11 @@ async def sapt_viit(event):
             is_even = (datetime.datetime.now(moldova_tz)).isocalendar().week % 2
             is_even = not is_even
             text = "\n" + get_text(lang, "schedule_group", group=cur_group) + "\n" + get_text(lang, "schedule_next_week") + print_sapt(is_even, cur_group, subgrupa, lang, study_year=db.locate_field(format_id(SENDER), 'year_s'), emoji=db.get_user_emoji(format_id(SENDER)))
-            await client.send_message(SENDER, text, parse_mode="HTML")
+            await client.send_message(SENDER, text, parse_mode="HTML", buttons=schedule_reply_buttons(event.raw_text, lang))
             send_logs(format_id(SENDER) + " - /next_week", 'info')
     except Exception as e:
         send_logs(f"Error sending next week to {str(SENDER)}: {e}", 'error')
-        await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML")
+        await client.send_message(SENDER, get_text(lang, "error_no_group"), parse_mode="HTML", buttons=schedule_reply_buttons(event.raw_text, lang))
 
 #/donations
 @client.on(events.NewMessage(pattern='/donations')) 

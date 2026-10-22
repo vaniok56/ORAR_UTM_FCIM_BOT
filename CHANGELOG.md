@@ -2,6 +2,33 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.16.0] - 2026-10-22
+
+### TL;DR
+Adds localized schedule shortcuts and makes official PDF checks more responsive.
+The main keyboard can refresh itself, `/version` links directly to the latest
+PDFs, and checks run on startup and twice daily. No database migration required.
+
+### Added
+- Localized `Orar 🌐` / `Schedule 🌐` / `Расписание 🌐` button opens the official
+  FCIM full-time schedule page in Telegram's web view.
+- `/version` now includes four direct PDF buttons and the last successful check
+  time in `Europe/Chisinau`, without seconds.
+- Official PDF checks now run after every bot start and at 12:30 and 18:00
+  `Europe/Chisinau`. A successful check up to five minutes before a scheduled
+  slot counts as fresh.
+
+### Changed
+- Schedule-button responses refresh the main keyboard; slash commands leave the
+  current keyboard untouched. Group selection now uses the same keyboard builder.
+- Pending PDF alerts use distinct keys, so multiple changes on the same day are
+  not overwritten.
+
+### Fixed
+- Startup failures no longer advance the two-scheduled-failure outage threshold.
+- Per-slot database claims prevent duplicate scheduled checks and reduce
+  simultaneous startup/scheduled conflicts.
+
 ## [0.15.2] - 2026-10-20
 
 ### TL;DR
