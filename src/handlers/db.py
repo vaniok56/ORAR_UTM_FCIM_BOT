@@ -819,14 +819,15 @@ def set_app_settings(values):
             raise
 
 
-def claim_watch_date(date):
+def claim_watch_slot(slot):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         try:
             conn.start_transaction()
-            cursor.execute("INSERT IGNORE INTO app_settings VALUES ('fcim_attempt_date','')")
-            cursor.execute("UPDATE app_settings SET setting_value=%s WHERE setting_name='fcim_attempt_date' AND setting_value < %s",
-                           (date, date))
+            # Lock exclusively before claiming; INSERT IGNORE can deadlock on lock upgrade.
+            cursor.execute("INSERT INTO app_settings VALUES ('fcim_scheduled_slot','') ON DUPLICATE KEY UPDATE setting_value=setting_value")
+            cursor.execute("UPDATE app_settings SET setting_value=%s WHERE setting_name='fcim_scheduled_slot' AND setting_value < %s",
+                           (slot, slot))
             claimed = cursor.rowcount == 1
             if claimed:
                 cursor.execute("INSERT INTO app_settings VALUES ('fcim_run','incomplete') ON DUPLICATE KEY UPDATE setting_value='incomplete'")

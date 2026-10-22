@@ -4,7 +4,7 @@ from telethon import events, functions, types
 from telethon.tl.custom import Button
 
 import handlers.db as db
-from functions import button_grid, simu_button, send_logs, is_rate_limited, format_id
+from functions import button_grid, build_bot_kb, send_logs, is_rate_limited, format_id
 from localization import get_text, get_user_lang
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
@@ -179,14 +179,7 @@ def register_group_handlers(client, years, specialties, group_list):
             text = get_text(lang, "group_selected", group=cur_group)
             await event.answer(get_text(lang, "group_group_selected"))
 
-            bot_kb = [
-                Button.text(get_text(lang, 'btn_today'), resize=True),
-                Button.text(get_text(lang, 'btn_tomorrow'), resize=True),
-                Button.text(get_text(lang, 'btn_current_week'), resize=True),
-                Button.text(get_text(lang, 'btn_next_week'), resize=True),
-                simu_button(),
-            ]
-            buttons_kb = button_grid(bot_kb, 2)
+            buttons_kb = button_grid(build_bot_kb(lang), 2)
 
             await client.edit_message(SENDER, event.message_id, text, parse_mode="HTML")
             await client.send_message(SENDER, get_text(lang, "group_selecting_subgroup"), parse_mode="HTML", buttons=buttons_kb)
