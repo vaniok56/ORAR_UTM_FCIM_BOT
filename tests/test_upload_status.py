@@ -200,3 +200,39 @@ class PublicationStateTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(group, "_get_lang", return_value="ro"):
             await self.call("year_callback", data=b"group_year_y2", message_id=1)
         self.assertIs(group.temp_selection.get(sender), current)
+
+    async def test_cancelled_media_broadcast_cleans_up_after_workers_stop(self):
+        import pandas as pd
+        handler = self.handlers["message_confirmation"]
+        send_mess = dict(zip(handler.__code__.co_freevars,
+                             (cell.cell_contents for cell in handler.__closure__)))["send_mess"]
+        users = pd.DataFrame([{"SENDER": f"U{1000 + number}"} for number in range(20)])
+        media = Path("broadcast-media.bin")
+        media.write_bytes(b"media")
+        active, started, finished, removed_at = [0], asyncio.Event(), [], []
+        async def send_file(sender, file, **kwargs):
+            active[0] += 1
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                active[0] -= 1
+                finished.append(sender)
+        def remove(path):
+            removed_at.append(active[0])
+            Path(path).unlink()
+        self.client.upload_file = AsyncMock(return_value="uploaded")
+        self.client.send_file = send_file
+        campaign = {"recipient": 5, "time": "Now", "user_id": 0, "text": "hello",
+                    "media_path": str(media), "language": "all"}
+        with patch.object(self.admin.db, "get_all_users", return_value=users), \
+                patch.object(self.admin.os, "remove", side_effect=remove):
+            task = asyncio.create_task(send_mess(campaign))
+            await asyncio.wait_for(started.wait(), 1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertEqual(removed_at, [0])
+        self.assertEqual(active[0], 0)
+        self.assertEqual(len(finished), 6)
+        self.assertFalse(media.exists())

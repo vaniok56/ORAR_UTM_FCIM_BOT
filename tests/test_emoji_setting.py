@@ -20,15 +20,24 @@ class EmojiSettingTests(unittest.IsolatedAsyncioTestCase):
         self.runtime, self.db = functions, db
         from functions import reminder_eligible
         self.user = {"SENDER": "U42", "group_n": "SAMPLE", "subgrupa": 0,
-                     "year_s": 1, "lang": "en", "noti": 1, "ban": 0, "delivery_status": "unknown"}
+                     "year_s": 1, "lang": "en", "noti": 1, "ban": 0, "delivery_status": "unknown", "emoji": 1}
         self.enterContext(patch.object(db, "get_user_for_delivery", return_value=self.user))
         self.enterContext(patch.object(functions, "get_schedule_and_groups", return_value=(object(), ["SAMPLE"])))
         self.text = get_text
+        self.sent = []
+
+        async def dispatch(sender, text, **kwargs):
+            text = kwargs['delivery_prepare']()
+            if text is None:
+                return None
+            self.sent.append(text)
+            return 'sent'
+
         functions.clear_schedule_caches()
         # Load handler functions without starting Telegram or connecting MySQL.
         tree = ast.parse(Path("src/script.py").read_text())
         names = {"emoji_button", "emoji_command", "emoji_callback", "send_notification",
-                 "send_schedule_tomorrow", "oree"}
+                 "send_tomorrow_recipient", "send_schedule_tomorrow", "oree"}
         nodes = [node for node in tree.body
                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
         for node in nodes:
@@ -39,12 +48,11 @@ class EmojiSettingTests(unittest.IsolatedAsyncioTestCase):
             "format_id": functions.format_id, "is_rate_limited": Mock(return_value=False),
             "_get_sender_id_and_lang": AsyncMock(return_value=(42, "en")),
             "send_logs": Mock(), "MessageNotModifiedError": MessageNotModifiedError,
-            "client": SimpleNamespace(send_message=AsyncMock()), "noti_send": 0,
+            "client": SimpleNamespace(send_message=AsyncMock(side_effect=dispatch)),
             "print_next_course": functions.print_next_course,
             "format_hours": functions.format_hours, "get_week_days": get_week_days,
             "DEFAULT_LANG": "en", "SUPPORTED_LANGS": SUPPORTED_LANGS,
             "datetime": datetime, "moldova_tz": db.moldova_tz,
-            "bulk_send_shift_earlier": datetime.timedelta(minutes=1), "bulk_send_interval": 0,
             "reminder_eligible": reminder_eligible,
         }
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "src/script.py", "exec"), self.namespace)
@@ -130,7 +138,7 @@ class EmojiSettingTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(await self.namespace["send_notification"](
                 42, (1, "SAMPLE", 0, 1, 0, "en", 1)))
         self.namespace["print_next_course"].assert_not_called()
-        self.namespace["client"].send_message.assert_not_awaited()
+        self.assertFalse(self.sent)
 
     async def test_settings_read_failure_does_not_claim_saved_state(self):
         event = self.event()
@@ -155,18 +163,57 @@ class EmojiSettingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_tomorrow_fresh_read_failure_skips_user(self):
         import pandas as pd
-        users = pd.DataFrame([{"SENDER": "U42", "group_n": "SAMPLE", "ban": 0,
-                               "noti": 1, "subgrupa": 0, "lang": "en", "year_s": 1, "delivery_status": "unknown"}])
-        self.namespace.update(pd=pd, print_day=Mock(return_value="raw schedule"),
-                              asyncio=SimpleNamespace(sleep=AsyncMock(
-                                  side_effect=[None, None, asyncio.CancelledError()])))
-        with patch.object(self.db, "get_app_setting", return_value="0"), \
-                patch.object(self.db, "get_all_users", return_value=users), \
-                patch.object(self.db, "get_user_for_delivery", side_effect=RuntimeError("offline")), \
-                self.assertRaises(asyncio.CancelledError):
-            await self.namespace["send_schedule_tomorrow"]()
+        self.namespace.update(pd=pd, print_day=Mock(return_value="raw schedule"))
+        with patch.object(self.db, "get_user_for_delivery", side_effect=RuntimeError("offline")):
+            self.assertIsNone(await self.namespace["send_tomorrow_recipient"](42, datetime.date(2026, 10, 31)))
         self.namespace["print_day"].assert_not_called()
-        self.namespace["client"].send_message.assert_not_awaited()
+        self.assertFalse(self.sent)
+
+    async def test_tomorrow_rechecks_opt_out_before_dispatch(self):
+        import pandas as pd
+        self.namespace.update(pd=pd, print_day=Mock(return_value="schedule"))
+        async def dispatch(sender, text, **kwargs):
+            self.user['noti'] = 0
+            return 'sent' if kwargs['delivery_prepare']() else None
+        self.namespace['client'].send_message.side_effect = dispatch
+        result = await self.namespace['send_tomorrow_recipient'](42, datetime.date(2026, 10, 31))
+        self.assertFalse(result)
+
+    async def test_waiting_reminders_recheck_settings_and_prepared_group(self):
+        import pandas as pd
+        waiting, release = asyncio.Event(), asyncio.Event()
+        count = 0
+
+        async def dispatch(sender, text, **kwargs):
+            nonlocal count
+            count += 1
+            if count == 2:
+                waiting.set()
+            await release.wait()
+            text = kwargs['delivery_prepare']()
+            self.sent.append(text)
+            return 'sent' if text is not None else None
+
+        self.namespace.update(pd=pd, print_day=Mock(return_value='schedule'),
+                              print_next_course=Mock(return_value='course'))
+        self.namespace['client'].send_message.side_effect = dispatch
+        prepared = (1, 'SAMPLE', 0, 1, 0, 'en', 1)
+        with patch.object(self.db, 'get_user_emoji') as separate_read:
+            course = asyncio.create_task(self.namespace['send_notification'](42, prepared))
+            tomorrow = asyncio.create_task(self.namespace['send_tomorrow_recipient'](
+                42, datetime.date(2026, 10, 31)))
+            await waiting.wait()
+            self.user['lang'] = 'ru'
+            self.user['emoji'] = 0
+            release.set()
+            self.assertEqual(await asyncio.gather(course, tomorrow), [True, True])
+        separate_read.assert_not_called()
+        self.assertEqual(self.namespace['print_next_course'].call_args.args[5], 'ru')
+        self.assertFalse(self.namespace['print_next_course'].call_args.kwargs['emoji'])
+        self.assertEqual(self.namespace['print_day'].call_args.args[4], 'ru')
+        self.assertFalse(self.namespace['print_day'].call_args.kwargs['emoji'])
+        self.user['group_n'] = 'OTHER'
+        self.assertFalse(await self.namespace['send_notification'](42, prepared))
 
     async def test_schedule_caches_and_reminders_use_current_preference(self):
         from course_classification import classify
@@ -185,12 +232,13 @@ class EmojiSettingTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual("🕗" in output, enabled)
                     self.assertIn(raw if not enabled else "Matematică", output)
             # The reminder was prepared earlier; reread preference at delivery.
-            with patch.object(self.db, "locate_field", return_value=1), \
-                    patch.object(self.db, "get_user_emoji", return_value=False):
+            self.user['emoji'] = 0
+            with patch.object(self.db, "get_user_emoji") as separate_read:
                 await self.namespace["send_notification"](42, (1, "SAMPLE", 0, 1, 0, "en", 1))
-                text = self.namespace["client"].send_message.call_args.args[1]
+                text = self.sent[-1]
                 self.assertNotIn("📖", text)
                 self.assertNotIn("🕗", text)
+            separate_read.assert_not_called()
 
 
 if __name__ == "__main__":
