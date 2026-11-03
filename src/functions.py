@@ -16,7 +16,6 @@ last_command_time = defaultdict(float)
 messages_per_minute = defaultdict(list)
 COMMAND_COOLDOWN = 1 # seconds
 MAX_MESSAGES_PER_MINUTE = 5 # messages
-bulk_send_shift_earlier = datetime.timedelta(minutes=1)
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
 time_zone = pytz.timezone('Europe/Chisinau')
@@ -456,20 +455,17 @@ def print_sapt(is_even, cur_group, subgrupa, lang=DEFAULT_LANG, *, study_year=No
     weekly_schedule_cache[cache_key] = week_sch
     return week_sch
 
-def get_next_course_time():
-    current_time = datetime.datetime.now(moldova_tz).time()
-    current_time = datetime.datetime.strptime(str(current_time)[:-7], "%H:%M:%S")
-    
-    #find next course index
-    course_index = 0
-    for i, hour in enumerate(hours):
-        course_time = datetime.datetime.strptime(hour[0].split("-")[0], "%H.%M")
-        notification_time = course_time - datetime.timedelta(minutes=15) - bulk_send_shift_earlier
-        if notification_time.time() > current_time.time():
-            course_index = i
-            break
-    
-    return current_time, course_index + 1, notification_time
+def get_next_course_time(now=None, after=None):
+    now = now or datetime.datetime.now(moldova_tz)
+    day = max(now.date(), after.astimezone(moldova_tz).date()) if after else now.date()
+    while True:
+        for index, hour in enumerate(hours, 1):
+            clock = datetime.datetime.strptime(hour[0].split('-')[0], '%H.%M').time()
+            course = moldova_tz.localize(datetime.datetime.combine(day, clock))
+            target = course - datetime.timedelta(minutes=15)
+            if target >= now and (after is None or target > after):
+                return index, target
+        day += datetime.timedelta(days=1)
 
 def is_rate_limited(user_id):
     if user_id == 500303890:

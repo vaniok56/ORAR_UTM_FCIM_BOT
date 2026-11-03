@@ -38,7 +38,7 @@ Use these buttons to instantly access different parts of your schedule:
 
 Enable notifications at the start or use the `/notifon` command to receive:
 
-- **Next class alert**: A notification 15 minutes before your next class(according to your subgroup, if you chose one), showing:
+- **Next class alert**: A notification around 15 minutes before your next class (according to your subgroup, if you chose one), showing:
   - Class name
   - Professor name
   - Cabinet number
@@ -46,11 +46,24 @@ Enable notifications at the start or use the `/notifon` command to receive:
 
 <img src="imgs/next_course.jpeg" alt="class" width="350">
 
-- **Next day alert**: At 20:00, the bot sends the schedule for the following day.
+- **Next day alert**: Around 20:00, the bot sends the schedule for the following day.
 
-Times use Europe/Chisinau. Bulk delivery begins one minute early and is paced at
-15 messages per second; arrivals vary by recipient. Both alert types respect
-`/notifon` and `/notifoff`, and administrators can pause them with Holiday Mode.
+Times use Europe/Chisinau. Each automatic batch is centered on its target time:
+the bot estimates its duration from the prepared recipient count and begins half
+that estimate early. Class batches follow class order. Arrivals vary, and if the
+calculated start has passed when preparation finishes or the bot starts, that
+batch is skipped. Both alert types
+respect `/notifon` and `/notifoff`, and administrators can pause them with Holiday
+Mode. Recipients are snapshotted before waiting and checked again before sending;
+new opt-ins after the snapshot may miss that batch. Language and emoji settings
+are read again when each reminder is ready to send, including after a flood wait.
+
+`src/bulk_delivery.py` sets the shared pacing target (`BULK_SEND_RATE`, default
+25 send starts/second) and the bulk concurrency limit (6). Normal replies share
+the rate budget and take priority over waiting bulk sends. Admin `/message`
+campaigns also share it, but their scheduled time remains the start time. Rates
+above 30/s are allowed with a startup warning; Telegram flood waits and other
+delays can reduce actual throughput. Changing these constants requires a restart.
 
 <img src="imgs/next_day.jpeg" alt="schedule" width="400">
 

@@ -2,6 +2,87 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.17.1] - 2026-11-03
+
+### TL;DR
+Bulk sends now keep the configured interval even when the eligibility check
+takes time. Before, the check duration was added to every interval. Delivered
+writes are batched. Batch logs are shorter and use local time. No database
+migration required.
+
+### Changed
+- Removed the manual `BULK_EXTRA_SECONDS_PER_RECIPIENT` allowance. The estimate
+  is now `recipients / BULK_SEND_RATE`. Batches start later than in 0.17.0 and
+  can finish after target when throughput is below 25/s.
+- Batch log times use Europe/Chisinau `HH:MM:SS.mmm`, with no date or offset.
+  Success uses two lines and `Current-class` for next-class batches. Planned
+  and skipped lines use the same time format. Planned and failure lines remain
+  `Next-class`.
+- For scheduled batches, the success line reports `rate` (attempts per second)
+  and `elapsed` with its delta from the estimate. It no longer reports
+  `attempts`, `sent/s`, `flood_retried`, `target`, or `estimate`. `flood` is
+  the wait count and requested seconds.
+
+### Fixed
+- Pacing starts when a send is admitted, so time in the eligibility check no
+  longer counts toward the interval. A check longer than one interval gets a
+  full interval before the next send.
+- Delivered status uses one batched update per second instead of one write per
+  send. It can lag by one second. A crash can drop one second of markers.
+  `unknown` and `delivered` both remain eligible, so only `/stats` can
+  undercount.
+- A late `delivered` write cannot overwrite `blocked` or `deleted`.
+
+## [0.17.0] - 2026-11-03
+
+### TL;DR
+Reminder and admin broadcasts now share one paced send queue. Automatic batches
+start early enough to be centered on their target, reminders are rebuilt from
+fresh account data when each send is admitted, and an explicit Telegram flood
+wait pauses every sender before the rejected send is retried. Daily database
+backups no longer depend on a bot restart. No database migration required.
+
+### Added
+- Shared delivery module (`src/bulk_delivery.py`): send gate, bulk concurrency
+  limit, batch runner, and pacing settings `BULK_SEND_RATE` (25 send
+  starts/second), `BULK_MAX_IN_FLIGHT` (6), and
+  `BULK_EXTRA_SECONDS_PER_RECIPIENT` (0.008, manual estimate allowance). A rate
+  above 30/s logs a startup warning.
+- One summary log line per batch with target, calculated start, prepared count,
+  first send, completion, elapsed time, sent/skipped/failed counts, starts per
+  second, and flood retries.
+- Next-class batches deliver in the background, so a slow batch does not block
+  scheduling the next class.
+
+### Changed
+- Automatic batches are centered on 15 minutes before class or 20:00
+  Europe/Chisinau. Each starts half the estimated duration before that target,
+  using the recipient count prepared before the wait; if the calculated start
+  has already passed, the batch is skipped.
+- Class reminders follow class order across dates. A late-evening pass now
+  rolls into the following day instead of waiting on a stale current-day slot,
+  and a slot with no recipients waits until its target before advancing.
+- Recipients are snapshotted before the wait. Eligibility, language, emoji
+  preference, group selection, and message text are read again when a send is
+  admitted, including after a Telegram flood wait.
+- Reminder rendering reuses the fresh user record, so the emoji preference is
+  read once per recipient instead of a second settings query.
+- Class reminders and tomorrow's schedule use the shared runner. Admin
+  broadcasts use it too, so all three respect the same rate, concurrency limit,
+  priority rules, and flood pauses. Temporary broadcast media is removed only
+  after all workers have stopped.
+- Normal replies keep priority over waiting bulk sends and share the same rate
+  budget. Actual throughput and arrival times depend on Telegram and other
+  delays.
+
+### Fixed
+- Automatic database backups reschedule daily at 20:00 Europe/Chisinau, even
+  without a bot restart. A failed backup no longer stops later daily attempts.
+- A recipient already busy with another send no longer holds the shared queue
+  head, so sends to unrelated recipients keep moving.
+- Reminder text prepared before a long wait no longer keeps an old language,
+  emoji preference, or group selection.
+
 ## [0.16.0] - 2026-10-22
 
 ### TL;DR

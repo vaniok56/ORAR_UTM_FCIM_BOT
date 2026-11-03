@@ -22,6 +22,7 @@ from functions import activate_schedule, button_grid, send_logs, print_next_cour
 from course_classification import classification_counts, sidecar_path
 from schedule_ingest import MAX_XLSX_BYTES, MAX_PDF_BYTES, UploadReject, compare_versions, inspect_pdf, inspect_xlsx, parse_version, pdf_version, prepare_upload, schedule_diff, write_diff_csv
 from year_migration import plan_year_migration
+from bulk_delivery import run_bulk
 
 moldova_tz = pytz.timezone('Europe/Chisinau')
 
@@ -521,33 +522,19 @@ def register_admin_handlers(client, admins1, admins2, specialties, group_list):
                 except Exception as e:
                     send_logs(f"Error uploading media initially: {e}", 'error')
 
-            sent_count = 0
-            error_count = 0
             total_users = len(all_users)
             send_logs(f"Starting broadcast to {total_users} users...", 'info')
+            async def send_recipient(user):
+                sender = int(user[1:])
+                guard = lambda: (db.get_user_for_delivery(user) or {}).get('delivery_status') in ('unknown', 'delivered')
+                media = uploaded_media or (media_path if media_path and os.path.exists(media_path) else None)
+                if media:
+                    sent = await client.send_file(sender, media, caption=text, parse_mode="Markdown", bulk=True, delivery_guard=guard)
+                else:
+                    sent = await client.send_message(sender, text, parse_mode="Markdown", bulk=True, delivery_guard=guard)
+                return sent is not None
 
-            for i, (_, row) in enumerate(all_users.iterrows()):
-                user = row['SENDER']
-                try:
-                    sender = int(user[1:])
-                    guard = lambda: (db.get_user_for_delivery(user) or {}).get('delivery_status') in ('unknown', 'delivered')
-                    media = uploaded_media or (media_path if media_path and os.path.exists(media_path) else None)
-                    if media:
-                        sent = await client.send_file(sender, media, caption=text, parse_mode="Markdown", delivery_guard=guard)
-                    else:
-                        sent = await client.send_message(sender, text, parse_mode="Markdown", delivery_guard=guard)
-
-                    if sent is not None:
-                        sent_count += 1
-                except Exception:
-                    error_count += 1
-
-                await asyncio.sleep(1 / 15)
-                chunk = max(1, total_users // 10)
-                if (i + 1) % chunk == 0:
-                    send_logs(f"Broadcast progress: {i + 1}/{total_users}", 'info')
-
-            send_logs(f"Broadcast finished. Sent to {sent_count}/{total_users} users (Errors: {error_count}).", 'info')
+            await run_bulk(all_users['SENDER'].tolist(), send_recipient, 'Admin broadcast', send_logs)
         finally:
             cleanup_media()
 

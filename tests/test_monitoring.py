@@ -3,8 +3,11 @@ import asyncio
 import datetime as dt
 import json
 import os
+import time
 import unittest
 from collections import defaultdict
+from contextlib import nullcontext
+from contextvars import ContextVar
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -431,8 +434,9 @@ class MonitoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Web check incomplete', self.watch.version_text({1: 1}, after))
 
     async def test_delivery_outcomes_returns_guards_and_media(self):
-        from telethon import TelegramClient, utils
-        from telethon.errors import UserIsBlockedError, InputUserDeactivatedError, UserDeactivatedError
+        from telethon import TelegramClient, utils, functions
+        from telethon.errors import FloodWaitError, UserIsBlockedError, InputUserDeactivatedError, UserDeactivatedError
+        from bulk_delivery import SendGate, batch_metrics
         import handlers.db as db
         user = {'delivery_status': 'unknown', 'noti': 0}
 
@@ -441,12 +445,18 @@ class MonitoringTests(unittest.IsolatedAsyncioTestCase):
                 user['delivery_status'] = status
 
         tree = ast.parse(Path('src/script.py').read_text())
-        names = {'record_delivery', 'delivery_event', 'track_send', 'DeliveryClient'}
+        names = {'record_delivery', 'flush_delivered_once', 'delivery_event',
+                 'track_send', 'DeliveryClient'}
         nodes = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.name in names]
         scope = dict(db=db, asyncio=asyncio, datetime=dt, utils=utils, TelegramClient=TelegramClient,
                      format_id=lambda sender: f'U{sender}', send_logs=Mock(), delivery_locks=defaultdict(asyncio.Lock),
-                     delivery_active=set(), delivery_events={}, UserIsBlockedError=UserIsBlockedError,
-                     InputUserDeactivatedError=InputUserDeactivatedError, UserDeactivatedError=UserDeactivatedError)
+                     send_tasks=set(), send_gate=SendGate(), delivery_events={}, delivered_pending=set(),
+                     UserIsBlockedError=UserIsBlockedError,
+                     InputUserDeactivatedError=InputUserDeactivatedError, UserDeactivatedError=UserDeactivatedError,
+                     FloodWaitError=FloodWaitError, nullcontext=nullcontext,
+                     send_rpc=ContextVar('test_send_rpc', default=False),
+                     SEND_REQUESTS=(functions.messages.SendMessageRequest, functions.messages.SendMediaRequest,
+                                    functions.messages.SendMultiMediaRequest))
         exec(compile(ast.Module(body=nodes, type_ignores=[]), 'src/script.py', 'exec'), scope)
         with patch.object(db, 'set_delivery_status', side_effect=save), patch.object(db, 'has_interaction_since', return_value=False):
             for error, expected in ((UserIsBlockedError(None), 'blocked'), (InputUserDeactivatedError(None), 'deleted'), (TimeoutError(), 'unknown')):
@@ -467,26 +477,181 @@ class MonitoringTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(TelegramClient, 'send_message', side_effect=nested), \
                     patch.object(TelegramClient, 'send_file', new=AsyncMock(return_value='sent')):
                 self.assertEqual(await client.send_message(42, 'text'), 'sent')
+                metrics = {'attempts': 0, 'first': None, 'first_wall': None}
+                token = batch_metrics.set(metrics)
+                try:
+                    self.assertEqual(await client.send_message(-123, 'text'), 'sent')
+                finally:
+                    batch_metrics.reset(token)
+                self.assertEqual(metrics['attempts'], 1)
+            self.assertEqual(scope['delivered_pending'], {'U42'})
+            def save_batch(sender_ids):
+                if 'U42' in sender_ids:
+                    user['delivery_status'] = 'delivered'
+            with patch.object(db, 'mark_delivered', side_effect=save_batch):
+                scope['flush_delivered_once']()
             self.assertEqual(user['delivery_status'], 'delivered')
 
-    async def test_reminder_prepared_selection_must_still_match(self):
-        import handlers.db as db
+            operation = AsyncMock(return_value='sent')
+            with patch.object(db, 'mark_delivered', side_effect=RuntimeError('offline')):
+                self.assertEqual(await scope['track_send'](42, operation), 'sent')
+                scope['flush_delivered_once']()
+            self.assertEqual(operation.await_count, 1)
+            self.assertEqual(scope['delivered_pending'], set())
+
+            request = functions.messages.SendMessageRequest(peer='me', message='test')
+            operation = AsyncMock(side_effect=[FloodWaitError(request, capture=0), 'sent'])
+            guard = Mock(return_value=True)
+            self.assertEqual(await scope['track_send'](42, operation, guard, bulk=True), 'sent')
+            self.assertEqual(operation.await_count, 2)
+            self.assertGreaterEqual(guard.call_count, 2)
+            self.assertFalse(scope['send_tasks'])
+
+            operation = AsyncMock(side_effect=[FloodWaitError(request, capture=0), 'sent'])
+            guard = Mock(side_effect=[True, False])
+            scope['send_gate'].next_start = 0
+            self.assertIsNone(await scope['track_send'](42, operation, guard, bulk=True))
+            self.assertEqual(operation.await_count, 1)
+
+            async def inspect_threshold(sender, request, **kwargs):
+                await asyncio.sleep(0)
+                return client.flood_sleep_threshold
+            with patch.object(TelegramClient, '_call', side_effect=inspect_threshold):
+                normal = functions.messages.SetTypingRequest(peer='me', action=None)
+                values = await asyncio.gather(client._call(None, request), client._call(None, normal))
+                self.assertEqual(values, [0, 60])
+
+            error_seen = asyncio.Event()
+            async def flood_once():
+                error_seen.set()
+                raise FloodWaitError(request, capture=1)
+            scope['send_gate'].next_start = 0
+            task = asyncio.create_task(scope['track_send'](42, flood_once, bulk=True))
+            await error_seen.wait()
+            await asyncio.wait_for(scope['delivery_event'](42, dt.datetime.now(dt.timezone.utc)), 0.2)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertFalse(scope['send_gate'].low)
+            self.assertFalse(scope['send_tasks'])
+
+            scope['send_gate'].paused_until = 0
+            scope['send_gate'].next_start = 0
+            started, release, other_started = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+            async def hold():
+                started.set()
+                await release.wait()
+                return 'sent'
+
+            async def other():
+                other_started.set()
+                return 'sent'
+
+            first = asyncio.create_task(scope['track_send'](42, hold))
+            await started.wait()
+            cancelled = asyncio.create_task(scope['track_send'](42, AsyncMock()))
+            await asyncio.sleep(0)
+            cancelled.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await cancelled
+            self.assertFalse(scope['send_gate'].high)
+            same = asyncio.create_task(scope['track_send'](42, AsyncMock(return_value='sent')))
+            await asyncio.sleep(0)
+            unrelated = asyncio.create_task(scope['track_send'](43, other))
+            try:
+                await asyncio.wait_for(other_started.wait(), 0.5)
+                self.assertFalse(same.done())
+            finally:
+                release.set()
+                await asyncio.gather(first, same, unrelated)
+
+            scope['send_gate'].pause(0.1)
+            blocked = asyncio.create_task(scope['track_send'](42, AsyncMock(return_value='sent')))
+            await asyncio.sleep(0.01)
+            await scope['delivery_locks'][42].acquire()
+            other_started.clear()
+            unrelated = asyncio.create_task(scope['track_send'](43, other))
+            try:
+                await asyncio.wait_for(other_started.wait(), 0.5)
+                self.assertFalse(blocked.done())
+            finally:
+                scope['delivery_locks'][42].release()
+                await asyncio.gather(blocked, unrelated)
+
+            state = {'text': 'old'}
+            texts = []
+            async def flood_then_send(entity, text, **kwargs):
+                texts.append(text)
+                if len(texts) == 1:
+                    state['text'] = 'new'
+                    raise FloodWaitError(request, capture=0)
+                return 'sent'
+            with patch.object(TelegramClient, 'send_message', side_effect=flood_then_send):
+                self.assertEqual(await client.send_message(42, '', bulk=True,
+                                                           delivery_prepare=lambda: state['text']), 'sent')
+            self.assertEqual(texts, ['old', 'new'])
+
+            order, starts = [], []
+            running, peak = 0, 0
+            async def record(number):
+                nonlocal running, peak
+                running += 1
+                peak = max(peak, running)
+                order.append(number)
+                starts.append(asyncio.get_running_loop().time())
+                await asyncio.sleep(0.35)
+                running -= 1
+                return 'sent'
+            scope['send_gate'].next_start = 0
+            scope['send_gate'].paused_until = 0
+            await asyncio.wait_for(asyncio.gather(*(scope['track_send'](
+                100 + number, lambda number=number: record(number), bulk=True)
+                for number in range(12))), 3)
+            self.assertEqual(order, list(range(12)))
+            self.assertEqual(peak, 6)
+            self.assertTrue(all(b - a >= 0.039 for a, b in zip(starts, starts[1:])))
+
+            order.clear()
+            scope['send_gate'].pause(0.1)
+            bulk_tasks = [asyncio.create_task(scope['track_send'](
+                200 + number, lambda number=number: record(number), bulk=True)) for number in range(6)]
+            await asyncio.sleep(0.01)
+            ordinary = asyncio.create_task(scope['track_send'](300, lambda: record('reply')))
+            await asyncio.wait_for(asyncio.gather(*bulk_tasks, ordinary), 3)
+            self.assertEqual(order[0], 'reply')
+
+    async def test_telethon_send_flood_is_exposed_and_cached(self):
+        from telethon import TelegramClient, functions
+        from telethon.errors import FloodWaitError
         tree = ast.parse(Path('src/script.py').read_text())
-        node = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'send_notification')
-        fresh = {'group_n': 'TI-251', 'year_s': 1, 'subgrupa': 0, 'lang': 'en',
-                 'noti': 1, 'ban': 0, 'delivery_status': 'unknown'}
-        client = SimpleNamespace(send_message=AsyncMock(return_value='sent'))
-        scope = {'db': db, 'client': client, 'send_logs': Mock(), 'noti_send': 0,
-                 'format_id': lambda sender: f'U{sender}', 'reminder_eligible': lambda *a, **k: True,
-                 'print_next_course': Mock(return_value='X'), 'get_text': lambda *a, **k: 'text',
-                 'SUPPORTED_LANGS': {'en'}, 'DEFAULT_LANG': 'en'}
+        node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'DeliveryClient')
+        requests = (functions.messages.SendMessageRequest, functions.messages.SendMediaRequest,
+                    functions.messages.SendMultiMediaRequest)
+        scope = {'TelegramClient': TelegramClient, 'send_rpc': ContextVar('send_rpc_test', default=False),
+                 'SEND_REQUESTS': requests}
         exec(compile(ast.Module(body=[node], type_ignores=[]), 'src/script.py', 'exec'), scope)
-        with patch.object(db, 'get_user_for_delivery', return_value=fresh), \
-                patch.object(db, 'get_user_emoji', return_value=False):
-            self.assertFalse(await scope['send_notification'](42, (0, 'TI-299', 0, 0, 0, 'en', 1)))
-            client.send_message.assert_not_awaited()
-            self.assertTrue(await scope['send_notification'](42, (0, 'TI-251', 0, 0, 0, 'en', 1)))
-            client.send_message.assert_awaited_once()
+        client = scope['DeliveryClient'](None, 12345, '0' * 32)
+        request = functions.messages.SendMessageRequest(peer='me', message='test')
+        response = asyncio.get_running_loop().create_future()
+        response.set_exception(FloodWaitError(request, capture=5))
+        sender = SimpleNamespace(send=Mock(return_value=response))
+        with patch.object(type(request), 'resolve', new=AsyncMock()):
+            with self.assertRaises(FloodWaitError):
+                await client._call(sender, request)
+            self.assertEqual(sender.send.call_count, 1)
+            with self.assertRaises(FloodWaitError):
+                await client._call(sender, request)
+            self.assertEqual(sender.send.call_count, 1)
+            self.assertEqual(client.flood_sleep_threshold, 60)
+            client._flood_waited_requests[request.CONSTRUCTOR_ID] = time.time() + 2
+            success = asyncio.get_running_loop().create_future()
+            success.set_result(object())
+            sender.send.return_value = success
+            with patch.object(client.session, 'process_entities'):
+                await client._call(sender, request)
+            self.assertNotIn(request.CONSTRUCTOR_ID, client._flood_waited_requests)
+            self.assertEqual(sender.send.call_count, 2)
 
     def test_reminder_eligibility_preserves_overlapping_exclusions(self):
         import functions
@@ -498,6 +663,26 @@ class MonitoringTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(functions.reminder_eligible(dict(user, group_n='TI-252'), selection=user))
             resolve.side_effect = ValueError('invalid group')
             self.assertFalse(functions.reminder_eligible(user))
+
+    def test_mark_delivered_keeps_terminal_statuses(self):
+        import pandas as pd
+        from unittest.mock import MagicMock
+        import handlers.db as db
+        cursor = MagicMock()
+        connection = MagicMock()
+        connection.cursor.return_value = cursor
+        context = MagicMock()
+        context.__enter__.return_value = connection
+        cached = pd.DataFrame([{'SENDER': 'U0', 'delivery_status': 'blocked'},
+                               {'SENDER': 'U1', 'delivery_status': 'unknown'}])
+        with patch.object(db, 'get_db_connection', return_value=context), \
+                patch.object(db, 'user_data_cache', {}, create=True), \
+                patch.object(db, '_cached_all_users_df', cached, create=True):
+            db.mark_delivered(['U0', 'U1'])
+        self.assertIn("AND s.delivery_status IN ('unknown','delivered')",
+                      cursor.execute.call_args.args[0])
+        self.assertEqual(cached.loc[0, 'delivery_status'], 'blocked')
+        self.assertEqual(cached.loc[1, 'delivery_status'], 'delivered')
 
     @unittest.skipUnless(os.environ.get('MYSQL_HOST') == 'orar_review_mysql' and os.environ.get('ORAR_ISOLATED_TEST') == '1', 'isolated MySQL only')
     def test_database_status_and_slot_claim_survive_cache_reload(self):
