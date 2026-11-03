@@ -42,7 +42,7 @@ import asyncio
 from contextvars import ContextVar
 from collections import defaultdict
 from contextlib import nullcontext
-from bulk_delivery import SendGate, centered_start, estimated_batch_seconds, run_bulk, validate_settings
+from bulk_delivery import SendGate, centered_start, estimated_batch_seconds, format_local_time, run_bulk, validate_settings
 
 delivery_locks = defaultdict(asyncio.Lock)
 send_rpc = ContextVar('send_rpc', default=False)
@@ -51,6 +51,7 @@ send_gate = SendGate()
 validate_settings(send_logs)
 # shortcut: event ordering is process-local; add persisted observation time if stricter ordering is needed.
 delivery_events = {}
+delivered_pending = set()
 
 
 def record_delivery(sender, status):
@@ -58,6 +59,23 @@ def record_delivery(sender, status):
         db.set_delivery_status(format_id(sender), status)
     except Exception as error:
         send_logs(f"Delivery status write failed for {sender}: {type(error).__name__}", "error")
+
+
+def flush_delivered_once():
+    if not delivered_pending:
+        return
+    batch = list(delivered_pending)
+    delivered_pending.clear()
+    try:
+        db.mark_delivered(batch)
+    except Exception as error:
+        send_logs(f"Delivery status batch failed: {type(error).__name__}", "error")
+
+
+async def flush_delivered():
+    while True:
+        await asyncio.sleep(1)
+        flush_delivered_once()
 
 
 async def delivery_event(sender, at, stopped=False):
@@ -116,7 +134,7 @@ async def track_send(entity, operation, guard=None, bulk=False):
                         raise
                     else:
                         if tracked:
-                            record_delivery(sender, 'delivered')
+                            delivered_pending.add(format_id(sender))
                             delivery_events[sender] = at
                         return result
                     finally:
@@ -728,10 +746,10 @@ async def send_curr_course_users():
     cursor = None
     batches = set()
 
-    async def deliver(items, target, start):
+    async def deliver(items, estimated):
         try:
             await run_bulk(items, lambda item: send_notification(*item), 'Next-class', send_logs,
-                           target=target, start=start)
+                           success_kind='Current-class', estimate=estimated)
         except Exception as error:
             send_logs(f"Next-class batch failed: {error}", 'error')
 
@@ -743,22 +761,23 @@ async def send_curr_course_users():
             all_users = db.get_all_users()
             next_courses = prepare_next_courses(target.weekday(), target.isocalendar().week % 2,
                                                course_index, all_users)
+            estimated = estimated_batch_seconds(len(next_courses))
             start = centered_start(target, len(next_courses))
             now = datetime.datetime.now(moldova_tz)
             if start < now:
-                send_logs(f"Next-class skipped: calculated start already passed; target={target}; start={start}", 'info')
+                send_logs(f"Next-class skipped: calculated start already passed | target {format_local_time(target)} | start {format_local_time(start)}", 'info')
                 continue
             if not next_courses:
-                send_logs(f"No users have the next course for {target}", 'info')
+                send_logs(f"No users have the next course for {format_local_time(target)}", 'info')
             else:
-                send_logs(f"Next-class target={target}; start={start}; prepared={len(next_courses)}; estimated={estimated_batch_seconds(len(next_courses)):.2f}s", 'info')
+                send_logs(f"Next-class planned | {len(next_courses)} recipients | target {format_local_time(target)} | start {format_local_time(start)} | est {estimated:.2f}s", 'info')
             await asyncio.sleep((start - now).total_seconds())
             if not next_courses:
                 continue
             if db.get_app_setting("holiday_mode", "0") == "1":
                 send_logs("Holiday mode active - skipping next course notifications", 'info')
                 continue
-            task = asyncio.create_task(deliver(list(next_courses.items()), target, start))
+            task = asyncio.create_task(deliver(list(next_courses.items()), estimated))
             batches.add(task)
             task.add_done_callback(batches.discard)
     finally:
@@ -802,13 +821,14 @@ async def send_schedule_tomorrow():
                 target = moldova_tz.localize(datetime.datetime.combine(date, datetime.time(20)))
             recipients = [user['SENDER'] for user in db.get_all_users().to_dict('records')
                           if reminder_eligible(user)]
+            estimated = estimated_batch_seconds(len(recipients))
             start = centered_start(target, len(recipients))
             now = datetime.datetime.now(moldova_tz)
             next_date = date + datetime.timedelta(days=1)
             if start < now:
-                send_logs(f"Tomorrow-schedule skipped: calculated start already passed; target={target}; start={start}", 'info')
+                send_logs(f"Tomorrow-schedule skipped: calculated start already passed | target {format_local_time(target)} | start {format_local_time(start)}", 'info')
                 continue
-            send_logs(f"Tomorrow-schedule target={target}; start={start}; prepared={len(recipients)}; estimated={estimated_batch_seconds(len(recipients)):.2f}s", 'info')
+            send_logs(f"Tomorrow-schedule planned | {len(recipients)} recipients | target {format_local_time(target)} | start {format_local_time(start)} | est {estimated:.2f}s", 'info')
             await asyncio.sleep((start - now).total_seconds())
             if db.get_app_setting("holiday_mode", "0") == "1":
                 send_logs("holiday_mode active - skipping tomorrow-schedule broadcast", "info")
@@ -821,7 +841,7 @@ async def send_schedule_tomorrow():
                     return None
                 return await send_tomorrow_recipient(sender, date + datetime.timedelta(days=1))
 
-            await run_bulk(recipients, send_recipient, 'Tomorrow-schedule', send_logs, target=target, start=start)
+            await run_bulk(recipients, send_recipient, 'Tomorrow-schedule', send_logs, estimate=estimated)
         except Exception as e:
             send_logs(f"Error in send_schedule_tomorrow: {e}", 'error')
             await asyncio.sleep(60)  # Wait 1 min
@@ -871,6 +891,7 @@ if __name__ == '__main__':
         loop.create_task(send_curr_course_users())
         loop.create_task(send_schedule_tomorrow())
         loop.create_task(backup_database())
+        loop.create_task(flush_delivered())
         loop.create_task(version_watch.run(client))
         await client.run_until_disconnected()
     

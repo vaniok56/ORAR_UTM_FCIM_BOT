@@ -2,6 +2,37 @@
 
 All notable changes to ORAR_UTM_FCIM_BOT will be documented in this file.
 
+## [0.17.1] - 2026-11-03
+
+### TL;DR
+Bulk sends now keep the configured interval even when the eligibility check
+takes time. Before, the check duration was added to every interval. Delivered
+writes are batched. Batch logs are shorter and use local time. No database
+migration required.
+
+### Changed
+- Removed the manual `BULK_EXTRA_SECONDS_PER_RECIPIENT` allowance. The estimate
+  is now `recipients / BULK_SEND_RATE`. Batches start later than in 0.17.0 and
+  can finish after target when throughput is below 25/s.
+- Batch log times use Europe/Chisinau `HH:MM:SS.mmm`, with no date or offset.
+  Success uses two lines and `Current-class` for next-class batches. Planned
+  and skipped lines use the same time format. Planned and failure lines remain
+  `Next-class`.
+- For scheduled batches, the success line reports `rate` (attempts per second)
+  and `elapsed` with its delta from the estimate. It no longer reports
+  `attempts`, `sent/s`, `flood_retried`, `target`, or `estimate`. `flood` is
+  the wait count and requested seconds.
+
+### Fixed
+- Pacing starts when a send is admitted, so time in the eligibility check no
+  longer counts toward the interval. A check longer than one interval gets a
+  full interval before the next send.
+- Delivered status uses one batched update per second instead of one write per
+  send. It can lag by one second. A crash can drop one second of markers.
+  `unknown` and `delivered` both remain eligible, so only `/stats` can
+  undercount.
+- A late `delivered` write cannot overwrite `blocked` or `deleted`.
+
 ## [0.17.0] - 2026-11-03
 
 ### TL;DR

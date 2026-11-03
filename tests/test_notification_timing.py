@@ -63,7 +63,7 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
 
     def class_scheduler(self, clock, users, prepare, sleep, run, hours):
         import pytz
-        from bulk_delivery import centered_start, estimated_batch_seconds
+        from bulk_delivery import centered_start, estimated_batch_seconds, format_local_time
         source = ast.parse(Path('src/functions.py').read_text())
         next_course = next(n for n in source.body if isinstance(n, ast.FunctionDef)
                            and n.name == 'get_next_course_time')
@@ -78,7 +78,7 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
                  'prepare_next_courses': prepare, 'send_logs': Mock(),
                  'asyncio': SimpleNamespace(sleep=sleep, create_task=asyncio.create_task, gather=asyncio.gather),
                  'centered_start': centered_start, 'estimated_batch_seconds': estimated_batch_seconds,
-                 'run_bulk': run, 'send_notification': AsyncMock()}
+                 'format_local_time': format_local_time, 'run_bulk': run, 'send_notification': AsyncMock()}
         exec(compile(ast.Module(body=[scheduler], type_ignores=[]), 'src/script.py', 'exec'), scope)
         return scope
 
@@ -104,10 +104,8 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(prepared[:2], [(1, 0), (2, 1)])
         self.assertEqual(sleeps[0], 45 * 60)
         self.assertEqual(run.await_count, 1)
-        self.assertEqual(run.await_args.kwargs['target'].hour, 9)
 
     async def test_next_day_batches_start_in_order_without_waiting_for_delivery(self):
-        import bulk_delivery as bulk
         clock = [datetime.datetime(2026, 10, 30, 18, 31, tzinfo=datetime.timezone.utc)]
         users, sleeps, started, finished = list(range(814)), [], [], []
         async def sleep(seconds):
@@ -119,22 +117,22 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
         def prepare(day, parity, index, snapshot):
             return {user: 'course' for user in snapshot}
-        async def run(items, send, kind, log, *, target, start):
-            started.append((target, start))
+        async def run(items, send, kind, log, *, success_kind=None, estimate=None):
+            started.append(estimate)
             try:
                 await asyncio.Event().wait()
             finally:
-                finished.append(target)
+                finished.append(clock[0])
         scope = self.class_scheduler(clock, users, prepare, sleep, run, [['8.00-9.30'], ['9.45-11.15']])
-        with patch.object(bulk, 'BULK_EXTRA_SECONDS_PER_RECIPIENT', 0.1), \
-                self.assertRaises(asyncio.CancelledError):
+        with self.assertRaises(asyncio.CancelledError):
             await scope['send_curr_course_users']()
-        targets = [datetime.datetime(2026, 10, 31, hour, minute, tzinfo=datetime.timezone.utc)
-                   for hour, minute in ((7, 45), (9, 30))]
-        self.assertEqual([target for target, start in started], targets)
-        self.assertTrue(all(abs((target - start).total_seconds() - 56.98) < 1e-6
-                            for target, start in started))
-        self.assertCountEqual(finished, targets)
+        self.assertEqual(started, [32.56, 32.56])
+        planned = [call.args[0] for call in scope['send_logs'].call_args_list
+                   if call.args[0].startswith('Next-class planned')]
+        self.assertGreaterEqual(len(planned), 2)
+        self.assertIn('target 09:45:00.000 | start 09:44:43.720', planned[0])
+        self.assertIn('target 11:30:00.000 | start 11:29:43.720', planned[1])
+        self.assertEqual(len(finished), 2)
 
     async def test_exact_start_runs_and_preparation_crossing_start_skips(self):
         from bulk_delivery import centered_start
@@ -168,7 +166,7 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
     async def test_tomorrow_late_start_skips_today_and_uses_target_date(self):
         import pandas as pd
         import pytz
-        from bulk_delivery import centered_start, estimated_batch_seconds
+        from bulk_delivery import centered_start, estimated_batch_seconds, format_local_time
         node = next(n for n in ast.parse(Path('src/script.py').read_text()).body
                     if isinstance(n, ast.AsyncFunctionDef) and n.name == 'send_schedule_tomorrow')
         zone = pytz.timezone('Europe/Chisinau')
@@ -182,21 +180,25 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
         async def run_now(items, send, *args, **kwargs):
             await send(items[0])
         run = AsyncMock(side_effect=run_now)
+        centered_targets = []
+        def record_centered(target, count):
+            centered_targets.append(target)
+            return centered_start(target, count)
         users = pd.DataFrame([{'SENDER': 'U42'}])
         scope = {'datetime': SimpleNamespace(datetime=Clock, timedelta=datetime.timedelta, time=datetime.time),
                  'moldova_tz': zone, 'db': SimpleNamespace(get_all_users=Mock(return_value=users),
                                                            get_app_setting=Mock(return_value='0')),
-                 'reminder_eligible': lambda row: True, 'centered_start': centered_start,
-                 'estimated_batch_seconds': estimated_batch_seconds, 'send_logs': logs,
+                 'reminder_eligible': lambda row: True, 'centered_start': record_centered,
+                 'estimated_batch_seconds': estimated_batch_seconds, 'format_local_time': format_local_time,
+                 'send_logs': logs,
                  'asyncio': SimpleNamespace(sleep=sleep), 'run_bulk': run,
                  'send_tomorrow_recipient': AsyncMock(return_value=True)}
         exec(compile(ast.Module(body=[node], type_ignores=[]), 'src/script.py', 'exec'), scope)
         with self.assertRaises(__import__('asyncio').CancelledError):
             await scope['send_schedule_tomorrow']()
         self.assertIn('calculated start already passed', logs.call_args_list[0].args[0])
+        self.assertEqual(centered_targets[1].date(), datetime.date(2027, 1, 1))
         self.assertEqual(run.await_count, 1)
-        target = run.await_args.kwargs['target']
-        self.assertEqual(target.date(), datetime.date(2027, 1, 1))
         scope['send_tomorrow_recipient'].assert_awaited_once_with(42, datetime.date(2027, 1, 2))
 
 

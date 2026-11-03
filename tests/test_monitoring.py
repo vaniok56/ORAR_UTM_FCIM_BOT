@@ -445,11 +445,13 @@ class MonitoringTests(unittest.IsolatedAsyncioTestCase):
                 user['delivery_status'] = status
 
         tree = ast.parse(Path('src/script.py').read_text())
-        names = {'record_delivery', 'delivery_event', 'track_send', 'DeliveryClient'}
+        names = {'record_delivery', 'flush_delivered_once', 'delivery_event',
+                 'track_send', 'DeliveryClient'}
         nodes = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.name in names]
         scope = dict(db=db, asyncio=asyncio, datetime=dt, utils=utils, TelegramClient=TelegramClient,
                      format_id=lambda sender: f'U{sender}', send_logs=Mock(), delivery_locks=defaultdict(asyncio.Lock),
-                     send_tasks=set(), send_gate=SendGate(), delivery_events={}, UserIsBlockedError=UserIsBlockedError,
+                     send_tasks=set(), send_gate=SendGate(), delivery_events={}, delivered_pending=set(),
+                     UserIsBlockedError=UserIsBlockedError,
                      InputUserDeactivatedError=InputUserDeactivatedError, UserDeactivatedError=UserDeactivatedError,
                      FloodWaitError=FloodWaitError, nullcontext=nullcontext,
                      send_rpc=ContextVar('test_send_rpc', default=False),
@@ -482,12 +484,20 @@ class MonitoringTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     batch_metrics.reset(token)
                 self.assertEqual(metrics['attempts'], 1)
+            self.assertEqual(scope['delivered_pending'], {'U42'})
+            def save_batch(sender_ids):
+                if 'U42' in sender_ids:
+                    user['delivery_status'] = 'delivered'
+            with patch.object(db, 'mark_delivered', side_effect=save_batch):
+                scope['flush_delivered_once']()
             self.assertEqual(user['delivery_status'], 'delivered')
 
             operation = AsyncMock(return_value='sent')
-            with patch.object(db, 'set_delivery_status', side_effect=RuntimeError('offline')):
+            with patch.object(db, 'mark_delivered', side_effect=RuntimeError('offline')):
                 self.assertEqual(await scope['track_send'](42, operation), 'sent')
+                scope['flush_delivered_once']()
             self.assertEqual(operation.await_count, 1)
+            self.assertEqual(scope['delivered_pending'], set())
 
             request = functions.messages.SendMessageRequest(peer='me', message='test')
             operation = AsyncMock(side_effect=[FloodWaitError(request, capture=0), 'sent'])
@@ -653,6 +663,26 @@ class MonitoringTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(functions.reminder_eligible(dict(user, group_n='TI-252'), selection=user))
             resolve.side_effect = ValueError('invalid group')
             self.assertFalse(functions.reminder_eligible(user))
+
+    def test_mark_delivered_keeps_terminal_statuses(self):
+        import pandas as pd
+        from unittest.mock import MagicMock
+        import handlers.db as db
+        cursor = MagicMock()
+        connection = MagicMock()
+        connection.cursor.return_value = cursor
+        context = MagicMock()
+        context.__enter__.return_value = connection
+        cached = pd.DataFrame([{'SENDER': 'U0', 'delivery_status': 'blocked'},
+                               {'SENDER': 'U1', 'delivery_status': 'unknown'}])
+        with patch.object(db, 'get_db_connection', return_value=context), \
+                patch.object(db, 'user_data_cache', {}, create=True), \
+                patch.object(db, '_cached_all_users_df', cached, create=True):
+            db.mark_delivered(['U0', 'U1'])
+        self.assertIn("AND s.delivery_status IN ('unknown','delivered')",
+                      cursor.execute.call_args.args[0])
+        self.assertEqual(cached.loc[0, 'delivery_status'], 'blocked')
+        self.assertEqual(cached.loc[1, 'delivery_status'], 'delivered')
 
     @unittest.skipUnless(os.environ.get('MYSQL_HOST') == 'orar_review_mysql' and os.environ.get('ORAR_ISOLATED_TEST') == '1', 'isolated MySQL only')
     def test_database_status_and_slot_claim_survive_cache_reload(self):

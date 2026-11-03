@@ -781,6 +781,28 @@ def set_delivery_status(sender_id, status, *, only_blocked=False):
         cached.loc[mask, 'delivery_status'] = status
 
 
+def mark_delivered(sender_ids):
+    sender_ids = list(sender_ids)
+    if not sender_ids:
+        return
+    placeholders = ','.join(['%s'] * len(sender_ids))
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"UPDATE settings s JOIN users u ON s.id=u.id SET s.delivery_status='delivered' "
+            f"WHERE u.SENDER IN ({placeholders}) AND s.delivery_status IN ('unknown','delivered')",
+            tuple(sender_ids),
+        )
+        conn.commit()
+    for sender_id in sender_ids:
+        user_data_cache.pop(sender_id, None)
+    cached = globals().get('_cached_all_users_df')
+    if isinstance(cached, pd.DataFrame) and not cached.empty:
+        mask = cached['SENDER'].isin(sender_ids)
+        mask &= cached['delivery_status'].isin(('unknown', 'delivered'))
+        cached.loc[mask, 'delivery_status'] = 'delivered'
+
+
 def has_interaction_since(sender_id, at):
     local_time = at.astimezone(moldova_tz).replace(tzinfo=None)
     with get_db_connection() as conn:

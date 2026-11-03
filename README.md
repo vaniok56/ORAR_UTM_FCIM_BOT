@@ -59,8 +59,7 @@ new opt-ins after the snapshot may miss that batch. Language and emoji settings
 are read again when each reminder is ready to send, including after a flood wait.
 
 `src/bulk_delivery.py` sets the shared pacing target (`BULK_SEND_RATE`, default
-25 send starts/second), the bulk concurrency limit (6), and the manual duration
-allowance (`BULK_EXTRA_SECONDS_PER_RECIPIENT`, default 0.008). Normal replies share
+25 send starts/second) and the bulk concurrency limit (6). Normal replies share
 the rate budget and take priority over waiting bulk sends. Admin `/message`
 campaigns also share it, but their scheduled time remains the start time. Rates
 above 30/s are allowed with a startup warning; Telegram flood waits and other
